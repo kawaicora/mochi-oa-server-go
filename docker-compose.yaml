@@ -18,13 +18,10 @@
 
 services:
   mochi-oa-server-go-app-c54f8e4:
-    image: ubuntu:24.04
+    image: debian:bookworm
     container_name: mochi-oa-server-go-app-c54f8e4
     working_dir: /app
-    # 直接执行挂载进来的 Linux 二进制，不 build 镜像
     command: ["/app/mochi-oa-server_linux_amd64"]
-    # ubuntu 精简镜像无 ca-certificates/tzdata（邮件 TLS、爱发电 HTTPS 需要 CA）。需要时改用：
-    # command: ["sh", "-lc", "apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && exec /app/mochi-oa-server_linux_amd64"]
     environment:
       HOST: 0.0.0.0
       PORT: "80"
