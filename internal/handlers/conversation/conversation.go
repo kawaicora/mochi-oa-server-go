@@ -21,9 +21,9 @@ package conversation
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
@@ -415,11 +415,9 @@ func Register(c Ctx) {
 				ack(util.Fail("服务器错误"))
 				return
 			}
-			if mutedUntil != nil && *mutedUntil > "" {
-				// TS: me.mutedUntil.getTime() > Date.now()
-				// mutedUntil 是 ISO 字符串，比较与当前时间的先后（简化为非空即禁言中由 store 层保证格式）
-				// 注意：这里用字符串比较不如 TS 的 Date.getTime() 精确，但 ISO 8601 定长格式可正确比较
-				if !isMutedExpired(*mutedUntil) {
+			if mutedUntil != nil && *mutedUntil != "" {
+				// TS: me.mutedUntil.getTime() > Date.now() → 禁言未过则拒绝
+				if t, err := time.Parse(time.RFC3339Nano, *mutedUntil); err == nil && t.After(time.Now()) {
 					ack(util.Fail("您已被禁言"))
 					return
 				}
@@ -1011,15 +1009,3 @@ func Register(c Ctx) {
 	})
 }
 
-// isMutedExpired 判断禁言截止时间是否已过。
-// mutedUntil 是 ISO 8601 格式字符串（如 "2026-10-13T12:00:00.000Z"）。
-// TS 用 Date.getTime() > Date.now() 判断；Go 用 time.Parse 比较。
-// 简化处理：解析失败视为未禁言（保守放行）。
-func isMutedExpired(mutedUntilISO string) bool {
-	// 导入 time 包在文件顶部统一管理；此处用 fmt.Sprintf 辅助
-	// 实际逻辑：解析 ISO 字符串并与当前时间比较
-	return mutedUntilExpired(mutedUntilISO)
-}
-
-// 避免循环导入：time 包在单独函数中引用。
-var _ = fmt.Sprintf

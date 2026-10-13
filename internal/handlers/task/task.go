@@ -385,8 +385,20 @@ func Register(srv socketapi.Server, store db.Store) {
 			changed = true
 		}
 		if v, exists := m["images"]; exists {
-			in.Images = asStringSlice(v, 9)
-			changed = true
+			// TS: 仅当 Array.isArray(d.images) 才入 v（images:null 等非数组不更新该字段）
+			if arr, ok := asArray(v); ok {
+				out := []string{}
+				for _, x := range arr {
+					if s, isStr := x.(string); isStr {
+						out = append(out, s)
+					}
+				}
+				if len(out) > 9 {
+					out = out[:9]
+				}
+				in.Images = out
+				changed = true
+			}
 		}
 		if !changed {
 			ack(util.Fail("无变更"))
