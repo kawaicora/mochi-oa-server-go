@@ -776,7 +776,7 @@ func (h *handler) onRegister(c socketapi.Conn, raw json.RawMessage, ack socketap
 	// 注册也建一个会话（客户端随后登出会删掉它）。
 	sessToken := token.NewSessionToken()
 	ci := clientInfoFrom(m)
-	device := h.deviceLabel(c, firstNonEmpty(ci.device, fieldAny(m, "device")))
+	device := h.deviceLabel(c, deviceArg(ci.device, m["device"]))
 	session, err := h.store.CreateSession(ctx, db.CreateSessionInput{
 		UserID:    user.ID,
 		TokenHash: token.HashToken(sessToken),
@@ -832,7 +832,11 @@ func (h *handler) onLogin(c socketapi.Conn, raw json.RawMessage, ack socketapi.A
 			ack(util.Fail("登录凭据解密失败"))
 			return
 		}
-		account = strings.TrimSpace(firstNonEmpty(cre.account, cre.username))
+		acct := cre.account
+		if acct == "" {
+			acct = cre.username
+		}
+		account = strings.TrimSpace(acct)
 		passwordStr = cre.password
 		code = cre.code
 	}
@@ -870,7 +874,7 @@ func (h *handler) onLogin(c socketapi.Conn, raw json.RawMessage, ack socketapi.A
 	}
 	sessToken := token.NewSessionToken()
 	ci := clientInfoFrom(m)
-	device := h.deviceLabel(c, firstNonEmpty(ci.device, fieldAny(m, "device")))
+	device := h.deviceLabel(c, deviceArg(ci.device, m["device"]))
 	ip := h.resolveSessionIp(c, ci.ip)
 	session, err := h.store.CreateSession(ctx, db.CreateSessionInput{
 		UserID:    user.ID,
@@ -1217,19 +1221,17 @@ func (h *handler) onUpdateProfile(c socketapi.Conn, raw json.RawMessage, ack soc
 
 // ==================== 小工具 ====================
 
-// fieldAny 取任意类型字段（用于 device 这类容忍 any 的入参）。
+// fieldAny 取任意类型字段（保留 any 以兼容 TS 的 typeof 判断语义）。
 func fieldAny(m map[string]any, k string) any {
 	return m[k]
 }
 
-// firstNonEmpty 返回第一个非空字符串。
-func firstNonEmpty(vs ...string) string {
-	for _, v := range vs {
-		if v != "" {
-			return v
-		}
+// deviceArg 拼 deviceLabel 的入参：clientInfo.device 优先，否则顶层 data.device（TS: ci.device || d.device）。
+func deviceArg(ciDevice string, topDevice any) any {
+	if ciDevice != "" {
+		return ciDevice
 	}
-	return ""
+	return topDevice
 }
 
 // itoa 整数字符串（避免 strconv 在错误路径多包一层 import 噪音）。
