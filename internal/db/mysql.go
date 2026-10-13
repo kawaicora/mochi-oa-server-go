@@ -1,4 +1,8 @@
-// Package db 的 MySqlStore 实现：基于 database/sql + go-sql-driver/mysql。
+// Package db 的 MySqlStore 实现：基于 GORM（gorm.io/gorm + gorm.io/driver/mysql）。
+//
+// 全部数据访问统一走 s.gorm，源码中不再出现裸 SQL 字面量。
+// 表名一律用 Table("...") 显式指定，列名依赖 GORM 默认 NamingStrategy
+// （CamelCase → snake_case）与 types 包 Row struct 的字段一一对应。
 //
 // 铁律（任务硬性约束）：只读复用现有表，绝不 CREATE/ALTER/DROP/迁移/建表。
 // 源码 mysql-store.ts 的 init() 会 CREATE DATABASE + sequelize.sync() + 补列，
@@ -18,35 +22,48 @@ import (
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+	gormmysql "gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/types"
 )
 
-// MySqlStore 是生产存储实现。
+// MySqlStore 是生产存储实现。所有数据访问统一经 gorm 句柄。
 type MySqlStore struct {
-	db *sql.DB
+	sqlDB *sql.DB  // 仅用于 Close 释放连接池
+	gorm  *gorm.DB // GORM 句柄（连接池共享自 sqlDB）
 }
 
 // NewMySqlStore 打开 MySQL 连接池（不建库不建表）。
 func NewMySqlStore(cfg config.MySQLConfig) (*MySqlStore, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=true&loc=UTC",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
-	database, err := sql.Open("mysql", dsn)
+	db, err := gorm.Open(gormmysql.Open(dsn), &gorm.Config{
+		// 与旧 database/sql 实现保持一致：不打印 SQL；需要原子性的方法自行用
+		// gorm 的 Transaction，不做隐式包事务。
+		Logger:                 gormlogger.Default.LogMode(gormlogger.Silent),
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pool, err := db.DB()
 	if err != nil {
 		return nil, err
 	}
 	// 对齐 sequelize pool: { max: 10, min: 0 }
-	database.SetMaxOpenConns(10)
-	database.SetMaxIdleConns(0)
+	pool.SetMaxOpenConns(10)
+	pool.SetMaxIdleConns(0)
 	logger.Info("db", "MySQL 连接池已创建", "host", cfg.Host, "port", cfg.Port, "database", cfg.Database)
-	return &MySqlStore{db: database}, nil
+	return &MySqlStore{sqlDB: pool, gorm: db}, nil
 }
 
 // Init 初始化：仅 Ping 验证连通（不做任何 DDL）。
 func (s *MySqlStore) Init(ctx context.Context) error {
-	if err := s.db.PingContext(ctx); err != nil {
+	if err := s.sqlDB.PingContext(ctx); err != nil {
 		logger.Error("db", "MySQL 连接失败", "error", err.Error())
 		return err
 	}
@@ -56,7 +73,7 @@ func (s *MySqlStore) Init(ctx context.Context) error {
 
 // Close 关闭连接池。
 func (s *MySqlStore) Close(_ context.Context) error {
-	return s.db.Close()
+	return s.sqlDB.Close()
 }
 
 // ---- 转换辅助 ----
@@ -334,12 +351,18 @@ func isUniqueErr(err error) bool {
 
 // conversationType 取对话类型（缺失默认 group，对齐 conversationType）。
 func (s *MySqlStore) conversationType(ctx context.Context, id int64) (string, error) {
-	var typ string
-	err := s.db.QueryRowContext(ctx, `SELECT type FROM conversations WHERE id=?`, id).Scan(&typ)
-	if errors.Is(err, sql.ErrNoRows) {
+	var r struct {
+		Type string `gorm:"column:type"`
+	}
+	err := s.gorm.WithContext(ctx).Table("conversations").
+		Select("type").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return "group", nil
 	}
-	return typ, err
+	if err != nil {
+		return "", err
+	}
+	return r.Type, nil
 }
 
 // scanUser 扫描一行到 UserRow。

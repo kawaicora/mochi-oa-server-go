@@ -1,10 +1,11 @@
 // Package db 的 MySqlStore 方法：TAPD（需求/缺陷/计划/文档/Wiki/仪表盘/成员跟踪）。
+//
+// 本文件全部走 GORM（s.gorm），不再出现裸 SQL 字面量；表名一律用 Table("...") 显式指定。
 package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
+	"time"
 
 	"mochi-oa-server-go/internal/types"
 )
@@ -23,51 +24,46 @@ func (s *MySqlStore) CreateRequirement(ctx context.Context, in CreateRequirement
 	if priority == "" {
 		priority = "middle"
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO requirements (company_id, project_id, code, title, description, category, priority, status, handler_id, creator_id, start_time, due_time, created_at, updated_at) VALUES (?,?,?,?,?,?,?,'planning',?,?,?,?,NOW(3),NOW(3))`,
-		in.CompanyID, in.ProjectID, "", in.Title, in.Description, category, priority, in.HandlerID, in.CreatorID, start, due)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.RequirementRow{
+		CompanyID: in.CompanyID, ProjectID: in.ProjectID, Code: "", Title: in.Title,
+		Description: in.Description, Category: category, Priority: priority, Status: "planning",
+		HandlerID: in.HandlerID, CreatorID: in.CreatorID, StartTime: start, DueTime: due,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("requirements").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetRequirement(ctx, id)
+	return s.GetRequirement(ctx, row.ID)
 }
 
 // ListRequirements 列需求（可按项目，updated_at 倒序）。
 func (s *MySqlStore) ListRequirements(ctx context.Context, companyID int64, projectID *int64) ([]types.Requirement, error) {
-	q := `SELECT id, company_id, project_id, code, title, description, category, priority, status, handler_id, creator_id, start_time, due_time, completed_time, created_at, updated_at FROM requirements WHERE company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("requirements").Where("company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("project_id = ?", *projectID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.RequirementRow{}
+	if err := q.Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Requirement{}
-	for rows.Next() {
-		var r types.RequirementRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Code, &r.Title, &r.Description, &r.Category, &r.Priority, &r.Status, &r.HandlerID, &r.CreatorID, &r.StartTime, &r.DueTime, &r.CompletedTime, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		req := rowToRequirement(&r)
+	for i := range rows {
+		r := &rows[i]
+		req := rowToRequirement(r)
 		linked, _ := s.linkedTaskIDs(ctx, r.ID)
 		req.LinkedTaskIDs = linked
 		s.fillUserNames(ctx, &req.HandlerName, &req.CreatorName, r.HandlerID, &r.CreatorID)
 		out = append(out, req)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetRequirement 按主键取。
 func (s *MySqlStore) GetRequirement(ctx context.Context, requirementID int64) (*types.Requirement, error) {
 	var r types.RequirementRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, project_id, code, title, description, category, priority, status, handler_id, creator_id, start_time, due_time, completed_time, created_at, updated_at FROM requirements WHERE id=?`, requirementID).
-		Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Code, &r.Title, &r.Description, &r.Category, &r.Priority, &r.Status, &r.HandlerID, &r.CreatorID, &r.StartTime, &r.DueTime, &r.CompletedTime, &r.CreatedAt, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("requirements").Where("id = ?", requirementID).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -119,8 +115,16 @@ func (s *MySqlStore) UpdateRequirement(ctx context.Context, in UpdateRequirement
 	}
 	start, _ := parseTimeFlex(startStr)
 	due, _ := parseTimeFlex(dueStr)
-	_, err = s.db.ExecContext(ctx, `UPDATE requirements SET title=?, description=?, category=?, priority=?, handler_id=?, start_time=?, due_time=?, updated_at=NOW(3) WHERE id=?`,
-		title, desc, category, priority, handlerID, start, due, in.ID)
+	err = s.gorm.WithContext(ctx).Table("requirements").Where("id = ?", in.ID).Updates(map[string]any{
+		"title":       title,
+		"description": desc,
+		"category":    category,
+		"priority":    priority,
+		"handler_id":  handlerID,
+		"start_time":  start,
+		"due_time":    due,
+		"updated_at":  time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -129,30 +133,29 @@ func (s *MySqlStore) UpdateRequirement(ctx context.Context, in UpdateRequirement
 
 // SetRequirementStatus 变更需求状态（completed 写 completed_time）。
 func (s *MySqlStore) SetRequirementStatus(ctx context.Context, in SetRequirementStatusInput) (*types.Requirement, error) {
+	now := time.Now().UTC()
+	updates := map[string]any{"status": in.Status, "updated_at": now}
 	if in.Status == "completed" {
-		_, err := s.db.ExecContext(ctx, `UPDATE requirements SET status=?, completed_time=NOW(3), updated_at=NOW(3) WHERE id=?`, in.Status, in.RequirementID)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		_, err := s.db.ExecContext(ctx, `UPDATE requirements SET status=?, updated_at=NOW(3) WHERE id=?`, in.Status, in.RequirementID)
-		if err != nil {
-			return nil, err
-		}
+		updates["completed_time"] = now
+	}
+	if err := s.gorm.WithContext(ctx).Table("requirements").
+		Where("id = ?", in.RequirementID).Updates(updates).Error; err != nil {
+		return nil, err
 	}
 	return s.GetRequirement(ctx, in.RequirementID)
 }
 
 // DeleteRequirement 删除需求（含关联）。
 func (s *MySqlStore) DeleteRequirement(ctx context.Context, requirementID int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM requirement_links WHERE requirement_id=?`, requirementID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("requirement_links").
+		Where("requirement_id = ?", requirementID).Delete(nil).Error; err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM requirements WHERE id=?`, requirementID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("requirements").Where("id = ?", requirementID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "requirement not found"}
 	}
 	return nil
@@ -160,30 +163,27 @@ func (s *MySqlStore) DeleteRequirement(ctx context.Context, requirementID int64)
 
 // linkedTaskIDs 取需求关联的任务 id 列表。
 func (s *MySqlStore) linkedTaskIDs(ctx context.Context, requirementID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT task_id FROM requirement_links WHERE requirement_id=? ORDER BY id ASC`, requirementID)
-	if err != nil {
+	out := []int64{}
+	if err := s.gorm.WithContext(ctx).Table("requirement_links").
+		Where("requirement_id = ?", requirementID).
+		Order("id ASC").Pluck("task_id", &out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // LinkRequirementTasks 覆盖式写需求-任务关联。
 func (s *MySqlStore) LinkRequirementTasks(ctx context.Context, in LinkRequirementTasksInput) ([]int64, error) {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM requirement_links WHERE requirement_id=?`, in.RequirementID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("requirement_links").
+		Where("requirement_id = ?", in.RequirementID).Delete(nil).Error; err != nil {
 		return nil, err
 	}
 	linked := []int64{}
 	for _, tid := range in.TaskIDs {
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO requirement_links (company_id, requirement_id, task_id, user_id, created_at) VALUES (?,?,?,?,NOW(3))`, in.CompanyID, in.RequirementID, tid, in.UserID); err != nil {
+		if err := s.gorm.WithContext(ctx).Table("requirement_links").Create(map[string]any{
+			"company_id": in.CompanyID, "requirement_id": in.RequirementID,
+			"task_id": tid, "user_id": in.UserID, "created_at": time.Now().UTC(),
+		}).Error; err != nil {
 			return nil, err
 		}
 		linked = append(linked, tid)
@@ -225,49 +225,44 @@ func (s *MySqlStore) CreateBug(ctx context.Context, in CreateBugInput) (*types.B
 	if priority == "" {
 		priority = "middle"
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO bugs (company_id, project_id, requirement_id, code, title, description, severity, priority, status, handler_id, creator_id, found_version, created_at, updated_at) VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?,NOW(3),NOW(3))`,
-		in.CompanyID, in.ProjectID, in.RequirementID, "", in.Title, in.Description, severity, priority, in.HandlerID, in.CreatorID, in.FoundVersion)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.BugRow{
+		CompanyID: in.CompanyID, ProjectID: in.ProjectID, RequirementID: in.RequirementID,
+		Code: "", Title: in.Title, Description: in.Description, Severity: severity,
+		Priority: priority, Status: "pending", HandlerID: in.HandlerID, CreatorID: in.CreatorID,
+		FoundVersion: in.FoundVersion, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("bugs").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetBug(ctx, id)
+	return s.GetBug(ctx, row.ID)
 }
 
 // ListBugs 列缺陷。
 func (s *MySqlStore) ListBugs(ctx context.Context, companyID int64, projectID *int64) ([]types.Bug, error) {
-	q := `SELECT id, company_id, project_id, requirement_id, code, title, description, severity, priority, status, handler_id, creator_id, found_version, created_at, updated_at FROM bugs WHERE company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("bugs").Where("company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("project_id = ?", *projectID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.BugRow{}
+	if err := q.Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Bug{}
-	for rows.Next() {
-		var r types.BugRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.RequirementID, &r.Code, &r.Title, &r.Description, &r.Severity, &r.Priority, &r.Status, &r.HandlerID, &r.CreatorID, &r.FoundVersion, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		b := rowToBug(&r)
+	for i := range rows {
+		r := &rows[i]
+		b := rowToBug(r)
 		s.fillUserNames(ctx, &b.HandlerName, &b.CreatorName, r.HandlerID, &r.CreatorID)
 		out = append(out, b)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetBug 按主键取缺陷。
 func (s *MySqlStore) GetBug(ctx context.Context, bugID int64) (*types.Bug, error) {
 	var r types.BugRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, project_id, requirement_id, code, title, description, severity, priority, status, handler_id, creator_id, found_version, created_at, updated_at FROM bugs WHERE id=?`, bugID).
-		Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.RequirementID, &r.Code, &r.Title, &r.Description, &r.Severity, &r.Priority, &r.Status, &r.HandlerID, &r.CreatorID, &r.FoundVersion, &r.CreatedAt, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("bugs").Where("id = ?", bugID).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -311,7 +306,15 @@ func (s *MySqlStore) UpdateBug(ctx context.Context, in UpdateBugInput) (*types.B
 	if in.FoundVersion != nil {
 		version = *in.FoundVersion
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE bugs SET title=?, description=?, severity=?, priority=?, handler_id=?, found_version=?, updated_at=NOW(3) WHERE id=?`, title, desc, severity, priority, handlerID, version, in.ID)
+	err = s.gorm.WithContext(ctx).Table("bugs").Where("id = ?", in.ID).Updates(map[string]any{
+		"title":         title,
+		"description":   desc,
+		"severity":      severity,
+		"priority":      priority,
+		"handler_id":    handlerID,
+		"found_version": version,
+		"updated_at":    time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -320,11 +323,13 @@ func (s *MySqlStore) UpdateBug(ctx context.Context, in UpdateBugInput) (*types.B
 
 // SetBugStatus 变更缺陷状态。
 func (s *MySqlStore) SetBugStatus(ctx context.Context, in SetBugStatusInput) (*types.Bug, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE bugs SET status=?, updated_at=NOW(3) WHERE id=?`, in.Status, in.BugID)
-	if err != nil {
-		return nil, err
+	res := s.gorm.WithContext(ctx).Table("bugs").Where("id = ?", in.BugID).Updates(map[string]any{
+		"status": in.Status, "updated_at": time.Now().UTC(),
+	})
+	if res.Error != nil {
+		return nil, res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return nil, &NotFoundError{Msg: "bug not found"}
 	}
 	return s.GetBug(ctx, in.BugID)
@@ -332,11 +337,11 @@ func (s *MySqlStore) SetBugStatus(ctx context.Context, in SetBugStatusInput) (*t
 
 // DeleteBug 删除缺陷。
 func (s *MySqlStore) DeleteBug(ctx context.Context, bugID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM bugs WHERE id=?`, bugID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("bugs").Where("id = ?", bugID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "bug not found"}
 	}
 	return nil
@@ -348,20 +353,22 @@ func (s *MySqlStore) DeleteBug(ctx context.Context, bugID int64) error {
 func (s *MySqlStore) CreatePlan(ctx context.Context, in CreatePlanInput) (*types.Plan, error) {
 	start, _ := parseTimeFlex(in.StartTime)
 	due, _ := parseTimeFlex(in.DueTime)
-	res, err := s.db.ExecContext(ctx, `INSERT INTO plans (company_id, project_id, name, description, start_time, due_time, status, creator_id, created_at, updated_at) VALUES (?,?,?,?,?,?,'not_started',?,NOW(3),NOW(3))`,
-		in.CompanyID, in.ProjectID, in.Name, in.Description, start, due, in.CreatorID)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.PlanRow{
+		CompanyID: in.CompanyID, ProjectID: in.ProjectID, Name: in.Name, Description: in.Description,
+		StartTime: start, DueTime: due, Status: "not_started", CreatorID: in.CreatorID,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("plans").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetPlanByID(ctx, id)
+	return s.GetPlanByID(ctx, row.ID)
 }
 
 func (s *MySqlStore) GetPlanByID(ctx context.Context, id int64) (*types.Plan, error) {
 	var r types.PlanRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, project_id, name, description, start_time, due_time, status, creator_id, created_at, updated_at FROM plans WHERE id=?`, id).
-		Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Name, &r.Description, &r.StartTime, &r.DueTime, &r.Status, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("plans").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -373,27 +380,19 @@ func (s *MySqlStore) GetPlanByID(ctx context.Context, id int64) (*types.Plan, er
 
 // ListPlans 列计划。
 func (s *MySqlStore) ListPlans(ctx context.Context, companyID int64, projectID *int64) ([]types.Plan, error) {
-	q := `SELECT id, company_id, project_id, name, description, start_time, due_time, status, creator_id, created_at, updated_at FROM plans WHERE company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("plans").Where("company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("project_id = ?", *projectID)
 	}
-	q += ` ORDER BY start_time ASC, id ASC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.PlanRow{}
+	if err := q.Order("start_time ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Plan{}
-	for rows.Next() {
-		var r types.PlanRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Name, &r.Description, &r.StartTime, &r.DueTime, &r.Status, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToPlan(&r))
+	for i := range rows {
+		out = append(out, rowToPlan(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdatePlan 更新计划。
@@ -427,7 +426,14 @@ func (s *MySqlStore) UpdatePlan(ctx context.Context, in UpdatePlanInput) (*types
 	}
 	start, _ := parseTimeFlex(startStr)
 	due, _ := parseTimeFlex(dueStr)
-	_, err = s.db.ExecContext(ctx, `UPDATE plans SET name=?, description=?, start_time=?, due_time=?, status=?, updated_at=NOW(3) WHERE id=?`, name, desc, start, due, status, in.ID)
+	err = s.gorm.WithContext(ctx).Table("plans").Where("id = ?", in.ID).Updates(map[string]any{
+		"name":        name,
+		"description": desc,
+		"start_time":  start,
+		"due_time":    due,
+		"status":      status,
+		"updated_at":  time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -436,11 +442,11 @@ func (s *MySqlStore) UpdatePlan(ctx context.Context, in UpdatePlanInput) (*types
 
 // DeletePlan 删除计划。
 func (s *MySqlStore) DeletePlan(ctx context.Context, planID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM plans WHERE id=?`, planID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("plans").Where("id = ?", planID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "plan not found"}
 	}
 	return nil
@@ -450,20 +456,21 @@ func (s *MySqlStore) DeletePlan(ctx context.Context, planID int64) error {
 
 // CreateDocument 创建文档。
 func (s *MySqlStore) CreateDocument(ctx context.Context, in CreateDocumentInput) (*types.ProjectDocument, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO documents (company_id, project_id, title, content, creator_id, created_at, updated_at) VALUES (?,?,?,?,?,NOW(3),NOW(3))`,
-		in.CompanyID, in.ProjectID, in.Title, in.Content, in.CreatorID)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.DocumentRow{
+		CompanyID: in.CompanyID, ProjectID: in.ProjectID, Title: in.Title,
+		Content: in.Content, CreatorID: in.CreatorID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("documents").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetDocumentByID(ctx, id)
+	return s.GetDocumentByID(ctx, row.ID)
 }
 
 func (s *MySqlStore) GetDocumentByID(ctx context.Context, id int64) (*types.ProjectDocument, error) {
 	var r types.DocumentRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, project_id, title, content, creator_id, created_at, updated_at FROM documents WHERE id=?`, id).
-		Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Title, &r.Content, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("documents").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -475,27 +482,19 @@ func (s *MySqlStore) GetDocumentByID(ctx context.Context, id int64) (*types.Proj
 
 // ListDocuments 列文档。
 func (s *MySqlStore) ListDocuments(ctx context.Context, companyID int64, projectID *int64) ([]types.ProjectDocument, error) {
-	q := `SELECT id, company_id, project_id, title, content, creator_id, created_at, updated_at FROM documents WHERE company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("documents").Where("company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("project_id = ?", *projectID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.DocumentRow{}
+	if err := q.Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.ProjectDocument{}
-	for rows.Next() {
-		var r types.DocumentRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Title, &r.Content, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToDocument(&r))
+	for i := range rows {
+		out = append(out, rowToDocument(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateDocument 更新文档。
@@ -515,7 +514,9 @@ func (s *MySqlStore) UpdateDocument(ctx context.Context, in UpdateDocumentInput)
 	if in.Content != nil {
 		content = *in.Content
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE documents SET title=?, content=?, updated_at=NOW(3) WHERE id=?`, title, content, in.ID)
+	err = s.gorm.WithContext(ctx).Table("documents").Where("id = ?", in.ID).Updates(map[string]any{
+		"title": title, "content": content, "updated_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -524,11 +525,11 @@ func (s *MySqlStore) UpdateDocument(ctx context.Context, in UpdateDocumentInput)
 
 // DeleteDocument 删除文档。
 func (s *MySqlStore) DeleteDocument(ctx context.Context, documentID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM documents WHERE id=?`, documentID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("documents").Where("id = ?", documentID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "document not found"}
 	}
 	return nil
@@ -538,20 +539,21 @@ func (s *MySqlStore) DeleteDocument(ctx context.Context, documentID int64) error
 
 // CreateWikiPage 创建 Wiki 页。
 func (s *MySqlStore) CreateWikiPage(ctx context.Context, in CreateWikiInput) (*types.WikiPage, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO wiki_pages (company_id, project_id, title, content, creator_id, created_at, updated_at) VALUES (?,?,?,?,?,NOW(3),NOW(3))`,
-		in.CompanyID, in.ProjectID, in.Title, in.Content, in.CreatorID)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.WikiPageRow{
+		CompanyID: in.CompanyID, ProjectID: in.ProjectID, Title: in.Title,
+		Content: in.Content, CreatorID: in.CreatorID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("wiki_pages").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetWikiByID(ctx, id)
+	return s.GetWikiByID(ctx, row.ID)
 }
 
 func (s *MySqlStore) GetWikiByID(ctx context.Context, id int64) (*types.WikiPage, error) {
 	var r types.WikiPageRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, project_id, title, content, creator_id, created_at, updated_at FROM wiki_pages WHERE id=?`, id).
-		Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Title, &r.Content, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("wiki_pages").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -563,27 +565,19 @@ func (s *MySqlStore) GetWikiByID(ctx context.Context, id int64) (*types.WikiPage
 
 // ListWikiPages 列 Wiki。
 func (s *MySqlStore) ListWikiPages(ctx context.Context, companyID int64, projectID *int64) ([]types.WikiPage, error) {
-	q := `SELECT id, company_id, project_id, title, content, creator_id, created_at, updated_at FROM wiki_pages WHERE company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("wiki_pages").Where("company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("project_id = ?", *projectID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.WikiPageRow{}
+	if err := q.Order("updated_at DESC, id DESC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.WikiPage{}
-	for rows.Next() {
-		var r types.WikiPageRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.ProjectID, &r.Title, &r.Content, &r.CreatorID, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToWiki(&r))
+	for i := range rows {
+		out = append(out, rowToWiki(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateWikiPage 更新 Wiki。
@@ -603,7 +597,9 @@ func (s *MySqlStore) UpdateWikiPage(ctx context.Context, in UpdateWikiInput) (*t
 	if in.Content != nil {
 		content = *in.Content
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE wiki_pages SET title=?, content=?, updated_at=NOW(3) WHERE id=?`, title, content, in.ID)
+	err = s.gorm.WithContext(ctx).Table("wiki_pages").Where("id = ?", in.ID).Updates(map[string]any{
+		"title": title, "content": content, "updated_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -612,11 +608,11 @@ func (s *MySqlStore) UpdateWikiPage(ctx context.Context, in UpdateWikiInput) (*t
 
 // DeleteWikiPage 删除 Wiki。
 func (s *MySqlStore) DeleteWikiPage(ctx context.Context, wikiID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM wiki_pages WHERE id=?`, wikiID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("wiki_pages").Where("id = ?", wikiID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "wiki page not found"}
 	}
 	return nil
@@ -624,53 +620,70 @@ func (s *MySqlStore) DeleteWikiPage(ctx context.Context, wikiID int64) error {
 
 // ==================== 仪表盘 ====================
 
-// scalarCount 执行 count 查询，返回单行数字。
-func (s *MySqlStore) scalarCount(ctx context.Context, q string, args ...any) (int64, error) {
-	var n int64
-	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return n, err
+// statusCountRow 分组统计的临时行。
+type statusCountRow struct {
+	Key string `gorm:"column:key"`
+	N   int64  `gorm:"column:n"`
 }
 
 // DashboardStats 项目仪表盘聚合统计。
 func (s *MySqlStore) DashboardStats(ctx context.Context, companyID int64, projectID *int64) (*types.DashboardStats, error) {
-	newReq30d, _ := s.scalarCount(ctx, `SELECT COUNT(*) FROM requirements WHERE company_id=? AND created_at >= (NOW(3) - INTERVAL 30 DAY)`, companyID)
-	overdueReq, _ := s.scalarCount(ctx, `SELECT COUNT(*) FROM requirements WHERE company_id=? AND status NOT IN ('completed','rejected') AND due_time < NOW(3)`, companyID)
-	totalBugs, _ := s.scalarCount(ctx, `SELECT COUNT(*) FROM bugs WHERE company_id=?`, companyID)
-	resolvedBugs, _ := s.scalarCount(ctx, `SELECT COUNT(*) FROM bugs WHERE company_id=? AND status='resolved'`, companyID)
-	unresolvedBugs, _ := s.scalarCount(ctx, `SELECT COUNT(*) FROM bugs WHERE company_id=? AND status<>'resolved'`, companyID)
+	// 原实现忽略这些计数的错误，这里保持一致。
+	var newReq30d int64
+	_ = s.gorm.WithContext(ctx).Table("requirements").
+		Where("company_id = ? AND created_at >= (NOW(3) - INTERVAL 30 DAY)", companyID).
+		Count(&newReq30d).Error
+
+	var overdueReq int64
+	_ = s.gorm.WithContext(ctx).Table("requirements").
+		Where("company_id = ? AND status NOT IN ('completed','rejected') AND due_time < NOW(3)", companyID).
+		Count(&overdueReq).Error
+
+	var totalBugs int64
+	_ = s.gorm.WithContext(ctx).Table("bugs").
+		Where("company_id = ?", companyID).Count(&totalBugs).Error
+
+	var resolvedBugs int64
+	_ = s.gorm.WithContext(ctx).Table("bugs").
+		Where("company_id = ? AND status = 'resolved'", companyID).Count(&resolvedBugs).Error
+
+	var unresolvedBugs int64
+	_ = s.gorm.WithContext(ctx).Table("bugs").
+		Where("company_id = ? AND status <> 'resolved'", companyID).Count(&unresolvedBugs).Error
+
 	resolveRate := int64(0)
 	if totalBugs > 0 {
 		resolveRate = resolvedBugs * 100 / totalBugs
 	}
+
 	// 需求状态分布
 	statusMap := map[string]int64{}
-	sRows, err := s.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM requirements WHERE company_id=? GROUP BY status`, companyID)
-	if err != nil {
+	sRows := []statusCountRow{}
+	if err := s.gorm.WithContext(ctx).Table("requirements").
+		Select("status AS `key`, COUNT(*) AS n").
+		Where("company_id = ?", companyID).
+		Group("status").
+		Scan(&sRows).Error; err != nil {
 		return nil, err
 	}
-	for sRows.Next() {
-		var st string
-		var n int64
-		_ = sRows.Scan(&st, &n)
-		statusMap[st] = n
+	for _, r := range sRows {
+		statusMap[r.Key] = r.N
 	}
-	sRows.Close()
+
 	// 缺陷严重度分布
 	sevMap := map[string]int64{}
-	sevRows, err := s.db.QueryContext(ctx, `SELECT severity, COUNT(*) FROM bugs WHERE company_id=? GROUP BY severity`, companyID)
-	if err != nil {
+	sevRows := []statusCountRow{}
+	if err := s.gorm.WithContext(ctx).Table("bugs").
+		Select("severity AS `key`, COUNT(*) AS n").
+		Where("company_id = ?", companyID).
+		Group("severity").
+		Scan(&sevRows).Error; err != nil {
 		return nil, err
 	}
-	for sevRows.Next() {
-		var sv string
-		var n int64
-		_ = sevRows.Scan(&sv, &n)
-		sevMap[sv] = n
+	for _, r := range sevRows {
+		sevMap[r.Key] = r.N
 	}
-	sevRows.Close()
+
 	return &types.DashboardStats{
 		NewRequirement30d:   newReq30d,
 		OverdueRequirement:  overdueReq,
@@ -681,45 +694,64 @@ func (s *MySqlStore) DashboardStats(ctx context.Context, companyID int64, projec
 	}, nil
 }
 
+// memberTrackRow MemberTracking 的聚合临时行。
+type memberTrackRow struct {
+	UserID     int64   `gorm:"column:user_id"`
+	Username   *string `gorm:"column:username"`
+	Nick       *string `gorm:"column:nick"`
+	NotDone    *int64  `gorm:"column:not_done"`
+	Completed  *int64  `gorm:"column:completed"`
+	InProgress *int64  `gorm:"column:in_progress"`
+	Overdue    *int64  `gorm:"column:overdue"`
+	Total      *int64  `gorm:"column:total"`
+}
+
 // MemberTracking 成员任务跟踪（按分配聚合）。
 func (s *MySqlStore) MemberTracking(ctx context.Context, companyID int64, projectID *int64) ([]types.MemberTrackItem, error) {
-	q := `SELECT a.user_id, u.username, u.nick,
-		SUM(CASE WHEN a.status IN ('created','in_progress') THEN 1 ELSE 0 END) AS notDone,
-		SUM(CASE WHEN a.status='completed' THEN 1 ELSE 0 END) AS completed,
-		SUM(CASE WHEN t.status IN ('created','in_progress') THEN 1 ELSE 0 END) AS inProgress,
-		SUM(CASE WHEN t.is_overdue=1 THEN 1 ELSE 0 END) AS overdue,
-		COUNT(*) AS total
-	 FROM task_assignments a JOIN tasks t ON t.id=a.task_id LEFT JOIN users u ON u.id=a.user_id
-	 WHERE t.company_id=?`
-	args := []any{companyID}
+	q := s.gorm.WithContext(ctx).Table("task_assignments a").
+		Select(`a.user_id, u.username, u.nick,
+			SUM(CASE WHEN a.status IN ('created','in_progress') THEN 1 ELSE 0 END) AS not_done,
+			SUM(CASE WHEN a.status='completed' THEN 1 ELSE 0 END) AS completed,
+			SUM(CASE WHEN t.status IN ('created','in_progress') THEN 1 ELSE 0 END) AS in_progress,
+			SUM(CASE WHEN t.is_overdue=1 THEN 1 ELSE 0 END) AS overdue,
+			COUNT(*) AS total`).
+		Joins("JOIN tasks t ON t.id=a.task_id").
+		Joins("LEFT JOIN users u ON u.id=a.user_id").
+		Where("t.company_id = ?", companyID)
 	if projectID != nil {
-		q += ` AND t.project_id=?`
-		args = append(args, *projectID)
+		q = q.Where("t.project_id = ?", *projectID)
 	}
-	q += ` GROUP BY a.user_id, u.username, u.nick ORDER BY total DESC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []memberTrackRow{}
+	if err := q.Group("a.user_id, u.username, u.nick").
+		Order("total DESC").
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.MemberTrackItem{}
-	for rows.Next() {
-		var it types.MemberTrackItem
-		var username, nick sql.NullString
-		var notDone, completed, inProgress, overdue, total sql.NullInt64
-		if err := rows.Scan(&it.UserID, &username, &nick, &notDone, &completed, &inProgress, &overdue, &total); err != nil {
-			return nil, err
+	for _, r := range rows {
+		it := types.MemberTrackItem{UserID: r.UserID}
+		if r.Username != nil {
+			it.Username = *r.Username
 		}
-		it.Username = username.String
-		it.Nick = nick.String
+		if r.Nick != nil {
+			it.Nick = *r.Nick
+		}
 		if it.Nick == "" {
 			it.Nick = it.Username
 		}
-		it.Completed = completed.Int64
-		it.InProgress = inProgress.Int64
-		it.Overdue = overdue.Int64
-		it.Total = total.Int64
+		if r.Completed != nil {
+			it.Completed = *r.Completed
+		}
+		if r.InProgress != nil {
+			it.InProgress = *r.InProgress
+		}
+		if r.Overdue != nil {
+			it.Overdue = *r.Overdue
+		}
+		if r.Total != nil {
+			it.Total = *r.Total
+		}
 		out = append(out, it)
 	}
-	return out, rows.Err()
+	return out, nil
 }

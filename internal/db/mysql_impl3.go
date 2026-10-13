@@ -1,12 +1,14 @@
-// Package db 的 MySqlStore 剩余方法：邀请、人事、会话、爱发电、邮件配置、假期、任务流程、TAPD。
+// Package db 的 MySqlStore 剩余方法：邀请、人事、会话、爱发电。
+//
+// 本文件全部走 GORM（s.gorm），不再出现裸 SQL 字面量；表名一律用 Table("...") 显式指定。
 package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"strings"
 	"time"
+
+	"gorm.io/gorm/clause"
 
 	"mochi-oa-server-go/internal/types"
 )
@@ -54,13 +56,16 @@ func (s *MySqlStore) invitationView(ctx context.Context, row types.CompanyInvita
 
 // CreateCompanyInvitation 创建邀请（同公司同用户已有 pending 则冲突）。
 func (s *MySqlStore) CreateCompanyInvitation(ctx context.Context, in CreateInvitationInput) (*types.CompanyInvitation, error) {
-	var dupID int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM company_invitations WHERE company_id=? AND user_id=? AND status='pending' LIMIT 1`, in.CompanyID, in.UserID).Scan(&dupID)
-	if err == nil {
-		return nil, &AlreadyExistsError{Msg: "invitation pending"}
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	// 原实现用 SELECT ... LIMIT 1 判重：取不到行（ErrNoRows）表示可创建。
+	// Pluck 在无行时同样返回 nil 错误 + 空切片，语义一致。
+	dupIDs := []int64{}
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("company_id = ? AND user_id = ? AND status = 'pending'", in.CompanyID, in.UserID).
+		Limit(1).Pluck("id", &dupIDs).Error; err != nil {
 		return nil, err
+	}
+	if len(dupIDs) > 0 {
+		return nil, &AlreadyExistsError{Msg: "invitation pending"}
 	}
 	var expires any
 	if in.ExpiresAt != nil && *in.ExpiresAt != "" {
@@ -68,21 +73,33 @@ func (s *MySqlStore) CreateCompanyInvitation(ctx context.Context, in CreateInvit
 			expires = t
 		}
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO company_invitations (company_id, user_id, department_id, invited_by, code, expires_at, created_at) VALUES (?,?,?,?,?,?,NOW(3))`,
-		in.CompanyID, in.UserID, in.DepartmentID, in.InvitedBy, in.Code, expires)
-	if err != nil {
+	// 用 map 插入：列清单与原 SQL 完全一致，status 交给库默认值 'pending'
+	// （若改用结构体 Create，GORM 会把零值 "" 写进 enum 列，语义就变了）。
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").Create(map[string]any{
+		"company_id":    in.CompanyID,
+		"user_id":       in.UserID,
+		"department_id": in.DepartmentID,
+		"invited_by":    in.InvitedBy,
+		"code":          in.Code,
+		"expires_at":    expires,
+		"created_at":    time.Now().UTC(),
+	}).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
+	// code 列有唯一索引，回读自增主键（等价 LastInsertId）。
+	var id int64
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("code = ?", in.Code).Pluck("id", &id).Error; err != nil {
+		return nil, err
+	}
 	return s.GetCompanyInvitationByID(ctx, id)
 }
 
 // GetCompanyInvitationByID 按主键取邀请。
 func (s *MySqlStore) GetCompanyInvitationByID(ctx context.Context, id int64) (*types.CompanyInvitation, error) {
 	var row types.CompanyInvitationRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, user_id, department_id, invited_by, code, expires_at, status, created_at FROM company_invitations WHERE id=?`, id).
-		Scan(&row.ID, &row.CompanyID, &row.UserID, &row.DepartmentID, &row.InvitedBy, &row.Code, &row.ExpiresAt, &row.Status, &row.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("company_invitations").Where("id = ?", id).Take(&row).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -94,9 +111,8 @@ func (s *MySqlStore) GetCompanyInvitationByID(ctx context.Context, id int64) (*t
 // GetCompanyInvitationByCode 按邀请码取。
 func (s *MySqlStore) GetCompanyInvitationByCode(ctx context.Context, code string) (*types.CompanyInvitation, error) {
 	var row types.CompanyInvitationRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, user_id, department_id, invited_by, code, expires_at, status, created_at FROM company_invitations WHERE code=?`, code).
-		Scan(&row.ID, &row.CompanyID, &row.UserID, &row.DepartmentID, &row.InvitedBy, &row.Code, &row.ExpiresAt, &row.Status, &row.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("company_invitations").Where("code = ?", code).Take(&row).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -107,52 +123,49 @@ func (s *MySqlStore) GetCompanyInvitationByCode(ctx context.Context, code string
 
 // ListCompanyInvitations 列公司邀请（创建倒序）。
 func (s *MySqlStore) ListCompanyInvitations(ctx context.Context, companyID int64) ([]types.CompanyInvitation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, company_id, user_id, department_id, invited_by, code, expires_at, status, created_at FROM company_invitations WHERE company_id=? ORDER BY created_at DESC`, companyID)
-	if err != nil {
+	rows := []types.CompanyInvitationRow{}
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("company_id = ?", companyID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.CompanyInvitation{}
-	for rows.Next() {
-		var row types.CompanyInvitationRow
-		if err := rows.Scan(&row.ID, &row.CompanyID, &row.UserID, &row.DepartmentID, &row.InvitedBy, &row.Code, &row.ExpiresAt, &row.Status, &row.CreatedAt); err != nil {
-			return nil, err
-		}
+	for _, row := range rows {
 		v, err := s.invitationView(ctx, row)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, *v)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListPendingInvitationsForUser 列用户 pending 邀请。
 func (s *MySqlStore) ListPendingInvitationsForUser(ctx context.Context, userID int64) ([]types.CompanyInvitation, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, company_id, user_id, department_id, invited_by, code, expires_at, status, created_at FROM company_invitations WHERE user_id=? AND status='pending' ORDER BY created_at DESC`, userID)
-	if err != nil {
+	rows := []types.CompanyInvitationRow{}
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("user_id = ? AND status = 'pending'", userID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.CompanyInvitation{}
-	for rows.Next() {
-		var row types.CompanyInvitationRow
-		if err := rows.Scan(&row.ID, &row.CompanyID, &row.UserID, &row.DepartmentID, &row.InvitedBy, &row.Code, &row.ExpiresAt, &row.Status, &row.CreatedAt); err != nil {
-			return nil, err
-		}
+	for _, row := range rows {
 		v, err := s.invitationView(ctx, row)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, *v)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SetCompanyInvitationStatus 更新邀请状态。
 func (s *MySqlStore) SetCompanyInvitationStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE company_invitations SET status=? WHERE id=?`, status, id)
-	return err
+	return s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("id = ?", id).
+		Updates(map[string]any{"status": status}).Error
 }
 
 // GetCompanyMainGroup 找公司全员群（按「{公司名}总群」约定，回退 owner 自建群）。
@@ -195,9 +208,10 @@ func (s *MySqlStore) GetCompanyMainGroup(ctx context.Context, companyID int64) (
 // GetMemberProfile 取人事档案。
 func (s *MySqlStore) GetMemberProfile(ctx context.Context, companyID, userID int64) (*types.MemberProfile, error) {
 	var r types.MemberProfileRow
-	err := s.db.QueryRowContext(ctx, `SELECT company_id, user_id, real_name, id_card, bank_card, resume_url, portfolio_url, updated_at FROM member_profiles WHERE company_id=? AND user_id=?`, companyID, userID).
-		Scan(&r.CompanyID, &r.UserID, &r.RealName, &r.IDCard, &r.BankCard, &r.ResumeURL, &r.PortfolioURL, &r.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("member_profiles").
+		Where("company_id = ? AND user_id = ?", companyID, userID).
+		Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -232,10 +246,22 @@ func (s *MySqlStore) UpsertMemberProfile(ctx context.Context, companyID, userID 
 	if in.PortfolioURL != nil {
 		portfolioURL = *in.PortfolioURL
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO member_profiles (company_id, user_id, real_name, id_card, bank_card, resume_url, portfolio_url, updated_at) VALUES (?,?,?,?,?,?,?,NOW(3))
-		 ON DUPLICATE KEY UPDATE real_name=VALUES(real_name), id_card=VALUES(id_card), bank_card=VALUES(bank_card), resume_url=VALUES(resume_url), portfolio_url=VALUES(portfolio_url), updated_at=NOW(3)`,
-		companyID, userID, realName, idCard, bankCard, resumeURL, portfolioURL)
+	// 对应原 SQL 的 ON DUPLICATE KEY UPDATE ... updated_at=NOW(3)：
+	// 冲突时覆盖全部业务列 + updated_at，不覆盖 company_id/user_id（联合主键）。
+	err := s.gorm.WithContext(ctx).Table("member_profiles").
+		Clauses(clause.OnConflict{DoUpdates: clause.AssignmentColumns([]string{
+			"real_name", "id_card", "bank_card", "resume_url", "portfolio_url", "updated_at",
+		})}).
+		Create(map[string]any{
+			"company_id":    companyID,
+			"user_id":       userID,
+			"real_name":     realName,
+			"id_card":       idCard,
+			"bank_card":     bankCard,
+			"resume_url":    resumeURL,
+			"portfolio_url": portfolioURL,
+			"updated_at":    time.Now().UTC(),
+		}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -254,20 +280,21 @@ func (s *MySqlStore) CreateSession(ctx context.Context, in CreateSessionInput) (
 	if loc == "" {
 		loc = ""
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO sessions (user_id, token_hash, device, ip, location, expires_at, created_at, last_active_at) VALUES (?,?,?,?,?,?,NOW(3),NOW(3))`,
-		in.UserID, in.TokenHash, in.Device, in.IP, loc, expires)
-	if err != nil {
+	now := time.Now().UTC()
+	row := types.SessionRow{
+		UserID: in.UserID, TokenHash: in.TokenHash, Device: in.Device, IP: in.IP,
+		Location: loc, ExpiresAt: expires, CreatedAt: now, LastActiveAt: now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("sessions").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.getSessionByID(ctx, id)
+	return s.getSessionByID(ctx, row.ID)
 }
 
 func (s *MySqlStore) getSessionByID(ctx context.Context, id int64) (*types.Session, error) {
 	var r types.SessionRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, token_hash, device, ip, location, expires_at, last_active_at, created_at FROM sessions WHERE id=?`, id).
-		Scan(&r.ID, &r.UserID, &r.TokenHash, &r.Device, &r.IP, &r.Location, &r.ExpiresAt, &r.LastActiveAt, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("sessions").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -280,9 +307,8 @@ func (s *MySqlStore) getSessionByID(ctx context.Context, id int64) (*types.Sessi
 // GetSessionByTokenHash 按 token 摘要找会话。
 func (s *MySqlStore) GetSessionByTokenHash(ctx context.Context, tokenHash string) (*types.Session, error) {
 	var r types.SessionRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, user_id, token_hash, device, ip, location, expires_at, last_active_at, created_at FROM sessions WHERE token_hash=?`, tokenHash).
-		Scan(&r.ID, &r.UserID, &r.TokenHash, &r.Device, &r.IP, &r.Location, &r.ExpiresAt, &r.LastActiveAt, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("sessions").Where("token_hash = ?", tokenHash).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -294,41 +320,43 @@ func (s *MySqlStore) GetSessionByTokenHash(ctx context.Context, tokenHash string
 
 // ListSessionsByUser 列用户会话（新→旧）。
 func (s *MySqlStore) ListSessionsByUser(ctx context.Context, userID int64) ([]types.Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, token_hash, device, ip, location, expires_at, last_active_at, created_at FROM sessions WHERE user_id=? ORDER BY created_at DESC`, userID)
-	if err != nil {
+	rows := []types.SessionRow{}
+	if err := s.gorm.WithContext(ctx).Table("sessions").
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Session{}
-	for rows.Next() {
-		var r types.SessionRow
-		if err := rows.Scan(&r.ID, &r.UserID, &r.TokenHash, &r.Device, &r.IP, &r.Location, &r.ExpiresAt, &r.LastActiveAt, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToSession(&r))
+	for i := range rows {
+		out = append(out, rowToSession(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// sessionLocationRow GetUserActiveLocation 的临时行。
+type sessionLocationRow struct {
+	Location  string     `gorm:"column:location"`
+	ExpiresAt *time.Time `gorm:"column:expires_at"`
 }
 
 // GetUserActiveLocation 取用户最近有效会话的归属地。
 func (s *MySqlStore) GetUserActiveLocation(ctx context.Context, userID int64) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT location, expires_at FROM sessions WHERE user_id=? ORDER BY last_active_at DESC`, userID)
-	if err != nil {
+	rows := []sessionLocationRow{}
+	if err := s.gorm.WithContext(ctx).Table("sessions").
+		Select("location, expires_at").
+		Where("user_id = ?", userID).
+		Order("last_active_at DESC").
+		Scan(&rows).Error; err != nil {
 		return "", err
 	}
-	defer rows.Close()
 	var first string
-	for rows.Next() {
-		var loc string
-		var exp sql.NullTime
-		if err := rows.Scan(&loc, &exp); err != nil {
-			return "", err
-		}
+	for _, r := range rows {
 		if first == "" {
-			first = loc
+			first = r.Location
 		}
-		if exp.Valid && exp.Time.After(time.Now().UTC()) {
-			return loc, nil
+		if r.ExpiresAt != nil && r.ExpiresAt.After(time.Now().UTC()) {
+			return r.Location, nil
 		}
 	}
 	return first, nil
@@ -336,58 +364,97 @@ func (s *MySqlStore) GetUserActiveLocation(ctx context.Context, userID int64) (s
 
 // TouchSession 刷新会话活跃时间。
 func (s *MySqlStore) TouchSession(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_active_at=NOW(3) WHERE id=?`, id)
-	return err
+	return s.gorm.WithContext(ctx).Table("sessions").
+		Where("id = ?", id).
+		Updates(map[string]any{"last_active_at": time.Now().UTC()}).Error
 }
 
 // DeleteSession 删除会话。
 func (s *MySqlStore) DeleteSession(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=?`, id)
-	return err
+	return s.gorm.WithContext(ctx).Table("sessions").Where("id = ?", id).Delete(nil).Error
 }
 
 // DeleteExpiredSessions 清理过期会话，返回删除条数。
 func (s *MySqlStore) DeleteExpiredSessions(ctx context.Context, now int64) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < FROM_UNIXTIME(?)`, now/1000)
-	if err != nil {
-		return 0, err
+	// 保留库侧 FROM_UNIXTIME，避免依赖服务器时区与 Go 侧换算的一致性。
+	res := s.gorm.WithContext(ctx).Table("sessions").
+		Where("expires_at < FROM_UNIXTIME(?)", now/1000).
+		Delete(nil)
+	if res.Error != nil {
+		return 0, res.Error
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return res.RowsAffected, nil
 }
 
 // GetSessionDays 取用户登录有效期（天）。
 func (s *MySqlStore) GetSessionDays(ctx context.Context, userID int64) (*int64, error) {
-	var sd sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT session_days FROM users WHERE id=?`, userID).Scan(&sd)
-	if errors.Is(err, sql.ErrNoRows) {
+	var r struct {
+		SessionDays *int64 `gorm:"column:session_days"`
+	}
+	err := s.gorm.WithContext(ctx).Table("users").
+		Select("session_days").
+		Where("id = ?", userID).
+		Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !sd.Valid {
+	if r.SessionDays == nil {
 		return nil, nil
 	}
-	v := sd.Int64
+	v := *r.SessionDays
 	return &v, nil
 }
 
 // SetSessionDays 设置用户登录有效期（天，nil 清除）。
 func (s *MySqlStore) SetSessionDays(ctx context.Context, userID int64, days *int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET session_days=? WHERE id=?`, days, userID)
-	return err
+	var val any
+	if days != nil {
+		val = *days
+	}
+	return s.gorm.WithContext(ctx).Table("users").
+		Where("id = ?", userID).
+		Updates(map[string]any{"session_days": val}).Error
 }
 
 // ==================== 爱发电订单 ====================
 
+// afdianOrderUpdateCols 冲突时需要覆盖的业务列（不含主键与 created_at）。
+var afdianOrderUpdateCols = []string{
+	"custom_order_id", "plan_id", "plan_title", "title", "month", "amount", "show_amount",
+	"status", "remark", "redeem_id", "product_type", "discount", "buyer_user_id",
+	"buyer_name", "buyer_avatar", "create_time", "sku_detail", "raw",
+}
+
 // UpsertAfdianOrder 落库/更新订单（按 out_trade_no）。
 func (s *MySqlStore) UpsertAfdianOrder(ctx context.Context, in UpsertAfdianOrderInput) (*types.AfdianOrder, error) {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO afdian_orders (out_trade_no, custom_order_id, plan_id, plan_title, title, month, amount, show_amount, status, remark, redeem_id, product_type, discount, buyer_user_id, buyer_name, buyer_avatar, create_time, sku_detail, raw, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(3))
-		 ON DUPLICATE KEY UPDATE custom_order_id=VALUES(custom_order_id), plan_id=VALUES(plan_id), plan_title=VALUES(plan_title), title=VALUES(title), month=VALUES(month), amount=VALUES(amount), show_amount=VALUES(show_amount), status=VALUES(status), remark=VALUES(remark), redeem_id=VALUES(redeem_id), product_type=VALUES(product_type), discount=VALUES(discount), buyer_user_id=VALUES(buyer_user_id), buyer_name=VALUES(buyer_name), buyer_avatar=VALUES(buyer_avatar), create_time=VALUES(create_time), sku_detail=VALUES(sku_detail), raw=VALUES(raw)`,
-		in.OutTradeNo, orEmpty(in.CustomOrderID), orEmpty(in.PlanID), orEmpty(in.PlanTitle), orEmpty(in.Title), in.Month, orEmpty(in.Amount), orEmpty(in.ShowAmount), in.Status, orEmpty(in.Remark), orEmpty(in.RedeemID), in.ProductType, orEmpty(in.Discount), orEmpty(in.BuyerUserID), orEmpty(in.BuyerName), orEmpty(in.BuyerAvatar), in.CreateTime, orEmpty(in.SkuDetail), orEmpty(in.Raw))
+	// 对应原 SQL 的 ON DUPLICATE KEY UPDATE <业务列>=VALUES(<业务列>)：created_at 仅在插入时写入。
+	err := s.gorm.WithContext(ctx).Table("afdian_orders").
+		Clauses(clause.OnConflict{DoUpdates: clause.AssignmentColumns(afdianOrderUpdateCols)}).
+		Create(map[string]any{
+			"out_trade_no":    in.OutTradeNo,
+			"custom_order_id": orEmpty(in.CustomOrderID),
+			"plan_id":         orEmpty(in.PlanID),
+			"plan_title":      orEmpty(in.PlanTitle),
+			"title":           orEmpty(in.Title),
+			"month":           in.Month,
+			"amount":          orEmpty(in.Amount),
+			"show_amount":     orEmpty(in.ShowAmount),
+			"status":          in.Status,
+			"remark":          orEmpty(in.Remark),
+			"redeem_id":       orEmpty(in.RedeemID),
+			"product_type":    in.ProductType,
+			"discount":        orEmpty(in.Discount),
+			"buyer_user_id":   orEmpty(in.BuyerUserID),
+			"buyer_name":      orEmpty(in.BuyerName),
+			"buyer_avatar":    orEmpty(in.BuyerAvatar),
+			"create_time":     in.CreateTime,
+			"sku_detail":      orEmpty(in.SkuDetail),
+			"raw":             orEmpty(in.Raw),
+			"created_at":      time.Now().UTC(),
+		}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -397,9 +464,10 @@ func (s *MySqlStore) UpsertAfdianOrder(ctx context.Context, in UpsertAfdianOrder
 // GetAfdianOrderByOutTradeNo 按订单号查。
 func (s *MySqlStore) GetAfdianOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*types.AfdianOrder, error) {
 	var r types.AfdianOrderRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, out_trade_no, custom_order_id, plan_id, plan_title, title, month, amount, show_amount, status, remark, redeem_id, product_type, discount, buyer_user_id, buyer_name, buyer_avatar, create_time, sku_detail, raw, created_at FROM afdian_orders WHERE out_trade_no=?`, outTradeNo).
-		Scan(&r.ID, &r.OutTradeNo, &r.CustomOrderID, &r.PlanID, &r.PlanTitle, &r.Title, &r.Month, &r.Amount, &r.ShowAmount, &r.Status, &r.Remark, &r.RedeemID, &r.ProductType, &r.Discount, &r.BuyerUserID, &r.BuyerName, &r.BuyerAvatar, &r.CreateTime, &r.SkuDetail, &r.Raw, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("afdian_orders").
+		Where("out_trade_no = ?", outTradeNo).
+		Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -411,20 +479,19 @@ func (s *MySqlStore) GetAfdianOrderByOutTradeNo(ctx context.Context, outTradeNo 
 
 // ListAfdianOrders 列订单（创建倒序）。
 func (s *MySqlStore) ListAfdianOrders(ctx context.Context, limit, offset int64) ([]types.AfdianOrder, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, out_trade_no, custom_order_id, plan_id, plan_title, title, month, amount, show_amount, status, remark, redeem_id, product_type, discount, buyer_user_id, buyer_name, buyer_avatar, create_time, sku_detail, raw, created_at FROM afdian_orders ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
-	if err != nil {
+	rows := []types.AfdianOrderRow{}
+	if err := s.gorm.WithContext(ctx).Table("afdian_orders").
+		Order("created_at DESC").
+		Limit(int(limit)).
+		Offset(int(offset)).
+		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.AfdianOrder{}
-	for rows.Next() {
-		var r types.AfdianOrderRow
-		if err := rows.Scan(&r.ID, &r.OutTradeNo, &r.CustomOrderID, &r.PlanID, &r.PlanTitle, &r.Title, &r.Month, &r.Amount, &r.ShowAmount, &r.Status, &r.Remark, &r.RedeemID, &r.ProductType, &r.Discount, &r.BuyerUserID, &r.BuyerName, &r.BuyerAvatar, &r.CreateTime, &r.SkuDetail, &r.Raw, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToAfdian(&r))
+	for i := range rows {
+		out = append(out, rowToAfdian(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // orEmpty 空串兜底。

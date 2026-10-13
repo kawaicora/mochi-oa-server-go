@@ -1,11 +1,15 @@
 // Package db 的 MySqlStore 方法：邮件配置、假期。
+//
+// 本文件全部走 GORM（s.gorm），不再出现裸 SQL 字面量；表名一律用 Table("...") 显式指定。
 package db
 
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strconv"
+	"time"
+
+	"gorm.io/gorm/clause"
 
 	"mochi-oa-server-go/internal/types"
 )
@@ -14,34 +18,32 @@ import (
 
 // ListMailConfigs 列邮件配置（scope.CompanyID nil=主配置，否则公司私有）。
 func (s *MySqlStore) ListMailConfigs(ctx context.Context, scope MailConfigScope) ([]types.MailConfig, error) {
-	var rows *sql.Rows
-	var err error
+	q := s.gorm.WithContext(ctx).Table("mail_configs").
+		Select("id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at")
 	if scope.CompanyID == nil {
-		rows, err = s.db.QueryContext(ctx, `SELECT id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at FROM mail_configs WHERE company_id IS NULL ORDER BY priority ASC, id ASC`)
+		q = q.Where("company_id IS NULL")
 	} else {
-		rows, err = s.db.QueryContext(ctx, `SELECT id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at FROM mail_configs WHERE company_id=? ORDER BY priority ASC, id ASC`, *scope.CompanyID)
+		q = q.Where("company_id=?", *scope.CompanyID)
 	}
-	if err != nil {
+	rows := []types.MailConfigRow{}
+	if err := q.Order("priority ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.MailConfig{}
-	for rows.Next() {
-		var r types.MailConfigRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.Email, &r.DisplayName, &r.Host, &r.Port, &r.Secure, &r.User, &r.Password, &r.IsDefault, &r.Enabled, &r.Priority, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToMailConfig(&r))
+	for i := range rows {
+		out = append(out, rowToMailConfig(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetMailConfig 按主键取。
 func (s *MySqlStore) GetMailConfig(ctx context.Context, id int64) (*types.MailConfig, error) {
 	var r types.MailConfigRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at FROM mail_configs WHERE id=?`, id).
-		Scan(&r.ID, &r.CompanyID, &r.Email, &r.DisplayName, &r.Host, &r.Port, &r.Secure, &r.User, &r.Password, &r.IsDefault, &r.Enabled, &r.Priority, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("mail_configs").
+		Select("id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at").
+		Where("id=?", id).
+		Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -53,22 +55,19 @@ func (s *MySqlStore) GetMailConfig(ctx context.Context, id int64) (*types.MailCo
 
 // GetDefaultMailConfig 取默认配置（先按 is_default，回退同作用域 priority 最低）。
 func (s *MySqlStore) GetDefaultMailConfig(ctx context.Context, scope MailConfigScope) (*types.MailConfig, error) {
-	var rows *sql.Rows
-	var err error
+	q := s.gorm.WithContext(ctx).Table("mail_configs").
+		Select("id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at")
 	if scope.CompanyID == nil {
-		rows, err = s.db.QueryContext(ctx, `SELECT id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at FROM mail_configs WHERE company_id IS NULL AND enabled=true ORDER BY is_default DESC, priority ASC, id ASC LIMIT 1`)
+		q = q.Where("company_id IS NULL AND enabled=true")
 	} else {
-		rows, err = s.db.QueryContext(ctx, `SELECT id, company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at FROM mail_configs WHERE company_id=? AND enabled=true ORDER BY is_default DESC, priority ASC, id ASC LIMIT 1`, *scope.CompanyID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, nil
+		q = q.Where("company_id=? AND enabled=true", *scope.CompanyID)
 	}
 	var r types.MailConfigRow
-	if err := rows.Scan(&r.ID, &r.CompanyID, &r.Email, &r.DisplayName, &r.Host, &r.Port, &r.Secure, &r.User, &r.Password, &r.IsDefault, &r.Enabled, &r.Priority, &r.CreatedAt); err != nil {
+	err := q.Order("is_default DESC, priority ASC, id ASC").Limit(1).Take(&r).Error
+	if gormNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
 	c := rowToMailConfig(&r)
@@ -90,14 +89,26 @@ func (s *MySqlStore) SaveMailConfig(ctx context.Context, in SaveMailConfigInput)
 		if in.Priority != nil {
 			priority = *in.Priority
 		}
-		res, err := s.db.ExecContext(ctx,
-			`INSERT INTO mail_configs (company_id, email, display_name, host, port, secure, user, password, is_default, enabled, priority, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))`,
-			in.CompanyID, in.Email, in.DisplayName, in.Host, port, secure, in.User, in.Password, boolPtr(in.IsDefault, false), boolPtr(in.Enabled, true), priority)
-		if err != nil {
+		// 用带主键的 Row 结构 Create，GORM 回填自增主键（等价 LastInsertId）；
+		// created_at 显式赋 time.Now().UTC()（等价原 SQL 的 NOW(3)）。
+		row := types.MailConfigRow{
+			CompanyID:   in.CompanyID,
+			Email:       in.Email,
+			DisplayName: in.DisplayName,
+			Host:        in.Host,
+			Port:        port,
+			Secure:      secure,
+			User:        in.User,
+			Password:    in.Password,
+			IsDefault:   boolPtr(in.IsDefault, false),
+			Enabled:     boolPtr(in.Enabled, true),
+			Priority:    priority,
+			CreatedAt:   time.Now().UTC(),
+		}
+		if err := s.gorm.WithContext(ctx).Table("mail_configs").Create(&row).Error; err != nil {
 			return nil, err
 		}
-		id, _ := res.LastInsertId()
-		return s.GetMailConfig(ctx, id)
+		return s.GetMailConfig(ctx, row.ID)
 	}
 	base, err := s.GetMailConfig(ctx, *in.ID)
 	if err != nil {
@@ -132,15 +143,32 @@ func (s *MySqlStore) SaveMailConfig(ctx context.Context, in SaveMailConfigInput)
 		priority = *in.Priority
 	}
 	if isDefault {
+		// 原实现忽略该清理语句的错误，这里同样忽略。
 		if base.CompanyID != nil {
-			_, _ = s.db.ExecContext(ctx, `UPDATE mail_configs SET is_default=false WHERE company_id=? AND id<>?`, *base.CompanyID, *in.ID)
+			_ = s.gorm.WithContext(ctx).Table("mail_configs").
+				Where("company_id=? AND id<>?", *base.CompanyID, *in.ID).
+				Updates(map[string]any{"is_default": false}).Error
 		} else {
-			_, _ = s.db.ExecContext(ctx, `UPDATE mail_configs SET is_default=false WHERE company_id IS NULL AND id<>?`, *in.ID)
+			_ = s.gorm.WithContext(ctx).Table("mail_configs").
+				Where("company_id IS NULL AND id<>?", *in.ID).
+				Updates(map[string]any{"is_default": false}).Error
 		}
 	}
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE mail_configs SET email=?, display_name=?, host=?, port=?, secure=?, user=?, password=?, is_default=?, enabled=?, priority=? WHERE id=?`,
-		email, display, host, port, secure, user, password, isDefault, enabled, priority, *in.ID)
+	// 全列部分更新：map 更新不会跳过零值，且不会自动写 updated_at（与原 SQL 一致）。
+	err = s.gorm.WithContext(ctx).Table("mail_configs").
+		Where("id=?", *in.ID).
+		Updates(map[string]any{
+			"email":        email,
+			"display_name": display,
+			"host":         host,
+			"port":         port,
+			"secure":       secure,
+			"user":         user,
+			"password":     password,
+			"is_default":   isDefault,
+			"enabled":      enabled,
+			"priority":     priority,
+		}).Error
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +177,11 @@ func (s *MySqlStore) SaveMailConfig(ctx context.Context, in SaveMailConfigInput)
 
 // DeleteMailConfig 删除配置。
 func (s *MySqlStore) DeleteMailConfig(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM mail_configs WHERE id=?`, id)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("mail_configs").Where("id=?", id).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "mail config not found"}
 	}
 	return nil
@@ -179,27 +207,21 @@ func orStrPtr(v, dft string) string {
 
 // ListHolidays 列假期（year=0 全部；否则按 date LIKE 'YYYY-%'）。
 func (s *MySqlStore) ListHolidays(ctx context.Context, year int64) ([]types.Holiday, error) {
-	q := `SELECT id, date, name, type, created_at FROM holidays`
-	args := []any{}
+	q := s.gorm.WithContext(ctx).Table("holidays").
+		Select("id, date, name, type, created_at")
 	if year > 0 {
-		q += ` WHERE date LIKE ?`
-		args = append(args, itoa(year)+"-%")
+		q = q.Where("date LIKE ?", itoa(year)+"-%")
 	}
-	q += ` ORDER BY date ASC`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.HolidayRow{}
+	if err := q.Order("date ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Holiday{}
-	for rows.Next() {
-		var r types.HolidayRow
-		if err := rows.Scan(&r.ID, &r.Date, &r.Name, &r.Type, &r.CreatedAt); err != nil {
-			return nil, err
-		}
+	for i := range rows {
+		r := &rows[i]
 		out = append(out, types.Holiday{ID: r.ID, Date: r.Date, Name: r.Name, Type: r.Type, CreatedAt: toIso(r.CreatedAt)})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SaveHoliday upsert 假期（按 date 唯一）。
@@ -208,16 +230,29 @@ func (s *MySqlStore) SaveHoliday(ctx context.Context, in SaveHolidayInput) (*typ
 	if typ == "" {
 		typ = "legal"
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO holidays (date, name, type, created_at) VALUES (?,?,?,NOW(3))
-		 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type)`, in.Date, in.Name, typ)
+	// 对应原 SQL 的 ON DUPLICATE KEY UPDATE name=VALUES(name), type=VALUES(type)：
+	// 冲突时只覆盖 name/type，created_at 仅在插入时写入（显式 NOW(3) 等价物）。
+	err := s.gorm.WithContext(ctx).Table("holidays").
+		Clauses(clause.OnConflict{DoUpdates: clause.AssignmentColumns([]string{"name", "type"})}).
+		Create(map[string]any{
+			"date":       in.Date,
+			"name":       in.Name,
+			"type":       typ,
+			"created_at": time.Now().UTC(),
+		}).Error
 	if err != nil {
 		return nil, err
 	}
 	var r types.HolidayRow
-	err = s.db.QueryRowContext(ctx, `SELECT id, date, name, type, created_at FROM holidays WHERE date=?`, in.Date).
-		Scan(&r.ID, &r.Date, &r.Name, &r.Type, &r.CreatedAt)
+	err = s.gorm.WithContext(ctx).Table("holidays").
+		Select("id, date, name, type, created_at").
+		Where("date=?", in.Date).
+		Take(&r).Error
 	if err != nil {
+		if gormNotFound(err) {
+			// 原实现此处由 QueryRowContext 直接返回 database/sql 的 ErrNoRows，保持一致。
+			return nil, sql.ErrNoRows
+		}
 		return nil, err
 	}
 	h := types.Holiday{ID: r.ID, Date: r.Date, Name: r.Name, Type: r.Type, CreatedAt: toIso(r.CreatedAt)}
@@ -226,8 +261,8 @@ func (s *MySqlStore) SaveHoliday(ctx context.Context, in SaveHolidayInput) (*typ
 
 // DeleteHoliday 按日期删除。
 func (s *MySqlStore) DeleteHoliday(ctx context.Context, date string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM holidays WHERE date=?`, date)
-	return err
+	// 原实现不检查影响行数，有错才返回错误。
+	return s.gorm.WithContext(ctx).Table("holidays").Where("date=?", date).Delete(nil).Error
 }
 
 // itoa 简易 int64 → string。

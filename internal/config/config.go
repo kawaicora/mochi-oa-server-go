@@ -324,10 +324,8 @@ func build() *ServerConfig {
 	}
 	publicBase = strings.TrimRight(publicBase, "/")
 
+	// 只有 MySQL 一种存储实现（memory 模式已移除）
 	storage := "mysql"
-	if strings.ToLower(strEnv("STORAGE", "mysql")) == "memory" {
-		storage = "memory"
-	}
 
 	return &ServerConfig{
 		Host:          host,

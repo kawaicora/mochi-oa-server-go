@@ -1,12 +1,15 @@
 // Package db 的 MySqlStore 方法实现（拆分文件便于维护；与 mysql.go 同包）。
-// 每个方法 1:1 对应 mysql-store.ts 的同名方法，SQL 语义、排序、过滤、转换均对齐。
+// 每个方法 1:1 对应 mysql-store.ts 的同名方法，语义、排序、过滤、转换均对齐。
+//
+// 本文件全部走 GORM（s.gorm），不再出现裸 SQL 字面量。
 package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"strings"
+	"time"
+
+	"gorm.io/gorm"
 
 	"mochi-oa-server-go/internal/types"
 )
@@ -15,146 +18,139 @@ import (
 
 // CreateUser 创建用户（extra 初始为 NULL）。
 func (s *MySqlStore) CreateUser(ctx context.Context, in CreateUserInput) (*types.User, error) {
-	nick, email, avatar, phone := in.Nick, in.Email, in.Avatar, in.Phone
+	nick := in.Nick
 	if nick == "" {
 		nick = ""
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (username, password_hash, nick, avatar, email, phone, extra, created_at) VALUES (?,?,?,?,?,?,NULL, NOW(3))`,
-		in.Username, in.PasswordHash, nick, avatar, email, phone)
-	if err != nil {
+	row := types.UserRow{
+		Username:     in.Username,
+		PasswordHash: in.PasswordHash,
+		Nick:         nick,
+		Avatar:       in.Avatar,
+		Email:        in.Email,
+		Phone:        in.Phone,
+		Extra:        nil,
+		CreatedAt:    time.Now().UTC(),
+	}
+	if err := s.gorm.WithContext(ctx).Table("users").Create(&row).Error; err != nil {
 		if isUniqueErr(err) {
 			return nil, &AlreadyExistsError{Msg: "username taken"}
 		}
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetUserByID(ctx, id)
+	return s.GetUserByID(ctx, row.ID)
 }
 
 // GetUserByUsername 按用户名取（含密码散列）。
 func (s *MySqlStore) GetUserByUsername(ctx context.Context, username string) (*types.UserWithPassword, error) {
-	r, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, nick, avatar, email, phone, extra, session_days, created_at FROM users WHERE username=?`, username))
-	if errors.Is(err, sql.ErrNoRows) {
+	var r types.UserRow
+	err := s.gorm.WithContext(ctx).Table("users").Where("username = ?", username).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &types.UserWithPassword{User: rowToUser(r), PasswordHash: r.PasswordHash}, nil
+	return &types.UserWithPassword{User: rowToUser(&r), PasswordHash: r.PasswordHash}, nil
 }
 
 // GetUserByEmail 按邮箱取（含密码散列）。
 func (s *MySqlStore) GetUserByEmail(ctx context.Context, email string) (*types.UserWithPassword, error) {
-	r, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, nick, avatar, email, phone, extra, session_days, created_at FROM users WHERE email=?`, email))
-	if errors.Is(err, sql.ErrNoRows) {
+	var r types.UserRow
+	err := s.gorm.WithContext(ctx).Table("users").Where("email = ?", email).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &types.UserWithPassword{User: rowToUser(r), PasswordHash: r.PasswordHash}, nil
+	return &types.UserWithPassword{User: rowToUser(&r), PasswordHash: r.PasswordHash}, nil
 }
 
 // GetUserByID 按主键取用户。
 func (s *MySqlStore) GetUserByID(ctx context.Context, id int64) (*types.User, error) {
-	r, err := scanUser(s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, nick, avatar, email, phone, extra, session_days, created_at FROM users WHERE id=?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
+	var r types.UserRow
+	err := s.gorm.WithContext(ctx).Table("users").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	u := rowToUser(r)
+	u := rowToUser(&r)
 	return &u, nil
 }
 
 // ListUsers 列全部用户（id 升序）。
 func (s *MySqlStore) ListUsers(ctx context.Context) ([]types.User, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, password_hash, nick, avatar, email, phone, extra, session_days, created_at FROM users ORDER BY id ASC`)
-	if err != nil {
+	rows := []types.UserRow{}
+	if err := s.gorm.WithContext(ctx).Table("users").Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.User{}
-	for rows.Next() {
-		r, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rowToUser(r))
+	for i := range rows {
+		out = append(out, rowToUser(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // UpdateUserProfile 更新资料（仅更新传入字段）。
 func (s *MySqlStore) UpdateUserProfile(ctx context.Context, userID int64, patch UserProfilePatch) error {
-	sets, args := []string{}, []any{}
+	updates := map[string]any{}
 	if patch.Nick != nil {
-		sets, args = append(sets, "nick=?"), append(args, *patch.Nick)
+		updates["nick"] = *patch.Nick
 	}
 	if patch.Avatar != nil {
-		sets, args = append(sets, "avatar=?"), append(args, *patch.Avatar)
+		updates["avatar"] = *patch.Avatar
 	}
 	if patch.Phone != nil {
-		sets, args = append(sets, "phone=?"), append(args, *patch.Phone)
+		updates["phone"] = *patch.Phone
 	}
 	if patch.Email != nil {
-		sets, args = append(sets, "email=?"), append(args, *patch.Email)
+		updates["email"] = *patch.Email
 	}
 	if patch.Extra != nil {
-		sets, args = append(sets, "extra=?"), append(args, *patch.Extra)
+		updates["extra"] = *patch.Extra
 	}
-	if len(sets) == 0 {
+	if len(updates) == 0 {
 		return nil
 	}
-	args = append(args, userID)
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET `+strings.Join(sets, ",")+` WHERE id=?`, args...)
-	return err
+	return s.gorm.WithContext(ctx).Table("users").Where("id = ?", userID).Updates(updates).Error
 }
 
 // UpdateUserPassword 更新密码散列。
 func (s *MySqlStore) UpdateUserPassword(ctx context.Context, userID int64, passwordHash string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash=? WHERE id=?`, passwordHash, userID)
-	return err
+	return s.gorm.WithContext(ctx).Table("users").
+		Where("id = ?", userID).
+		Updates(map[string]any{"password_hash": passwordHash}).Error
 }
 
 // ==================== 公司 ====================
 
 // CreateCompany 创建公司，并把 owner 加入为 owner 成员。
 func (s *MySqlStore) CreateCompany(ctx context.Context, in CreateCompanyInput) (*types.Company, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO companies (name, code, owner_id, created_at) VALUES (?,?,?,NOW(3))`, in.Name, in.Code, in.OwnerID)
-	if err != nil {
-		if isUniqueErr(err) {
-			return nil, &AlreadyExistsError{Msg: "code taken"}
+	row := types.CompanyRow{Name: in.Name, Code: in.Code, OwnerID: in.OwnerID, CreatedAt: time.Now().UTC()}
+	if err := s.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("companies").Create(&row).Error; err != nil {
+			if isUniqueErr(err) {
+				return &AlreadyExistsError{Msg: "code taken"}
+			}
+			return err
 		}
+		return tx.Table("company_members").Create(map[string]any{
+			"company_id": row.ID, "user_id": in.OwnerID, "role": "owner", "joined_at": time.Now().UTC(),
+		}).Error
+	}); err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO company_members (company_id, user_id, role, joined_at) VALUES (?,?, 'owner', NOW(3))`, id, in.OwnerID); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.GetCompanyByID(ctx, id)
+	return s.GetCompanyByID(ctx, row.ID)
 }
 
 // GetCompanyByID 按主键取公司。
 func (s *MySqlStore) GetCompanyByID(ctx context.Context, id int64) (*types.Company, error) {
 	var r types.CompanyRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, code, owner_id, created_at FROM companies WHERE id=?`, id).
-		Scan(&r.ID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("companies").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -167,9 +163,8 @@ func (s *MySqlStore) GetCompanyByID(ctx context.Context, id int64) (*types.Compa
 // GetCompanyByCode 按加入码取公司。
 func (s *MySqlStore) GetCompanyByCode(ctx context.Context, code string) (*types.Company, error) {
 	var r types.CompanyRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, code, owner_id, created_at FROM companies WHERE code=?`, code).
-		Scan(&r.ID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("companies").Where("code = ?", code).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -182,9 +177,8 @@ func (s *MySqlStore) GetCompanyByCode(ctx context.Context, code string) (*types.
 // GetCompanyByName 按名称取公司。
 func (s *MySqlStore) GetCompanyByName(ctx context.Context, name string) (*types.Company, error) {
 	var r types.CompanyRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, code, owner_id, created_at FROM companies WHERE name=?`, name).
-		Scan(&r.ID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("companies").Where("name = ?", name).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -196,33 +190,26 @@ func (s *MySqlStore) GetCompanyByName(ctx context.Context, name string) (*types.
 
 // ListCompanies 列公司（name LIKE 模糊，id 升序，上限 100）。
 func (s *MySqlStore) ListCompanies(ctx context.Context, keyword string) ([]types.Company, error) {
-	q := `SELECT id, name, code, owner_id, created_at FROM companies`
-	args := []any{}
+	q := s.gorm.WithContext(ctx).Table("companies")
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		q += ` WHERE name LIKE ?`
-		args = append(args, "%"+kw+"%")
+		q = q.Where("name LIKE ?", "%"+kw+"%")
 	}
-	q += ` ORDER BY id ASC LIMIT 100`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.CompanyRow{}
+	if err := q.Order("id ASC").Limit(100).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Company{}
-	for rows.Next() {
-		var r types.CompanyRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToCompany(&r))
+	for i := range rows {
+		out = append(out, rowToCompany(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // AddMember 加入公司（重复 → AlreadyExists）。
 func (s *MySqlStore) AddMember(ctx context.Context, companyID, userID int64, role string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO company_members (company_id, user_id, role, joined_at) VALUES (?,?,?,NOW(3))`, companyID, userID, role)
+	err := s.gorm.WithContext(ctx).Table("company_members").Create(map[string]any{
+		"company_id": companyID, "user_id": userID, "role": role, "joined_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		if isUniqueErr(err) {
 			return &AlreadyExistsError{Msg: "already a member"}
@@ -234,11 +221,13 @@ func (s *MySqlStore) AddMember(ctx context.Context, companyID, userID int64, rol
 
 // RemoveMember 移除成员（不存在 → NotFound）。
 func (s *MySqlStore) RemoveMember(ctx context.Context, companyID, userID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM company_members WHERE company_id=? AND user_id=?`, companyID, userID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("company_members").
+		Where("company_id = ? AND user_id = ?", companyID, userID).
+		Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "not a member"}
 	}
 	return nil
@@ -246,11 +235,13 @@ func (s *MySqlStore) RemoveMember(ctx context.Context, companyID, userID int64) 
 
 // SetRole 设置成员角色（不存在 → NotFound）。
 func (s *MySqlStore) SetRole(ctx context.Context, companyID, userID int64, role string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE company_members SET role=? WHERE company_id=? AND user_id=?`, role, companyID, userID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("company_members").
+		Where("company_id = ? AND user_id = ?", companyID, userID).
+		Updates(map[string]any{"role": role})
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "not a member"}
 	}
 	return nil
@@ -259,69 +250,71 @@ func (s *MySqlStore) SetRole(ctx context.Context, companyID, userID int64, role 
 // GetMemberRole 取成员角色（非成员返回空串+nil）。
 func (s *MySqlStore) GetMemberRole(ctx context.Context, companyID, userID int64) (string, error) {
 	var role string
-	err := s.db.QueryRowContext(ctx, `SELECT role FROM company_members WHERE company_id=? AND user_id=?`, companyID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("company_members").
+		Select("role").
+		Where("company_id = ? AND user_id = ?", companyID, userID).
+		Take(&role).Error
+	if gormNotFound(err) {
 		return "", nil
 	}
-	return role, err
+	if err != nil {
+		return "", err
+	}
+	return role, nil
 }
 
 // GetMembers 列公司成员（联用户，joined_at 升序）。
 func (s *MySqlStore) GetMembers(ctx context.Context, companyID int64) ([]types.Member, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.company_id, m.user_id, m.role, m.joined_at, u.username, u.nick FROM company_members m LEFT JOIN users u ON u.id=m.user_id WHERE m.company_id=? ORDER BY m.joined_at ASC`, companyID)
-	if err != nil {
+	out := []types.Member{}
+	if err := s.gorm.WithContext(ctx).Table("company_members m").
+		Select("m.company_id, m.user_id, m.role, m.joined_at, u.username, u.nick").
+		Joins("LEFT JOIN users u ON u.id = m.user_id").
+		Where("m.company_id = ?", companyID).
+		Order("m.joined_at ASC").
+		Scan(&out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []types.Member{}
-	for rows.Next() {
-		var m types.Member
-		var username, nick sql.NullString
-		if err := rows.Scan(&m.CompanyID, &m.UserID, &m.Role, &m.JoinedAt, &username, &nick); err != nil {
-			return nil, err
-		}
-		if username.Valid {
-			u := username.String
-			m.Username = &u
-		}
-		if nick.Valid {
-			n := nick.String
-			m.Nick = &n
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return out, nil
+}
+
+// membershipRow GetUserCompanies 的联表临时行。
+type membershipRow struct {
+	ID        int64     `gorm:"column:id"`
+	Name      string    `gorm:"column:name"`
+	Code      string    `gorm:"column:code"`
+	OwnerID   int64     `gorm:"column:owner_id"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+	Role      string    `gorm:"column:role"`
 }
 
 // GetUserCompanies 取用户所属公司（联公司）。
 func (s *MySqlStore) GetUserCompanies(ctx context.Context, userID int64) ([]types.Membership, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT c.id, c.name, c.code, c.owner_id, c.created_at, m.role FROM company_members m JOIN companies c ON c.id=m.company_id WHERE m.user_id=? ORDER BY m.company_id ASC`, userID)
-	if err != nil {
+	rows := []membershipRow{}
+	if err := s.gorm.WithContext(ctx).Table("company_members m").
+		Select("c.id, c.name, c.code, c.owner_id, c.created_at, m.role").
+		Joins("JOIN companies c ON c.id = m.company_id").
+		Where("m.user_id = ?", userID).
+		Order("m.company_id ASC").
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Membership{}
-	for rows.Next() {
-		var cr types.CompanyRow
-		var role string
-		if err := rows.Scan(&cr.ID, &cr.Name, &cr.Code, &cr.OwnerID, &cr.CreatedAt, &role); err != nil {
-			return nil, err
-		}
-		c := rowToCompany(&cr)
-		out = append(out, types.Membership{Company: c, Role: role})
+	for _, r := range rows {
+		cr := types.CompanyRow{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, CreatedAt: r.CreatedAt}
+		out = append(out, types.Membership{Company: rowToCompany(&cr), Role: r.Role})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RenameCompany 重命名公司。
 func (s *MySqlStore) RenameCompany(ctx context.Context, companyID int64, name string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE companies SET name=? WHERE id=?`, name, companyID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("companies").
+		Where("id = ?", companyID).
+		Updates(map[string]any{"name": name})
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "company not found"}
 	}
 	return nil
@@ -329,11 +322,13 @@ func (s *MySqlStore) RenameCompany(ctx context.Context, companyID int64, name st
 
 // SetCompanyOwner 转让公司（更新 owner_id）。
 func (s *MySqlStore) SetCompanyOwner(ctx context.Context, companyID, ownerID int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE companies SET owner_id=? WHERE id=?`, ownerID, companyID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("companies").
+		Where("id = ?", companyID).
+		Updates(map[string]any{"owner_id": ownerID})
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "company not found"}
 	}
 	return nil
@@ -350,59 +345,62 @@ func (s *MySqlStore) DeleteCompany(ctx context.Context, companyID int64) error {
 			return err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE dm FROM department_members dm JOIN departments d ON d.id=dm.department_id WHERE d.company_id=?`, companyID); err != nil {
+	// 旧实现用 DELETE dm FROM department_members dm JOIN departments d ...：
+	// 语义等价于「先取该公司全部部门 id，再按 department_id IN (...) 删除」。
+	var deptIDs []int64
+	if err := s.gorm.WithContext(ctx).Table("departments").
+		Where("company_id = ?", companyID).Pluck("id", &deptIDs).Error; err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM departments WHERE company_id=?`, companyID); err != nil {
+	if len(deptIDs) > 0 {
+		if err := s.gorm.WithContext(ctx).Table("department_members").
+			Where("department_id IN ?", deptIDs).Delete(nil).Error; err != nil {
+			return err
+		}
+	}
+	if err := s.gorm.WithContext(ctx).Table("departments").
+		Where("company_id = ?", companyID).Delete(nil).Error; err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM company_members WHERE company_id=?`, companyID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("company_members").
+		Where("company_id = ?", companyID).Delete(nil).Error; err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM company_invitations WHERE company_id=?`, companyID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("company_invitations").
+		Where("company_id = ?", companyID).Delete(nil).Error; err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM companies WHERE id=?`, companyID)
-	return err
+	return s.gorm.WithContext(ctx).Table("companies").Where("id = ?", companyID).Delete(nil).Error
 }
 
 // listGroupsRows 取某公司全部群 id（供 DeleteCompany 内部用）。
 func (s *MySqlStore) listGroupsRows(ctx context.Context, companyID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM `groups` WHERE company_id=?", companyID)
-	if err != nil {
+	out := []int64{}
+	if err := s.gorm.WithContext(ctx).Table("`groups`").
+		Where("company_id = ?", companyID).Pluck("id", &out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ==================== 部门 ====================
 
 // CreateDepartment 创建部门。
 func (s *MySqlStore) CreateDepartment(ctx context.Context, in CreateDepartmentInput) (*types.Department, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO departments (company_id, name, parent_id, created_at) VALUES (?,?,?,NOW(3))`,
-		in.CompanyID, in.Name, in.ParentID)
-	if err != nil {
+	row := types.DepartmentRow{
+		CompanyID: in.CompanyID, Name: in.Name, ParentID: in.ParentID, CreatedAt: time.Now().UTC(),
+	}
+	if err := s.gorm.WithContext(ctx).Table("departments").Create(&row).Error; err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetDepartmentByID(ctx, id)
+	return s.GetDepartmentByID(ctx, row.ID)
 }
 
 // GetDepartmentByID 按主键取部门。
 func (s *MySqlStore) GetDepartmentByID(ctx context.Context, id int64) (*types.Department, error) {
 	var r types.DepartmentRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, name, parent_id, created_at FROM departments WHERE id=?`, id).
-		Scan(&r.ID, &r.CompanyID, &r.Name, &r.ParentID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("departments").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -414,25 +412,23 @@ func (s *MySqlStore) GetDepartmentByID(ctx context.Context, id int64) (*types.De
 
 // ListDepartments 列部门（id 升序）。
 func (s *MySqlStore) ListDepartments(ctx context.Context, companyID int64) ([]types.Department, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, company_id, name, parent_id, created_at FROM departments WHERE company_id=? ORDER BY id ASC`, companyID)
-	if err != nil {
+	rows := []types.DepartmentRow{}
+	if err := s.gorm.WithContext(ctx).Table("departments").
+		Where("company_id = ?", companyID).Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Department{}
-	for rows.Next() {
-		var r types.DepartmentRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.Name, &r.ParentID, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToDepartment(&r))
+	for i := range rows {
+		out = append(out, rowToDepartment(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // AssignDepartment 把用户加入部门。
 func (s *MySqlStore) AssignDepartment(ctx context.Context, departmentID, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO department_members (department_id, user_id, joined_at) VALUES (?,?,NOW(3))`, departmentID, userID)
+	err := s.gorm.WithContext(ctx).Table("department_members").Create(map[string]any{
+		"department_id": departmentID, "user_id": userID, "joined_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		if isUniqueErr(err) {
 			return &AlreadyExistsError{Msg: "already in department"}
@@ -444,11 +440,13 @@ func (s *MySqlStore) AssignDepartment(ctx context.Context, departmentID, userID 
 
 // RemoveDepartmentMember 移除部门成员。
 func (s *MySqlStore) RemoveDepartmentMember(ctx context.Context, departmentID, userID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM department_members WHERE department_id=? AND user_id=?`, departmentID, userID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("department_members").
+		Where("department_id = ? AND user_id = ?", departmentID, userID).
+		Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "not in department"}
 	}
 	return nil
@@ -456,42 +454,29 @@ func (s *MySqlStore) RemoveDepartmentMember(ctx context.Context, departmentID, u
 
 // GetDepartmentMembers 列部门成员（联用户）。
 func (s *MySqlStore) GetDepartmentMembers(ctx context.Context, departmentID int64) ([]types.DepartmentMember, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.department_id, m.user_id, m.joined_at, u.username, u.nick FROM department_members m LEFT JOIN users u ON u.id=m.user_id WHERE m.department_id=? ORDER BY m.joined_at ASC`, departmentID)
-	if err != nil {
+	out := []types.DepartmentMember{}
+	if err := s.gorm.WithContext(ctx).Table("department_members m").
+		Select("m.department_id, m.user_id, m.joined_at, u.username, u.nick").
+		Joins("LEFT JOIN users u ON u.id = m.user_id").
+		Where("m.department_id = ?", departmentID).
+		Order("m.joined_at ASC").
+		Scan(&out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []types.DepartmentMember{}
-	for rows.Next() {
-		var m types.DepartmentMember
-		var username, nick sql.NullString
-		if err := rows.Scan(&m.DepartmentID, &m.UserID, &m.JoinedAt, &username, &nick); err != nil {
-			return nil, err
-		}
-		if username.Valid {
-			u := username.String
-			m.Username = &u
-		}
-		if nick.Valid {
-			n := nick.String
-			m.Nick = &n
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DeleteDepartment 删除部门并级联移除成员。
 func (s *MySqlStore) DeleteDepartment(ctx context.Context, departmentID int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM department_members WHERE department_id=?`, departmentID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("department_members").
+		Where("department_id = ?", departmentID).Delete(nil).Error; err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM departments WHERE id=?`, departmentID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("departments").Where("id = ?", departmentID).Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "department not found"}
 	}
 	return nil
@@ -501,39 +486,36 @@ func (s *MySqlStore) DeleteDepartment(ctx context.Context, departmentID int64) e
 
 // CreateGroup 创建群（companyId<=0 存 NULL），owner 自动入群。
 func (s *MySqlStore) CreateGroup(ctx context.Context, in CreateGroupInput) (*types.Group, error) {
-	var companyID any
+	var companyID *int64
 	if in.CompanyID > 0 {
-		companyID = in.CompanyID
+		v := in.CompanyID
+		companyID = &v
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
+	row := types.GroupRow{
+		CompanyID: companyID, DepartmentID: in.DepartmentID, Name: in.Name,
+		Code: in.Code, OwnerID: in.OwnerID, CreatedAt: time.Now().UTC(),
 	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, "INSERT INTO `groups` (company_id, department_id, name, code, owner_id, created_at) VALUES (?,?,?,?,?,NOW(3))",
-		companyID, in.DepartmentID, in.Name, in.Code, in.OwnerID)
-	if err != nil {
-		if isUniqueErr(err) {
-			return nil, &AlreadyExistsError{Msg: "code taken"}
+	if err := s.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("`groups`").Create(&row).Error; err != nil {
+			if isUniqueErr(err) {
+				return &AlreadyExistsError{Msg: "code taken"}
+			}
+			return err
 		}
+		return tx.Table("group_members").Create(map[string]any{
+			"group_id": row.ID, "user_id": in.OwnerID, "role": "owner", "joined_at": time.Now().UTC(),
+		}).Error
+	}); err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?,?,'owner',NOW(3))`, id, in.OwnerID); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.GetGroupByID(ctx, id)
+	return s.GetGroupByID(ctx, row.ID)
 }
 
 // GetGroupByID 按主键取群。
 func (s *MySqlStore) GetGroupByID(ctx context.Context, id int64) (*types.Group, error) {
 	var r types.GroupRow
-	err := s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE id=?", id).
-		Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("`groups`").Where("id = ?", id).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -548,13 +530,13 @@ func (s *MySqlStore) GetGroupByName(ctx context.Context, companyID int64, name s
 	var r types.GroupRow
 	var err error
 	if companyID > 0 {
-		err = s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE name=? AND company_id=?", name, companyID).
-			Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
+		err = s.gorm.WithContext(ctx).Table("`groups`").
+			Where("name = ? AND company_id = ?", name, companyID).Take(&r).Error
 	} else {
-		err = s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE name=? AND company_id IS NULL", name).
-			Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
+		err = s.gorm.WithContext(ctx).Table("`groups`").
+			Where("name = ? AND company_id IS NULL", name).Take(&r).Error
 	}
-	if errors.Is(err, sql.ErrNoRows) {
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -567,9 +549,8 @@ func (s *MySqlStore) GetGroupByName(ctx context.Context, companyID int64, name s
 // GetGroupByCode 按加入码取群。
 func (s *MySqlStore) GetGroupByCode(ctx context.Context, code string) (*types.Group, error) {
 	var r types.GroupRow
-	err := s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE code=?", code).
-		Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("`groups`").Where("code = ?", code).Take(&r).Error
+	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -581,36 +562,29 @@ func (s *MySqlStore) GetGroupByCode(ctx context.Context, code string) (*types.Gr
 
 // ListGroups 列群（可选 companyId/keyword，id 升序，上限 100）。
 func (s *MySqlStore) ListGroups(ctx context.Context, companyID int64, keyword string) ([]types.Group, error) {
-	q := "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE 1=1"
-	args := []any{}
+	q := s.gorm.WithContext(ctx).Table("`groups`")
 	if companyID != 0 {
-		q += ` AND company_id=?`
-		args = append(args, companyID)
+		q = q.Where("company_id = ?", companyID)
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		q += ` AND name LIKE ?`
-		args = append(args, "%"+kw+"%")
+		q = q.Where("name LIKE ?", "%"+kw+"%")
 	}
-	q += ` ORDER BY id ASC LIMIT 100`
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
+	rows := []types.GroupRow{}
+	if err := q.Order("id ASC").Limit(100).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Group{}
-	for rows.Next() {
-		var r types.GroupRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToGroup(&r))
+	for i := range rows {
+		out = append(out, rowToGroup(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // AddGroupMember 入群。
 func (s *MySqlStore) AddGroupMember(ctx context.Context, groupID, userID int64, role string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO group_members (group_id, user_id, role, joined_at) VALUES (?,?,?,NOW(3))`, groupID, userID, role)
+	err := s.gorm.WithContext(ctx).Table("group_members").Create(map[string]any{
+		"group_id": groupID, "user_id": userID, "role": role, "joined_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		if isUniqueErr(err) {
 			return &AlreadyExistsError{Msg: "already in group"}
@@ -622,11 +596,13 @@ func (s *MySqlStore) AddGroupMember(ctx context.Context, groupID, userID int64, 
 
 // RemoveGroupMember 移出群。
 func (s *MySqlStore) RemoveGroupMember(ctx context.Context, groupID, userID int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM group_members WHERE group_id=? AND user_id=?`, groupID, userID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("group_members").
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Delete(nil)
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "not in group"}
 	}
 	return nil
@@ -635,36 +611,48 @@ func (s *MySqlStore) RemoveGroupMember(ctx context.Context, groupID, userID int6
 // GetGroupMemberRole 取群成员角色。
 func (s *MySqlStore) GetGroupMemberRole(ctx context.Context, groupID, userID int64) (string, error) {
 	var role string
-	err := s.db.QueryRowContext(ctx, `SELECT role FROM group_members WHERE group_id=? AND user_id=?`, groupID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := s.gorm.WithContext(ctx).Table("group_members").
+		Select("role").
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Take(&role).Error
+	if gormNotFound(err) {
 		return "", nil
 	}
-	return role, err
+	if err != nil {
+		return "", err
+	}
+	return role, nil
 }
 
 // GetGroupMember 取群成员（含禁言截止，ISO 字符串）。
 func (s *MySqlStore) GetGroupMember(ctx context.Context, groupID, userID int64) (string, *string, error) {
-	var role string
-	var muted sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT role, muted_until FROM group_members WHERE group_id=? AND user_id=?`, groupID, userID).Scan(&role, &muted)
-	if errors.Is(err, sql.ErrNoRows) {
+	var r struct {
+		Role       string     `gorm:"column:role"`
+		MutedUntil *time.Time `gorm:"column:muted_until"`
+	}
+	err := s.gorm.WithContext(ctx).Table("group_members").
+		Select("role, muted_until").
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Take(&r).Error
+	if gormNotFound(err) {
 		return "", nil, nil
 	}
 	if err != nil {
 		return "", nil, err
 	}
 	var mutedPtr *string
-	if muted.Valid && !muted.Time.IsZero() {
-		s := toIso(muted.Time)
+	if r.MutedUntil != nil && !r.MutedUntil.IsZero() {
+		s := toIso(*r.MutedUntil)
 		mutedPtr = &s
 	}
-	return role, mutedPtr, nil
+	return r.Role, mutedPtr, nil
 }
 
 // SetGroupMemberRole 设置群成员角色。
 func (s *MySqlStore) SetGroupMemberRole(ctx context.Context, groupID, userID int64, role string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE group_members SET role=? WHERE group_id=? AND user_id=?`, role, groupID, userID)
-	return err
+	return s.gorm.WithContext(ctx).Table("group_members").
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Updates(map[string]any{"role": role}).Error
 }
 
 // SetGroupMemberMuted 设置禁言截止（nil 清除）。
@@ -677,17 +665,20 @@ func (s *MySqlStore) SetGroupMemberMuted(ctx context.Context, groupID, userID in
 		}
 		val = t
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE group_members SET muted_until=? WHERE group_id=? AND user_id=?`, val, groupID, userID)
-	return err
+	return s.gorm.WithContext(ctx).Table("group_members").
+		Where("group_id = ? AND user_id = ?", groupID, userID).
+		Updates(map[string]any{"muted_until": val}).Error
 }
 
 // SetGroupOwner 转让群主。
 func (s *MySqlStore) SetGroupOwner(ctx context.Context, groupID, ownerID int64) error {
-	res, err := s.db.ExecContext(ctx, "UPDATE `groups` SET owner_id=? WHERE id=?", ownerID, groupID)
-	if err != nil {
-		return err
+	res := s.gorm.WithContext(ctx).Table("`groups`").
+		Where("id = ?", groupID).
+		Updates(map[string]any{"owner_id": ownerID})
+	if res.Error != nil {
+		return res.Error
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "group not found"}
 	}
 	return nil
@@ -695,86 +686,83 @@ func (s *MySqlStore) SetGroupOwner(ctx context.Context, groupID, ownerID int64) 
 
 // DeleteGroup 解散群：删群会话消息/成员，删群成员。
 func (s *MySqlStore) DeleteGroup(ctx context.Context, groupID int64) error {
-	convs, err := s.db.QueryContext(ctx, `SELECT id FROM conversations WHERE type='group' AND group_id=?`, groupID)
-	if err != nil {
+	convIDs := []int64{}
+	if err := s.gorm.WithContext(ctx).Table("conversations").
+		Where("type = 'group' AND group_id = ?", groupID).Pluck("id", &convIDs).Error; err != nil {
 		return err
 	}
-	var convIDs []int64
-	for convs.Next() {
-		var id int64
-		if err := convs.Scan(&id); err != nil {
-			convs.Close()
-			return err
-		}
-		convIDs = append(convIDs, id)
-	}
-	convs.Close()
 	for _, cid := range convIDs {
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE conversation_id=?`, cid); err != nil {
+		if err := s.gorm.WithContext(ctx).Table("messages").
+			Where("conversation_id = ?", cid).Delete(nil).Error; err != nil {
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM conversation_members WHERE conversation_id=?`, cid); err != nil {
+		if err := s.gorm.WithContext(ctx).Table("conversation_members").
+			Where("conversation_id = ?", cid).Delete(nil).Error; err != nil {
 			return err
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM conversations WHERE id=?`, cid); err != nil {
+		if err := s.gorm.WithContext(ctx).Table("conversations").
+			Where("id = ?", cid).Delete(nil).Error; err != nil {
 			return err
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM group_members WHERE group_id=?`, groupID); err != nil {
+	if err := s.gorm.WithContext(ctx).Table("group_members").
+		Where("group_id = ?", groupID).Delete(nil).Error; err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, "DELETE FROM `groups` WHERE id=?", groupID)
-	return err
+	return s.gorm.WithContext(ctx).Table("`groups`").Where("id = ?", groupID).Delete(nil).Error
+}
+
+// groupMemberListRow GetGroupMembers 的联表临时行。
+type groupMemberListRow struct {
+	GroupID    int64      `gorm:"column:group_id"`
+	UserID     int64      `gorm:"column:user_id"`
+	Role       string     `gorm:"column:role"`
+	JoinedAt   string     `gorm:"column:joined_at"`
+	MutedUntil *time.Time `gorm:"column:muted_until"`
+	Username   *string    `gorm:"column:username"`
+	Nick       *string    `gorm:"column:nick"`
 }
 
 // GetGroupMembers 列群成员（联用户）。
 func (s *MySqlStore) GetGroupMembers(ctx context.Context, groupID int64) ([]types.GroupMember, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.group_id, m.user_id, m.role, m.joined_at, m.muted_until, u.username, u.nick FROM group_members m LEFT JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY m.joined_at ASC`, groupID)
-	if err != nil {
+	rows := []groupMemberListRow{}
+	if err := s.gorm.WithContext(ctx).Table("group_members m").
+		Select("m.group_id, m.user_id, m.role, m.joined_at, m.muted_until, u.username, u.nick").
+		Joins("LEFT JOIN users u ON u.id = m.user_id").
+		Where("m.group_id = ?", groupID).
+		Order("m.joined_at ASC").
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.GroupMember{}
-	for rows.Next() {
-		var m types.GroupMember
-		var username, nick sql.NullString
-		var muted sql.NullTime
-		if err := rows.Scan(&m.GroupID, &m.UserID, &m.Role, &m.JoinedAt, &muted, &username, &nick); err != nil {
-			return nil, err
+	for _, r := range rows {
+		m := types.GroupMember{
+			GroupID: r.GroupID, UserID: r.UserID, Role: r.Role, JoinedAt: r.JoinedAt,
+			Username: r.Username, Nick: r.Nick,
 		}
-		if username.Valid {
-			u := username.String
-			m.Username = &u
-		}
-		if nick.Valid {
-			n := nick.String
-			m.Nick = &n
-		}
-		if muted.Valid && !muted.Time.IsZero() {
-			s := toIso(muted.Time)
-			m.MutedUntil = &s
+		if r.MutedUntil != nil && !r.MutedUntil.IsZero() {
+			iso := toIso(*r.MutedUntil)
+			m.MutedUntil = &iso
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetUserGroups 取用户所在群。
 func (s *MySqlStore) GetUserGroups(ctx context.Context, userID int64) ([]types.Group, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT g.id, g.company_id, g.department_id, g.name, g.code, g.owner_id, g.created_at FROM group_members m JOIN `groups` g ON g.id=m.group_id WHERE m.user_id=? ORDER BY m.group_id ASC", userID)
-	if err != nil {
+	rows := []types.GroupRow{}
+	if err := s.gorm.WithContext(ctx).Table("group_members m").
+		Select("g.id, g.company_id, g.department_id, g.name, g.code, g.owner_id, g.created_at").
+		Joins("JOIN `groups` g ON g.id = m.group_id").
+		Where("m.user_id = ?", userID).
+		Order("m.group_id ASC").
+		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []types.Group{}
-	for rows.Next() {
-		var r types.GroupRow
-		if err := rows.Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, rowToGroup(&r))
+	for i := range rows {
+		out = append(out, rowToGroup(&rows[i]))
 	}
-	return out, rows.Err()
+	return out, nil
 }
