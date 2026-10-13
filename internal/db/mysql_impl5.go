@@ -399,9 +399,22 @@ func (s *MySqlStore) RemoveAssignment(ctx context.Context, id int64) error {
 }
 
 // SetAssignmentStatus 执行人提交状态。
+// SetAssignmentStatus 执行人提交分配状态。
+// 对齐 TS setAssignmentStatus（mysql-store.ts:1461）：先 findByPk 取行；
+// 记录不存在 或 执行人非本人 → 返回 (nil, nil)（不抛错），handler 据此回 ack fail「仅本人可提交」。
 func (s *MySqlStore) SetAssignmentStatus(ctx context.Context, in SetAssignmentStatusInput) (*types.TaskAssignment, error) {
+	// 先取行以区分「不存在」与「非本人」——盲 UPDATE 无法识别这两种情况。
+	a, err := s.getAssignmentByID(ctx, in.ID)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, nil // 记录不存在 → null
+	}
+	if a.UserID != in.UserID {
+		return nil, nil // 非本人 → null（仅本人可提交）
+	}
 	var res sql.Result
-	var err error
 	if in.Status == "completed" {
 		res, err = s.db.ExecContext(ctx, `UPDATE task_assignments SET status=?, completed_time=NOW(3) WHERE id=?`, in.Status, in.ID)
 	} else {
@@ -410,9 +423,7 @@ func (s *MySqlStore) SetAssignmentStatus(ctx context.Context, in SetAssignmentSt
 	if err != nil {
 		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, &NotFoundError{Msg: "assignment not found"}
-	}
+	_ = res
 	return s.getAssignmentByID(ctx, in.ID)
 }
 

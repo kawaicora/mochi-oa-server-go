@@ -241,10 +241,16 @@ func (m *MemoryStore) RemoveAssignment(_ context.Context, id int64) error {
 	return &NotFoundError{Msg: "assignment not found"}
 }
 
+// SetAssignmentStatus 执行人提交分配状态。
+// 对齐 TS setAssignmentStatus：记录不存在 或 执行人非本人 → 返回 (nil, nil)（不抛错），
+// handler 据此回 ack fail「仅本人可提交分配状态」。
 func (m *MemoryStore) SetAssignmentStatus(_ context.Context, in SetAssignmentStatusInput) (*types.TaskAssignment, error) {
 	r, ok := m.assignments[in.ID]
 	if !ok {
-		return nil, &NotFoundError{Msg: "assignment not found"}
+		return nil, nil // 记录不存在 → null
+	}
+	if r.UserID != in.UserID {
+		return nil, nil // 非本人 → null（仅本人可提交）
 	}
 	r.Status = in.Status
 	if in.Status == "completed" {
