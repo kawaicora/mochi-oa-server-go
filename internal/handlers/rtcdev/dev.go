@@ -41,15 +41,15 @@ type remoteDevice struct {
 
 // deviceSys 是被控端上报的系统信息快照（dev:sys）。
 type deviceSys struct {
-	Info any `json:"info"`
-	Perf any `json:"perf"`
+	Info any   `json:"info"`
+	Perf any   `json:"perf"`
 	Ts   int64 `json:"ts"`
 }
 
 // devices 在线远程设备表：deviceId -> *remoteDevice。
 var (
-	devMu    sync.Mutex
-	devices  = map[string]*remoteDevice{}
+	devMu   sync.Mutex
+	devices = map[string]*remoteDevice{}
 )
 
 // devInfoIn 是 upsert 入参（空串=该字段不更新）。
@@ -105,11 +105,11 @@ type devExecReq struct {
 }
 
 type devExecResultReq struct {
-	DeviceID *string `json:"deviceId"`
+	DeviceID *string  `json:"deviceId"`
 	OK       *bool    `json:"ok"`
 	ExitCode *float64 `json:"exitCode"`
-	Stdout   *string `json:"stdout"`
-	Stderr   *string `json:"stderr"`
+	Stdout   *string  `json:"stdout"`
+	Stderr   *string  `json:"stderr"`
 }
 
 type devTermOpenReq struct {
@@ -124,8 +124,8 @@ type devTermInReq struct {
 
 type devTermOutReq struct {
 	DeviceID *string `json:"deviceId"`
-	Data    *string `json:"data"`
-	IsErr   *bool   `json:"isErr"`
+	Data     *string `json:"data"`
+	IsErr    *bool   `json:"isErr"`
 }
 
 type devTermCloseReq struct {
@@ -598,8 +598,8 @@ func RegisterDev(c Ctx) {
 		}
 		send(dev.conn, "dev:exec", map[string]any{
 			"deviceId": deviceID,
-			"shell":   shellOf(d.Shell),
-			"cmd":     cmd,
+			"shell":    shellOf(d.Shell),
+			"cmd":      cmd,
 		})
 		ack(util.OK(map[string]any{"deviceId": deviceID}))
 	})

@@ -197,8 +197,16 @@ func encodeSIOAck(ackID int, result any) ([]byte, error) {
 	return append(out, body...), nil
 }
 
-// encodeSIOConnect 编码 CONNECT 成功响应（默认命名空间，空 body）："0"。
-func encodeSIOConnect() []byte { return []byte{'0'} }
+// encodeSIOConnect 编码 CONNECT 成功响应：0{"sid":"<socket id>"}。
+//
+// 为什么必须带 sid：socket.io v4 规定服务端 CONNECT 响应 body 为 {"sid": "..."}，
+// 客户端据此拿到 socket.id。只回裸 "0" 会被 v4 客户端误判为 v2 协议不兼容。
+func encodeSIOConnect(sid string) []byte {
+	b, _ := json.Marshal(map[string]string{"sid": sid})
+	out := make([]byte, 0, 1+len(b))
+	out = append(out, '0')
+	return append(out, b...)
+}
 
 // encodeSIOConnectError 编码 CONNECT_ERROR：4{"message":"..."}。
 func encodeSIOConnectError(msg string) []byte {

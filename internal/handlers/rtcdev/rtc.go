@@ -45,8 +45,8 @@ type Ctx struct {
 
 // ---- 连接态键（对标 TS socket.data.*） ----
 const (
-	keyAuth    = "auth"    // *types.Auth，认证中间件写入
-	keyRtc     = "rtc"     // map{userId,nick,avatar}，加入 RTC 房间后写入
+	keyAuth     = "auth"     // *types.Auth，认证中间件写入
+	keyRtc      = "rtc"      // map{userId,nick,avatar}，加入 RTC 房间后写入
 	keyRtcRooms = "rtcRooms" // map[string]bool，本连接所在的 RTC 房间集合
 	keyDeviceID = "deviceId" // 被控端设备号（dev.go 使用）
 	keyIsSlave  = "isSlave"  // bool，被控端连接标记（dev.go 使用）
@@ -290,7 +290,7 @@ func addSocket(srv socketapi.Server, st db.Store, c socketapi.Conn, rtcID string
 	_ = c.Join(rtcRoom(rtcID))
 	avatar := ""
 	if st != nil {
-		if user, err := st.GetUserById(context.Background(), u.ID); err == nil && user != nil {
+		if user, err := st.GetUserByID(context.Background(), u.ID); err == nil && user != nil {
 			avatar = user.Avatar
 		} else if err != nil {
 			logger.Error(module, "addSocket 取头像失败", "user", u.ID, "error", err.Error())
@@ -420,11 +420,11 @@ type rtcCreateMeetingReq struct {
 }
 
 type rtcCreateRoomReq struct {
-	Type     *string `json:"type"`
-	Title    *string `json:"title"`
-	Kind     *string `json:"kind"`
+	Type     *string  `json:"type"`
+	Title    *string  `json:"title"`
+	Kind     *string  `json:"kind"`
 	GroupID  *float64 `json:"groupId"`
-	Password *string `json:"password"`
+	Password *string  `json:"password"`
 }
 
 type rtcGetMeetingReq struct {
@@ -453,8 +453,8 @@ type rtcChatReq struct {
 
 type rtcDmCallReq struct {
 	UserID   *float64 `json:"userId"`
-	Kind     *string `json:"kind"`
-	Password *string `json:"password"`
+	Kind     *string  `json:"kind"`
+	Password *string  `json:"password"`
 }
 
 type rtcDmAnswerReq struct {
@@ -464,7 +464,7 @@ type rtcDmAnswerReq struct {
 
 type rtcGroupCallReq struct {
 	GroupID *float64 `json:"groupId"`
-	Kind    *string `json:"kind"`
+	Kind    *string  `json:"kind"`
 }
 
 // trimStr 安全取串：nil→""，再 TrimSpace。
@@ -889,7 +889,7 @@ func RegisterRtc(c Ctx) {
 		// 远程控制：若被控方设了远程控制密码（extra.remotePassword），主叫必须输对。
 		// 错误文案含「密码」，客户端据此弹密码框，逐字保留。
 		if kind == "remote" {
-			if t, err := st.GetUserById(context.Background(), targetID); err == nil && t != nil && t.Extra != "" {
+			if t, err := st.GetUserByID(context.Background(), targetID); err == nil && t != nil && t.Extra != "" {
 				var ex struct {
 					RemotePassword string `json:"remotePassword"`
 				}

@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"time"
@@ -77,6 +78,7 @@ func (s *Server) longPollGET(w http.ResponseWriter, r *http.Request, c *Conn) {
 		// 空回包：回 NOOP(=6) 结束本轮，客户端会再开新轮询。
 		frames = [][]byte{{eioNOOP}}
 	}
+	logger.Info("socket", "DEBUG longpoll flush", "sid", c.idShort(), "frames", string(bytesJoin(frames)))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	for _, f := range frames {
@@ -98,6 +100,7 @@ func (s *Server) pollPost(w http.ResponseWriter, r *http.Request, sid string) {
 		return
 	}
 	defer r.Body.Close()
+	logger.Info("socket", "DEBUG POST body", "sid", sid[:min(8,len(sid))], "body", string(body))
 
 	// 解析 payload：按 EIO packet type 切分。每个报文以一个数字字符开头；
 	// base64 二进制包以 'b' 开头。
@@ -196,3 +199,5 @@ func isEIOFrameStart(b byte) bool {
 	}
 	return false
 }
+
+func bytesJoin(parts [][]byte) []byte { return bytes.Join(parts, nil) }
