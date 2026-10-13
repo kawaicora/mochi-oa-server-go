@@ -101,10 +101,25 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, r *http.Request, sid str
 }
 
 // readLoopWS 是 websocket 连接的读循环：读帧 → 分发 EIO MESSAGE。
+//
+// 崩溃修复（D1）：此前 dispatchPacket 处理 eioMESSAGE 后未判断连接是否已被
+// shutdown（客户端发 socket.io DISCONNECT 即会触发 shutdown 把 c.ws 置 nil），
+// 下一轮直接 c.ws.ReadMessage() → nil 解引用 panic。
+// 修复后每轮：①在 wsMu 下取 c.ws 快照并判 nil/closed 再 ReadMessage；
+// ②dispatchPacket 返回后若连接已关闭立即 return，绝不再碰 c.ws。
+// shutdown 用 c.once 幂等，defer 重复调用安全。
 func (c *Conn) readLoopWS(s *Server) {
 	defer c.shutdown("ws read loop end")
 	for {
-		mt, msg, err := c.ws.ReadMessage()
+		// 取 ws 快照：shutdown 会在 wsMu 内置 nil，这里必须持锁读取，避免竞态/空指针。
+		c.wsMu.Lock()
+		ws := c.ws
+		c.wsMu.Unlock()
+		if ws == nil || c.isClosed() {
+			return
+		}
+
+		mt, msg, err := ws.ReadMessage()
 		if err != nil {
 			if !c.isClosed() {
 				logger.Info("socket", "ws read error", "sid", c.idShort(), "err", err)
@@ -126,6 +141,11 @@ func (c *Conn) readLoopWS(s *Server) {
 			c.signalPong()
 		case eioMESSAGE:
 			s.dispatchPacket(c, msg[1:])
+			// dispatchPacket 可能触发 shutdown（DISCONNECT / 中间件拒绝 / 业务主动断），
+			// 此时 c.ws 已在 wsMu 内置 nil；立即退出，防止下一轮对 nil ws 解引用。
+			if c.isClosed() {
+				return
+			}
 		case eioCLOSE:
 			c.shutdown("client close")
 			return

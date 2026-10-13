@@ -59,6 +59,42 @@ func TestRealSocketIOClientInterop(t *testing.T) {
 	}
 }
 
+// TestClientDisconnectNoPanic 回归（D1）：客户端连接后主动 socket.disconnect()，
+// 服务端收到 socket.io DISCONNECT 触发 shutdown（c.ws 置 nil）后，readLoopWS 必须
+// 立即退出而非下一轮对 nil ws 解引用。若发生 panic，本测试进程会直接崩溃。
+func TestClientDisconnectNoPanic(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过 node 断连回归测试（short 模式）")
+	}
+	nodePath := `D:\___SYSTEM_PATH\source\repos\mochi-oa-server\server\node_modules`
+	if _, err := os.Stat(nodePath); err != nil {
+		t.Skip("跳过：找不到源仓库 node_modules")
+	}
+
+	s := newTestServer(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go http.Serve(ln, s)
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	_, selfFile, _, _ := runtime.Caller(0)
+	clientJS := filepath.Join(filepath.Dir(selfFile), "disconnect_client.js")
+	cmd := exec.Command("node", clientJS, fmt.Sprintf("%d", port))
+	cmd.Dir = `D:\___SYSTEM_PATH\source\repos\mochi-oa-server\server`
+	cmd.Env = append(os.Environ(), "NODE_PATH="+nodePath)
+	out, err := cmd.CombinedOutput()
+	t.Logf("node output:\n%s", string(out))
+	if err != nil {
+		t.Fatalf("disconnect regress failed: %v", err)
+	}
+	if !contains(string(out), "DISCONNECT_OK") {
+		t.Fatalf("未收到 DISCONNECT_OK，输出=%s", string(out))
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
 		for i := 0; i+len(sub) <= len(s); i++ {
