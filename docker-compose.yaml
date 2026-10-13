@@ -8,7 +8,8 @@
 #   - app 数据（上传文件）挂载 ./data:/app/data。
 
 services:
-  app:
+  mochi-oa-server-go-app-c54f8e4:
+    container_name: mochi-oa-server-go-app-c54f8e4
     build: .
     env_file: .env
     ports:
@@ -16,11 +17,12 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      mysql:
+      mochi-oa-server-go-mysql-c54f8e4:
         condition: service_healthy
     restart: unless-stopped
 
-  mysql:
+  mochi-oa-server-go-mysql-c54f8e4:
+    container_name: mochi-oa-server-go-mysql-c54f8e4
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
