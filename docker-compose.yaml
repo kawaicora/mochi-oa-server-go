@@ -31,7 +31,7 @@ services:
     command: ["/app/mochi-oa-server_linux_amd64"]
     environment:
       HOST: 0.0.0.0
-      PORT: "80"
+      PORT: "3000"
       STORAGE: mysql
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
       MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
@@ -67,7 +67,7 @@ services:
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       ICE_SERVERS_TOKEN_SECOND: ${ICE_SERVERS_TOKEN_SECOND:-86400}
     ports:
-      - "${SERVER_PORT:-3000}:80"
+      - "${SERVER_PORT:-3000}:3000"
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
