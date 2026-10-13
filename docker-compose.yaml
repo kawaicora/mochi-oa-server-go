@@ -1,0 +1,38 @@
+# mochi-oa-server-go 一键启动（app + mysql 8.0）
+# 用法：cp .env.example .env 后 docker compose up -d
+#
+# 说明：
+#   - 本仓库不自带任何建表/迁移/初始化 SQL——老系统的表结构与数据直接复用：
+#     A. 把 MYSQL_HOST 指向老库；B. mysqldump 导出老库再导入新库；C. 挂载老 mysql_data 卷（需先停老容器）。
+#   - mysql 数据持久化在 named volume mysql_data；
+#   - app 数据（上传文件）挂载 ./data:/app/data。
+
+services:
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "${SERVER_PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  mysql_data:

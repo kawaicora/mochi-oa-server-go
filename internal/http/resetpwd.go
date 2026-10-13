@@ -106,7 +106,8 @@ func renderResetPwdPage(w http.ResponseWriter, showForm bool, message, token str
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	page := resetPwdHTML
 	if showForm {
-		page = fmt.Sprintf(`<!DOCTYPE html>
+		// 表单页无占位符，直接原样赋值（CSS 里的 % 无需转义）。
+		page = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>重置密码</title>
@@ -124,7 +125,7 @@ button:active{opacity:.85}
 <input type="password" name="password2" placeholder="确认新密码" required>
 <button type="submit">确认修改</button>
 </form>
-</div></body></html>`)
+</div></body></html>`
 	}
 	if message != "" {
 		page = fmt.Sprintf(`<!DOCTYPE html>
