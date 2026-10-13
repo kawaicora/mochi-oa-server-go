@@ -24,7 +24,7 @@ foreach ($t in $targets) {
     $env:GOOS=$GOOS
     $env:GOARCH=$GOARCH
 
-    go build -o $outFile .\cmd\server\main.go
+    go build -trimpath -ldflags "-s -w" -o $outFile .\cmd\server\main.go
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Build failed for $GOOS/$GOARCH"
