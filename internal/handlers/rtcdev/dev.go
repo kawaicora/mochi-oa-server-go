@@ -296,7 +296,7 @@ func RegisterDev(c Ctx) {
 		deviceID := strings.TrimSpace(strVal(d.DeviceID))
 		u := authed(c)
 		if deviceID == "" || u == nil {
-			logger.Info(module, "dev:register 拒绝", "deviceId", deviceID, "loggedIn", u != nil)
+			// logger.Info(module, "dev:register 拒绝", "deviceId", deviceID, "loggedIn", u != nil)
 			ack(util.Fail("参数不合法"))
 			return
 		}
