@@ -182,14 +182,23 @@ func segmentsJoin(segments []string) string {
 	return strings.Join(segments, "/")
 }
 
-// urlQueryEscape URL 编码文件名（TS encodeURIComponent；Go url.QueryEscape 会把空格编成 +，这里用 PathEscape 行为对齐）。
+// urlQueryEscape URL 编码文件名（对齐 encodeURIComponent）。
+//
+// 注意：必须「逐字节」加 %。旧写法 fmt.Sprintf("%%%02X", []byte(string(r))) 会把整个
+// []byte 当成一个十六进制串输出（%X 对切片不插入分隔符），只在最前面产生一个 %，
+// 于是中文名被编成 %E6B3AA%E5B0BD... 这种非法百分号编码，客户端拿它去下载必然 404。
 func urlQueryEscape(s string) string {
+	const hexDigits = "0123456789ABCDEF"
 	var b strings.Builder
 	for _, r := range s {
-		if shouldEscape(r) {
-			b.WriteString(fmt.Sprintf("%%%02X", []byte(string(r))))
-		} else {
+		if !shouldEscape(r) {
 			b.WriteRune(r)
+			continue
+		}
+		for _, c := range []byte(string(r)) {
+			b.WriteByte('%')
+			b.WriteByte(hexDigits[c>>4])
+			b.WriteByte(hexDigits[c&0x0f])
 		}
 	}
 	return b.String()
