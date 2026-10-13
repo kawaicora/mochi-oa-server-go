@@ -1,0 +1,33 @@
+/* 独立远程控制窗口：只展示远程查看（画面 + 控制栏），深色主题与后台一致 */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:#0f1219;color:#cdd3df;font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;display:flex;flex-direction:column}
+
+#rw-top{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#161a24;border-bottom:1px solid #242a38;flex:0 0 auto}
+#rw-title{font-weight:600;color:#e6eaf2}
+.rw-dev{color:#8aa;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rw-state{font-size:13px;color:#f0a14a}
+.rw-state.ok{color:#00c88a}
+#rw-close{margin-left:auto;background:#2a2f3d;color:#cdd3df;border:1px solid #3a4154;border-radius:6px;padding:6px 14px;cursor:pointer}
+#rw-close:hover{background:#3a4154}
+
+#remote-panel{flex:1;display:flex;flex-direction:column;padding:14px;min-height:0}
+.rv-stage{flex:1;position:relative;background:#0b0e14;border:1px solid #242a38;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+#rv-video{width:100%;height:100%;object-fit:contain;background:#000}
+.rv-empty{position:absolute;color:#5a6478;font-size:15px;text-align:center;pointer-events:none}
+
+.rv-bar{display:flex;gap:10px;justify-content:center;padding:12px 0 4px;flex:0 0 auto}
+.rv-ctrl{width:52px;height:52px;border-radius:10px;border:1px solid #3a4154;background:#1a1e28;color:#cdd3df;font-size:20px;cursor:pointer;transition:background .15s}
+.rv-ctrl:hover{background:#242a38}
+.rv-ctrl:disabled{opacity:.4;cursor:not-allowed}
+.rv-ctrl-on{background:#4a6cf7;border-color:#4a6cf7;color:#fff}
+.rv-hangup{background:#3a1020;border-color:#6a1a30;color:#ff8a9a}
+.rv-hangup:hover{background:#551529}
+
+#rv-state.rw-state-bar{flex:0 0 auto;text-align:center;padding:6px;color:#8aa;font-size:13px;min-height:28px}
+
+/* 设备选择菜单 */
+.rv-menu{position:fixed;z-index:50;background:#1a1e28;border:1px solid #3a4154;border-radius:8px;min-width:200px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.rv-menu-title{padding:8px 12px;font-weight:600;color:#e6eaf2;border-bottom:1px solid #242a38}
+.rv-menu-item{padding:8px 12px;cursor:pointer;color:#cdd3df}
+.rv-menu-item:hover{background:#242a38}

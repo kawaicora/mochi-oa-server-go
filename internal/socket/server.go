@@ -25,8 +25,11 @@ type Server struct {
 	handlers   map[string]socketapi.HandlerFunc
 	binHandlers map[string]socketapi.BinaryHandlerFunc
 	middlewares []socketapi.MiddlewareFunc
-	onConnect  func(socketapi.Conn) error
-	onDisconnect func(socketapi.Conn, string)
+	// 多监听者列表（对标 socket.io EventEmitter：io.on('connection') 允许多个 handler 共存，
+	// 集成时 auth(生成RSA密钥对)/group(groupInvites)/conversation/presence 都要各自挂钩，
+	// 单槽赋值会互相覆盖）。按注册顺序执行。
+	onConnects    []func(socketapi.Conn) error
+	onDisconnects []func(socketapi.Conn, string)
 
 	sessions map[string]*Conn            // sid -> conn
 	rooms    map[string]map[string]*Conn  // room -> sid -> conn
@@ -83,18 +86,18 @@ func (s *Server) OnBinary(event string, h socketapi.BinaryHandlerFunc) {
 	s.binHandlers[event] = h
 }
 
-// OnConnection 注册连接建立钩子（认证放行后调用）。
+// OnConnection 注册连接建立钩子（认证放行后调用，可多次注册、按序执行，对标 io.on('connection')）。
 func (s *Server) OnConnection(h func(socketapi.Conn) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.onConnect = h
+	s.onConnects = append(s.onConnects, h)
 }
 
-// OnDisconnect 注册断开钩子。
+// OnDisconnect 注册断开钩子（可多次注册、按序执行）。
 func (s *Server) OnDisconnect(h func(socketapi.Conn, string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.onDisconnect = h
+	s.onDisconnects = append(s.onDisconnects, h)
 }
 
 // ─── socketapi.Server：广播接口 ──────────────────────────────────────────────
@@ -231,12 +234,13 @@ func firstArg(args json.RawMessage) json.RawMessage {
 	return arr[0]
 }
 
-// fireDisconnect 触发 OnDisconnect 钩子。
+// fireDisconnect 触发全部 OnDisconnect 钩子（多监听者，各自 recover 互不影响）。
 func (s *Server) fireDisconnect(c *Conn, reason string) {
 	s.mu.RLock()
-	h := s.onDisconnect
+	hooks := make([]func(socketapi.Conn, string), len(s.onDisconnects))
+	copy(hooks, s.onDisconnects)
 	s.mu.RUnlock()
-	if h != nil {
+	for _, h := range hooks {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -248,23 +252,29 @@ func (s *Server) fireDisconnect(c *Conn, reason string) {
 	}
 }
 
-// fireConnect 触发 OnConnection 钩子。
+// fireConnect 触发全部 OnConnection 钩子（多监听者按注册序执行；任一返回错误即关闭连接）。
 func (s *Server) fireConnect(c *Conn) {
 	s.mu.RLock()
-	h := s.onConnect
+	hooks := make([]func(socketapi.Conn) error, len(s.onConnects))
+	copy(hooks, s.onConnects)
 	s.mu.RUnlock()
-	if h != nil {
-		func() {
+	var firstErr error
+	for _, h := range hooks {
+		err := func() (err error) {
 			defer func() {
 				if r := recover(); r != nil {
 					logger.Error("socket", "onConnect panic recovered", "err", r)
 				}
 			}()
-			if err := h(c); err != nil {
-				logger.Warn("socket", "onConnect returned error, disconnecting", "err", err)
-				c.shutdown("onConnect error")
-			}
+			return h(c)
 		}()
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		logger.Warn("socket", "onConnect returned error, disconnecting", "err", firstErr)
+		c.shutdown("onConnect error")
 	}
 }
 

@@ -1,0 +1,117 @@
+<div id="room-hall">
+  <div class="page-head">
+    <span class="ph-title">房间列表</span>
+    <span class="ph-sub" id="room-count">0</span>
+    <button class="mini-btn primary" id="room-create-btn" style="margin-left:auto">&#43; 创建房间</button>
+  </div>
+  <div id="room-create" class="room-create" style="display:none">
+    <div class="room-create-title">创建房间（永久房间没人自动不删，供 K歌房等常驻）</div>
+    <div class="room-create-row">
+      <select id="rc-type">
+        <option value="conf">会议（临时 · 没人自动删除 · 标题默认会议号）</option>
+        <option value="group">群聊（临时 · 没人自动删除 · 标题默认群名）</option>
+        <option value="perm">永久（常驻不删 · K歌房等）</option>
+      </select>
+      <select id="rc-group" style="display:none"><option value="">— 选择群（标题默认群名）—</option></select>
+      <input id="rc-title" placeholder="标题（会议/群聊留空用默认；永久必填）">
+      <select id="rc-kind">
+        <option value="video">视频</option>
+        <option value="voice">语音</option>
+      </select>
+    </div>
+    <div class="room-create-row">
+      <button class="mini-btn primary" id="rc-submit">创建</button>
+      <button class="mini-btn" id="rc-cancel">取消</button>
+    </div>
+  </div>
+  <div id="room-empty" class="empty">暂无进行中的会议 / 通话</div>
+  <div id="room-grid" class="room-grid"></div>
+</div>
+
+<!-- 通话界面（照抄客户端 RtcCallRoom） -->
+<div id="room-call" class="call-root" style="display:none">
+  <div class="top-bar">
+    <button class="top-btn" id="btn-info" title="会议信息">&#9432;</button>
+    <div class="timer"><span class="timer-time" id="call-timer">00:00</span><span class="timer-sub">(60分钟)</span></div>
+    <span class="meeting-no" id="call-no" title="点击复制会议号"></span>
+    <div class="top-right">
+      <button class="top-btn" id="btn-view" title="视图">&#9635;</button>
+      <button class="top-btn" id="btn-min" title="最小化">&#8722;</button>
+      <button class="top-btn" id="btn-max" title="最大化">&#9633;</button>
+      <button class="top-btn close-btn" id="btn-close" title="关闭">&#10005;</button>
+    </div>
+  </div>
+
+  <div id="meeting-info" class="meeting-info" style="display:none">
+    <div class="info-title">会议信息</div>
+    <div class="info-row">会议号：<span id="mi-no"></span></div>
+    <div class="info-row">主题：<span id="mi-title"></span></div>
+    <div class="info-row">状态：<span id="mi-status"></span></div>
+  </div>
+
+  <div id="dev-panel" class="dev-panel-wrap" style="display:none">
+    <div class="device-panel">
+      <div class="dev-hint">选择音视频设备，点击「应用」生效</div>
+      <div class="dev-row"><label>麦克风</label><select id="dev-mic"></select></div>
+      <div class="dev-row"><label>扬声器</label><select id="dev-out"></select></div>
+      <div class="dev-row"><label>摄像头</label><select id="dev-cam"></select></div>
+      <div class="dev-actions"><button class="dev-apply" id="dev-apply">应用</button></div>
+    </div>
+  </div>
+
+  <div class="center-area">
+    <div class="video-grid" id="call-grid"></div>
+    <div class="who-am-i" id="who-am-i">我：&#8212;</div>
+    <div id="focus-overlay" class="focus-overlay" style="display:none">
+      <div id="focus-body"></div>
+      <div class="focus-name" id="focus-name"></div>
+      <div class="focus-btns">
+        <button class="focus-btn" id="focus-close" title="关闭">&#10005;</button>
+        <button class="focus-btn" id="focus-fs" title="全屏">&#10047;</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="chat-panel" class="side-panel" style="display:none">
+    <div class="panel-title">聊天</div>
+    <div class="chat-list" id="chat-list"></div>
+    <div class="chat-input-row">
+      <input id="chat-input" placeholder="发送消息">
+      <button class="chat-send" id="chat-send">&#10148;</button>
+    </div>
+  </div>
+
+  <div id="participants-panel" class="side-panel" style="display:none">
+    <div class="panel-title">参会者（<span id="participant-count">1</span>）</div>
+    <div id="participant-list"></div>
+  </div>
+
+  <div class="control-bar">
+    <button class="ctrl" id="ctrl-mute" title="左键静音/解除静音，右键切换麦克风">&#127908;</button>
+    <button class="ctrl" id="ctrl-cam" title="左键开关摄像头，右键切换摄像头">&#128247;</button>
+    <button class="ctrl" id="ctrl-shield" title="安全">&#128737;</button>
+    <button class="ctrl" id="ctrl-invite" title="邀请/复制会议号">&#128101;</button>
+    <button class="ctrl" id="ctrl-users" title="参会者">&#128100;</button>
+    <button class="ctrl" id="ctrl-screen" title="共享屏幕">&#128421;</button>
+    <button class="ctrl" id="ctrl-chat" title="聊天">&#128172;</button>
+    <button class="ctrl rec" id="ctrl-rec" title="录制">&#9679;</button>
+    <button class="ctrl" id="ctrl-ai" title="AI听记">&#129302;</button>
+    <button class="ctrl" id="ctrl-more" title="更多（音视频设备）">&#8943;</button>
+    <button class="ctrl hangup" id="ctrl-hangup" title="结束"><span>&#128222;</span><span class="hangup-text">结束</span></button>
+  </div>
+
+  <div id="spec-menu" class="dev-pop" style="display:none">
+    <div class="dev-pop-title">语音画面样式</div>
+    <button class="dev-pop-item" id="spec-avatar">&#128100; 头像 + 频谱</button>
+    <button class="dev-pop-item" id="spec-scroll">&#12300; 滚动频谱</button>
+  </div>
+  <div id="mic-menu" class="dev-pop" style="display:none">
+    <div class="dev-pop-title">麦克风</div>
+    <div id="mic-menu-items"></div>
+  </div>
+  <div id="cam-menu" class="dev-pop" style="display:none">
+    <div class="dev-pop-title">摄像头</div>
+    <div id="cam-menu-items"></div>
+  </div>
+  <div id="rec-toast" class="rec-toast" style="display:none"></div>
+</div>

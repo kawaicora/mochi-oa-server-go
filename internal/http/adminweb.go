@@ -1,0 +1,138 @@
+// adminweb.go 1:1 移植自 server/src/web/admin.ts（管理后台静态页托管）。
+//
+// 路由（一个不少，逐一对齐 TS）：
+//   GET /view/admin                 → 管理后台主页（admin.html 内嵌 room/sysmon/users/companies 四个子页 @@占位符替换@@）
+//   GET /view/admin/terminal        → terminal.html 整页（终端窗口）
+//   GET /view/admin/remote-window   → remote-window.html 整页（远程窗口）
+//   GET /view/room                  → 301 永久跳 /view/admin（旧收藏兼容）
+//   GET /view/admin/config.js       → 注入 socket path/transports 的运行时配置脚本
+//   GET /view/admin/socket.io.js    → socket.io 官方浏览器端脚本（embed）
+//   GET /view/admin/static/*        → css/js 静态资源（embed）
+package http
+
+import (
+	"bytes"
+	"embed"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"strings"
+
+	"mochi-oa-server-go/internal/config"
+	"mochi-oa-server-go/web"
+)
+
+// RegisterAdminWeb 注册管理后台路由（对标 registerAdminRoutes）。
+func RegisterAdminWeb(mux *http.ServeMux, cfg *config.ServerConfig) {
+	h := &adminWebHandler{cfg: cfg, tmpl: loadTemplates(web.Assets)}
+	mux.HandleFunc("GET /view/admin", h.index)
+	mux.HandleFunc("GET /view/admin/", h.subtree)
+	mux.HandleFunc("GET /view/room", h.legacyRoomRedirect)
+}
+
+type adminWebHandler struct {
+	cfg   *config.ServerConfig
+	tmpl  map[string]string
+}
+
+// loadTemplates 从 embed.FS 读出全部页面模板。
+func loadTemplates(efs embed.FS) map[string]string {
+	out := map[string]string{}
+	entries, err := fs.ReadDir(efs, "templates")
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".html") {
+			continue
+		}
+		b, err := efs.ReadFile("templates/" + e.Name())
+		if err == nil {
+			out[e.Name()] = string(b)
+		}
+	}
+	return out
+}
+
+// pageHtml 组装管理主页：把四个子页内容原地填进 admin.html 的 @@占位符@@（与 TS 同一套规则）。
+func (h *adminWebHandler) pageHtml() string {
+	html := h.tmpl["admin.html"]
+	repl := map[string]string{
+		"@@ROOM_PAGE@@":      h.tmpl["room.html"],
+		"@@SYSMON_PAGE@@":    h.tmpl["sysmon.html"],
+		"@@USERS_PAGE@@":      h.tmpl["users.html"],
+		"@@COMPANIES_PAGE@@": h.tmpl["companies.html"],
+	}
+	for k, v := range repl {
+		html = strings.ReplaceAll(html, k, v)
+	}
+	return html
+}
+
+// index GET /view/admin → 主页。
+func (h *adminWebHandler) index(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, h.pageHtml())
+}
+
+// subtree 认领 /view/admin/ 下所有子路由（config.js / socket.io.js / terminal / remote-window / static/*）。
+func (h *adminWebHandler) subtree(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Path
+	switch {
+	case p == "/view/admin/config.js":
+		// 注入运行时配置：管理页 socket.io 连接沿用 config.Path（管理端 HTML 不硬编码路径）。
+		js := "window.__ADMIN_CONFIG__ = { path: '" + h.cfg.Path + "', transports: [\"websocket\",\"polling\"] };"
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		fmt.Fprint(w, js)
+	case p == "/view/admin/socket.io.js":
+		// socket.io 官方浏览器端脚本（源 node_modules 产物，随二进制 embed）。
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(web.SocketIOClientJS)
+	case p == "/view/admin/terminal":
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, h.tmpl["terminal.html"])
+	case p == "/view/admin/remote-window":
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, h.tmpl["remote-window.html"])
+	case strings.HasPrefix(p, "/view/admin/static/"):
+		// 静态资源子树：embed 的 static/ 目录。
+		rel := strings.TrimPrefix(p, "/view/admin/static/")
+		b, err := web.Assets.ReadFile("static/" + rel)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", guessStaticType(rel))
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(b)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// legacyRoomRedirect GET /view/room → 301 /view/admin（旧收藏链接兼容）。
+func (h *adminWebHandler) legacyRoomRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/view/admin", http.StatusMovedPermanently)
+}
+
+// guessStaticType 简单按扩展名回 Content-Type。
+func guessStaticType(name string) string {
+	switch {
+	case strings.HasSuffix(name, ".css"):
+		return "text/css; charset=utf-8"
+	case strings.HasSuffix(name, ".js"):
+		return "application/javascript; charset=utf-8"
+	case strings.HasSuffix(name, ".png"):
+		return "image/png"
+	case strings.HasSuffix(name, ".jpg"), strings.HasSuffix(name, ".jpeg"):
+		return "image/jpeg"
+	case strings.HasSuffix(name, ".svg"):
+		return "image/svg+xml"
+	default:
+		if bytes.HasSuffix([]byte(name), []byte(".js")) {
+			return "application/javascript; charset=utf-8"
+		}
+		return "application/octet-stream"
+	}
+}

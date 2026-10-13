@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>远程控制窗口</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/view/admin/static/css/remote-window.css?v=20261009h">
+<script src="/view/admin/config.js"></script>
+<script src="/view/admin/socket.io.js"></script>
+</head>
+<body>
+  <div id="rw-top">
+    <span id="rw-title">&#128421; 远程控制窗口</span>
+    <span id="rw-dev" class="rw-dev"></span>
+    <span id="rw-state" class="rw-state">连接中…</span>
+    <button id="rw-close">关闭</button>
+  </div>
+
+  <div id="remote-panel">
+    <div class="rv-stage">
+      <video id="rv-video" autoplay playsinline></video>
+      <div class="rv-empty" id="rv-empty">点击下方按钮开始远程查看</div>
+    </div>
+    <div class="rv-bar">
+      <button class="rv-ctrl" id="rv-mic" title="麦克风：点击选择设备并收听">&#127908;</button>
+      <button class="rv-ctrl" id="rv-cam" title="摄像头：点击选择设备并预览">&#128247;</button>
+      <button class="rv-ctrl" id="rv-screen" title="共享远程屏幕（含系统声音）">&#128421;</button>
+      <button class="rv-ctrl rv-hangup" id="rv-stop" title="结束远程查看">&#10005;</button>
+    </div>
+    <div id="rv-state" class="rw-state-bar"></div>
+  </div>
+  <div id="rv-menu" class="rv-menu" style="display:none"></div>
+
+  <script src="/view/admin/static/js/remote-window.js?v=20261009m"></script>
+  <script src="/view/admin/static/js/remote-view.js?v=20261009m"></script>
+</body>
+</html>

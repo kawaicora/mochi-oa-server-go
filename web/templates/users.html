@@ -1,0 +1,20 @@
+<div id="users-wrap">
+  <div class="page-head"><span class="ph-title">用户管理</span><span class="ph-sub" id="users-count">0</span><button class="mini-btn" id="users-refresh">刷新</button></div>
+  <div class="user-table" id="user-table"><div class="empty">加载中…</div></div>
+</div>
+
+<!-- 编辑用户弹窗 -->
+<div id="user-edit" class="modal" style="display:none">
+  <div class="modal-inner ue-inner">
+    <div class="modal-title">编辑用户 <span id="ue-id" class="ue-id"></span></div>
+    <div class="modal-sub" id="ue-name">—</div>
+    <label>昵称</label><input id="ue-nick" type="text">
+    <label>手机</label><input id="ue-phone" type="text">
+    <label>邮箱</label><input id="ue-email" type="text">
+    <label>头像 URL</label><input id="ue-avatar" type="text">
+    <div class="modal-btns">
+      <button class="btn ghost" id="ue-cancel">取消</button>
+      <button class="btn" id="ue-save">保存</button>
+    </div>
+  </div>
+</div>

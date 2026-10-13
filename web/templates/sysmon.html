@@ -1,0 +1,113 @@
+<div id="sysmon-wrap">
+  <!-- 设备九宫格（所有用户电脑） -->
+  <div id="dev-grid-view">
+    <div class="page-head"><span class="ph-title">已登录电脑控制</span><span class="ph-sub" id="dev-count">0</span><button class="mini-btn" id="dev-refresh">刷新</button></div>
+    <div id="dev-hint" class="dev-hint">客户端对接后，这里将列出所有在线用户上报的电脑设备（九宫格）。点击设备卡片进入查看 / 控制。</div>
+    <div id="dev-grid" class="dev-grid"></div>
+  </div>
+
+  <!-- 单个设备详情 / 控制 -->
+  <div id="dev-detail" class="dev-detail" style="display:none">
+    <div class="page-head">
+      <button class="mini-btn" id="dd-back">&#8592; 返回设备列表</button>
+      <span class="ph-title" id="dd-name">设备</span>
+      <span class="ph-sub" id="dd-meta">—</span>
+      <button class="mini-btn" id="sys-refresh">刷新系统信息</button>
+    </div>
+
+    <div class="sys-cards" id="sys-cards">
+      <div class="sys-card"><div class="sc-k">主机名</div><div class="sc-v" id="s-host">—</div></div>
+      <div class="sys-card"><div class="sc-k">IP 地址</div><div class="sc-v" id="s-ip">—</div></div>
+      <div class="sys-card"><div class="sc-k">操作系统</div><div class="sc-v" id="s-os">—</div></div>
+      <div class="sys-card"><div class="sc-k">CPU</div><div class="sc-v" id="s-cpu">—</div></div>
+      <div class="sys-card"><div class="sc-k">内存总量</div><div class="sc-v" id="s-mem">—</div></div>
+      <div class="sys-card"><div class="sc-k">主板</div><div class="sc-v" id="s-board">—</div></div>
+      <div class="sys-card"><div class="sc-k">显卡</div><div class="sc-v" id="s-gpu">—</div></div>
+      <div class="sys-card"><div class="sc-k">运行时长</div><div class="sc-v" id="s-uptime">—</div></div>
+    </div>
+    <div class="sys-grid">
+    <div class="sys-disk">
+      <div class="sc-k">磁盘（每盘一圆饼）</div>
+      <div id="pie-disks" class="pie-disks"><div class="pie-nodata">等待上报磁盘信息…</div></div>
+      <pre id="s-disk" class="disk-pre">—</pre>
+    </div>
+    <div class="sys-disk">
+      <div class="sc-k">内存使用</div>
+      <div class="pie-row">
+        <canvas id="pie-mem" class="pie-canvas" width="170" height="170"></canvas>
+        <div class="pie-tip" id="mem-tip">等待上报内存信息…</div>
+      </div>
+    </div>
+    <div class="sys-disk"><div class="sc-k">GPU 使用率</div><pre id="s-gpuload" class="disk-pre">—</pre></div>
+    <div class="sys-disk"><div class="sc-k">GPU 信息</div><pre id="s-gpuinfo" class="disk-pre">—</pre></div>
+    <div class="sys-disk"><div class="sc-k">进程（按内存前 40）</div><pre id="s-procs" class="disk-pre">—</pre></div>
+    </div>
+
+    <!-- 远程客户端电脑：远程画面 + 房间风格控制栏（摄像头/屏幕/麦克风，设备为远程电脑的） -->
+    <div class="panel-box" id="remote-panel" style="display:none">
+      <div class="panel-title">远程画面 <span id="rv-state" class="perf-num"></span></div>
+      <div class="rv-stage">
+        <video id="rv-video" autoplay playsinline></video>
+        <div class="rv-empty" id="rv-empty">选择下方设备开始远程查看</div>
+      </div>
+      <div class="rv-bar">
+        <button class="rv-ctrl" id="rv-mic" title="麦克风：点击选择设备并收听">&#127908;</button>
+        <button class="rv-ctrl" id="rv-cam" title="摄像头：点击选择设备并预览">&#128247;</button>
+        <button class="rv-ctrl" id="rv-screen" title="共享远程屏幕">&#128421;</button>
+        <button class="rv-ctrl" id="rv-win" title="在独立窗口打开完整远程控制（画面+控制栏，实时）">&#9635;</button>
+        <button class="rv-ctrl rv-hangup" id="rv-stop" title="结束远程查看">&#10005;</button>
+      </div>
+    </div>
+    <div id="rv-menu" class="rv-menu" style="display:none"></div>
+
+    <div class="perf-row">
+      <div class="perf-box">
+        <div class="perf-title">CPU 使用率 <span id="perf-cpu-v" class="perf-num">0%</span></div>
+        <canvas id="perf-cpu" width="340" height="150"></canvas>
+      </div>
+      <div class="perf-box">
+        <div class="perf-title">内存 <span id="perf-mem-v" class="perf-num">0%</span></div>
+        <canvas id="perf-mem" width="340" height="150"></canvas>
+      </div>
+      <div class="perf-box">
+        <div class="perf-title">进程数 <span id="perf-proc-v" class="perf-num">0</span></div>
+        <button class="mini-btn" id="proc-refresh">刷新进程列表</button>
+      </div>
+    </div>
+
+    <div class="panel-box">
+      <div class="panel-title">进程列表</div>
+      <div class="proc-table" id="proc-table"><div class="empty">点击「刷新进程列表」查看</div></div>
+    </div>
+
+    <div class="panel-box" id="exec-panel">
+      <div class="panel-title">执行命令行（仅 SERVER_ADMIN，15s 超时；远程设备在目标电脑上执行）</div>
+      <div class="exec-row">
+        <select id="exec-shell" title="选择执行 shell：远程设备 Windows 可选 CMD/PowerShell，Linux 自动用默认 shell">
+          <option value="auto">自动</option>
+          <option value="powershell">PowerShell</option>
+          <option value="cmd">CMD</option>
+        </select>
+        <input id="exec-input" placeholder="例如：dir  |  ipconfig  |  ls -la /  |  df -h  |  free -m">
+        <button class="mini-btn primary" id="exec-run">执行</button>
+        <button class="mini-btn" id="term-open" title="在独立窗口打开交互终端（会话保持，可连续输入命令、实时回显）">打开终端</button>
+      </div>
+      <div class="exec-hint" id="exec-hint"></div>
+      <pre id="exec-out" class="exec-out"></pre>
+    </div>
+
+    <div class="panel-box">
+      <div class="panel-title">远程查看</div>
+      <div class="media-row">
+        <div class="media-item">
+          <button class="mini-btn primary" id="shot-btn">截取屏幕</button>
+          <div id="shot-box" class="media-box"><span class="empty">点击截取屏幕</span></div>
+        </div>
+        <div class="media-item">
+          <button class="mini-btn primary" id="cam-btn">读取摄像头</button>
+          <div id="cam-box" class="media-box"><span class="empty">点击读取摄像头（目标机设备）</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

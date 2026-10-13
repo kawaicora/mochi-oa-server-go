@@ -1,0 +1,67 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>管理后台 · Mochi OA</title>
+<script src="/view/admin/config.js"></script>
+<script src="/view/admin/socket.io.js"></script>
+<link rel="stylesheet" href="/view/admin/static/css/admin.css?v=20261009n">
+</head>
+<body>
+<!-- 登录 -->
+<div id="view-login" class="card">
+  <h1>管理后台</h1>
+  <div class="sub">登录后可管理 房间 / 电脑 / 用户 / 公司（仅 SERVER_ADMIN）</div>
+  <div id="login-err" class="err" style="display:none"></div>
+  <label>用户名 / 邮箱</label>
+  <input id="login-account" type="text" autocomplete="username">
+  <label>密码</label>
+  <input id="login-pwd" type="password" autocomplete="current-password">
+  <button class="btn" id="login-btn">登录</button>
+  <div class="tip">也可通过客户端设置页复制管理员会话 Token，以 ?token=… 访问本页免登录</div>
+</div>
+
+<!-- 无权限 -->
+<div id="view-noperm" class="card" style="display:none">
+  <h1>管理后台</h1>
+  <div class="sub" style="color:#ffb3bc">需要 SERVER_ADMIN 权限</div>
+  <div class="tip">仅服务器管理员（SERVER_ADMIN）可访问本页面。请联系管理员开通账号，或使用客户端「设置」中复制管理员会话 Token，以 ?token=… 访问。</div>
+  <button class="btn ghost" id="noperm-back">返回登录</button>
+</div>
+
+<!-- 主 UI -->
+<div id="view-admin" style="display:none">
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="side-brand">&#128421; 管理后台</div>
+      <div class="side-user" id="side-user">—</div>
+      <button class="side-item" data-page="room">&#127968; 房间</button>
+      <button class="side-item" data-page="sysmon">&#128372; 已登录电脑控制</button>
+      <button class="side-item" data-page="users">&#128101; 用户管理</button>
+      <button class="side-item" data-page="companies">&#127970; 公司管理</button>
+      <button class="side-item side-logout" id="side-logout">退出登录</button>
+    </aside>
+    <main class="main">
+      <div id="page-room" class="page">@@ROOM_PAGE@@</div>
+      <div id="page-sysmon" class="page" style="display:none">@@SYSMON_PAGE@@</div>
+      <div id="page-users" class="page" style="display:none">@@USERS_PAGE@@</div>
+      <div id="page-companies" class="page" style="display:none">@@COMPANIES_PAGE@@</div>
+    </main>
+  </div>
+</div>
+
+<!-- 壳逻辑 -->
+<script src="/view/admin/static/js/admin.js?v=20261009n"></script>
+<!-- 媒体 / RTC（抄客户端） -->
+<script src="/view/admin/static/js/spectrum.js?v=20261009n"></script>
+<script src="/view/admin/static/js/scrolling.js?v=20261009n"></script>
+<script src="/view/admin/static/js/rtc.js?v=20261009n"></script>
+<!-- 页面逻辑 -->
+<script src="/view/admin/static/js/room.js?v=20261009n"></script>
+<script src="/view/admin/static/js/remote-view.js?v=20261009n"></script>
+<script src="/view/admin/static/js/sysmon.js?v=20261009n"></script>
+<script src="/view/admin/static/js/users.js?v=20261009n"></script>
+<script src="/view/admin/static/js/companies.js?v=20261009n"></script>
+</body>
+</html>
