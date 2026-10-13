@@ -218,6 +218,19 @@ func snapshotRoom(m map[string]*Conn) []*Conn {
 	return out
 }
 
+// firstArg 从 EVENT 的参数数组（如 [{"msg":"hi"}]）取出首元素作为 handler 的 data。
+// 无参数时返回 null（对齐 TS handler 收到 undefined/{} 的容错）。
+func firstArg(args json.RawMessage) json.RawMessage {
+	if len(args) == 0 || string(args) == "null" {
+		return json.RawMessage("null")
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(args, &arr); err != nil || len(arr) == 0 {
+		return json.RawMessage("null")
+	}
+	return arr[0]
+}
+
 // fireDisconnect 触发 OnDisconnect 钩子。
 func (s *Server) fireDisconnect(c *Conn, reason string) {
 	s.mu.RLock()
@@ -396,6 +409,10 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 	binH, binOK := s.binHandlers[event]
 	s.mu.RUnlock()
 
+	// 对齐 TS handler：socket.emit('event', obj) 的 server handler 直接拿到 obj，
+	// 而非整个 args 数组。这里取 args 数组首元素作为 data；无参则为 null。
+	data := firstArg(args)
+
 	switch {
 	case ok:
 		func() {
@@ -404,7 +421,7 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 					logger.Error("socket", "event handler panic", "event", event, "err", r)
 				}
 			}()
-			h(c, json.RawMessage(args), ack)
+			h(c, data, ack)
 		}()
 	case binOK:
 		func() {

@@ -223,7 +223,7 @@ func encodeEIOOPEN(sid string, upgrades []string, pingInterval, pingTimeout, max
 	b, _ := json.Marshal(m)
 	out := make([]byte, 0, 1+len(b))
 	out = append(out, eioOPEN)
-	return out
+	return append(out, b...)
 }
 
 // errMalformed 返回一个带上下文的协议错误。

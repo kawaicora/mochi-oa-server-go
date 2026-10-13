@@ -110,42 +110,82 @@ func (s *Server) pollPost(w http.ResponseWriter, r *http.Request, sid string) {
 
 // dispatchPollPayload 切分 polling payload 并分发其中的 EIO MESSAGE 报文。
 //
-// payload 是若干 EIO 报文的拼接，每个报文首字符是类型数字（'0'..'6'）或 'b'。
-// 我们只关心 MESSAGE(='4')：剥掉 '4' 后交给 socket.io 层分发。
+// payload 是若干 EIO 报文拼接。MESSAGE(='4') 的 payload 是一个完整的 socket.io 报文，
+// 其 JSON 部分自定界（{}/[] 配平），因此不能靠"找下一个数字"切帧（JSON 里也有数字）。
+// 这里：遇到 '4' 后，跳过 sio type/ackId 数字前缀，找到首个 '{' 或 '['，按括号配平读完整个 JSON。
 func dispatchPollPayload(c *Conn, body []byte) {
 	i := 0
 	for i < len(body) {
 		typ := body[i]
 		switch typ {
 		case eioPING:
-			// 客户端在 polling 下发 PING？EIO4 是服务端发 PING；这里兼容收到 PING 回 PONG。
 			c.sendEIO(eioPONG, nil)
 			i++
 		case eioPONG:
 			c.signalPong()
 			i++
 		case eioMESSAGE:
-			// 找下一个报文起点：下一个出现的数字字符（'0'..'6'）或 'b'。
-			j := i + 1
-			for j < len(body) && !isEIOFrameStart(body[j]) {
-				j++
+			i++
+			pkt := readOneSIOPacket(body[i:])
+			if len(pkt) == 0 {
+				return
 			}
-			pkt := body[i+1 : j]
-			s := c.srv
-			s.dispatchPacket(c, pkt)
-			i = j
+			c.srv.dispatchPacket(c, pkt)
+			i += len(pkt)
 		case 'b':
 			// base64 二进制包：'b' 后到下一个帧起点。
-			j := i + 1
-			for j < len(body) && !isEIOFrameStart(body[j]) {
-				j++
+			i++
+			for i < len(body) && !isEIOFrameStart(body[i]) {
+				i++
 			}
-			i = j
 		default:
-			// 其他报文（OPEN/CLOSE/UPGRADE/NOOP）在 polling 上行忽略。
 			i++
 		}
 	}
+}
+
+// readOneSIOPacket 从 data 中读出一个完整 socket.io 报文（type+ackId+JSON）。
+// 通过定位首个 JSON 起始符 '{'/'[' 并做括号配平来确定 JSON 结束位置。
+func readOneSIOPacket(data []byte) []byte {
+	start := 0
+	j := 0
+	// 跳过 sio type 数字与 ackId 数字前缀。
+	for j < len(data) && data[j] >= '0' && data[j] <= '9' {
+		j++
+	}
+	// 找 JSON 起点。
+	for j < len(data) && data[j] != '{' && data[j] != '[' {
+		j++
+	}
+	if j >= len(data) {
+		return data[start:]
+	}
+	depth := 0
+	inStr := false
+	esc := false
+	for j < len(data) {
+		ch := data[j]
+		switch {
+		case esc:
+			esc = false
+		case ch == '\\' && inStr:
+			esc = true
+		case ch == '"':
+			inStr = !inStr
+		case inStr:
+			// 在字符串内，跳过
+		case ch == '{' || ch == '[':
+			depth++
+		case ch == '}' || ch == ']':
+			depth--
+			if depth == 0 {
+				j++
+				return data[start:j]
+			}
+		}
+		j++
+	}
+	return data[start:]
 }
 
 // isEIOFrameStart 判断字节是否为 EIO payload 里一个新报文的起始标记。
