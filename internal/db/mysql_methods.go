@@ -368,7 +368,7 @@ func (s *MySqlStore) DeleteCompany(ctx context.Context, companyID int64) error {
 
 // listGroupsRows 取某公司全部群 id（供 DeleteCompany 内部用）。
 func (s *MySqlStore) listGroupsRows(ctx context.Context, companyID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM groups WHERE company_id=?`, companyID)
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM `groups` WHERE company_id=?", companyID)
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +510,7 @@ func (s *MySqlStore) CreateGroup(ctx context.Context, in CreateGroupInput) (*typ
 		return nil, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO groups (company_id, department_id, name, code, owner_id, created_at) VALUES (?,?,?,?,?,NOW(3))`,
+	res, err := tx.ExecContext(ctx, "INSERT INTO `groups` (company_id, department_id, name, code, owner_id, created_at) VALUES (?,?,?,?,?,NOW(3))",
 		companyID, in.DepartmentID, in.Name, in.Code, in.OwnerID)
 	if err != nil {
 		if isUniqueErr(err) {
@@ -531,7 +531,7 @@ func (s *MySqlStore) CreateGroup(ctx context.Context, in CreateGroupInput) (*typ
 // GetGroupByID 按主键取群。
 func (s *MySqlStore) GetGroupByID(ctx context.Context, id int64) (*types.Group, error) {
 	var r types.GroupRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, department_id, name, code, owner_id, created_at FROM groups WHERE id=?`, id).
+	err := s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE id=?", id).
 		Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -548,10 +548,10 @@ func (s *MySqlStore) GetGroupByName(ctx context.Context, companyID int64, name s
 	var r types.GroupRow
 	var err error
 	if companyID > 0 {
-		err = s.db.QueryRowContext(ctx, `SELECT id, company_id, department_id, name, code, owner_id, created_at FROM groups WHERE name=? AND company_id=?`, name, companyID).
+		err = s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE name=? AND company_id=?", name, companyID).
 			Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
 	} else {
-		err = s.db.QueryRowContext(ctx, `SELECT id, company_id, department_id, name, code, owner_id, created_at FROM groups WHERE name=? AND company_id IS NULL`, name).
+		err = s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE name=? AND company_id IS NULL", name).
 			Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -567,7 +567,7 @@ func (s *MySqlStore) GetGroupByName(ctx context.Context, companyID int64, name s
 // GetGroupByCode 按加入码取群。
 func (s *MySqlStore) GetGroupByCode(ctx context.Context, code string) (*types.Group, error) {
 	var r types.GroupRow
-	err := s.db.QueryRowContext(ctx, `SELECT id, company_id, department_id, name, code, owner_id, created_at FROM groups WHERE code=?`, code).
+	err := s.db.QueryRowContext(ctx, "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE code=?", code).
 		Scan(&r.ID, &r.CompanyID, &r.DepartmentID, &r.Name, &r.Code, &r.OwnerID, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -581,7 +581,7 @@ func (s *MySqlStore) GetGroupByCode(ctx context.Context, code string) (*types.Gr
 
 // ListGroups 列群（可选 companyId/keyword，id 升序，上限 100）。
 func (s *MySqlStore) ListGroups(ctx context.Context, companyID int64, keyword string) ([]types.Group, error) {
-	q := `SELECT id, company_id, department_id, name, code, owner_id, created_at FROM groups WHERE 1=1`
+	q := "SELECT id, company_id, department_id, name, code, owner_id, created_at FROM `groups` WHERE 1=1"
 	args := []any{}
 	if companyID != 0 {
 		q += ` AND company_id=?`
@@ -683,7 +683,7 @@ func (s *MySqlStore) SetGroupMemberMuted(ctx context.Context, groupID, userID in
 
 // SetGroupOwner 转让群主。
 func (s *MySqlStore) SetGroupOwner(ctx context.Context, groupID, ownerID int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE groups SET owner_id=? WHERE id=?`, ownerID, groupID)
+	res, err := s.db.ExecContext(ctx, "UPDATE `groups` SET owner_id=? WHERE id=?", ownerID, groupID)
 	if err != nil {
 		return err
 	}
@@ -723,7 +723,7 @@ func (s *MySqlStore) DeleteGroup(ctx context.Context, groupID int64) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM group_members WHERE group_id=?`, groupID); err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM groups WHERE id=?`, groupID)
+	_, err = s.db.ExecContext(ctx, "DELETE FROM `groups` WHERE id=?", groupID)
 	return err
 }
 
@@ -763,7 +763,7 @@ func (s *MySqlStore) GetGroupMembers(ctx context.Context, groupID int64) ([]type
 // GetUserGroups 取用户所在群。
 func (s *MySqlStore) GetUserGroups(ctx context.Context, userID int64) ([]types.Group, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT g.id, g.company_id, g.department_id, g.name, g.code, g.owner_id, g.created_at FROM group_members m JOIN groups g ON g.id=m.group_id WHERE m.user_id=? ORDER BY m.group_id ASC`, userID)
+		"SELECT g.id, g.company_id, g.department_id, g.name, g.code, g.owner_id, g.created_at FROM group_members m JOIN `groups` g ON g.id=m.group_id WHERE m.user_id=? ORDER BY m.group_id ASC", userID)
 	if err != nil {
 		return nil, err
 	}
