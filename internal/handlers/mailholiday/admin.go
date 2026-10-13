@@ -21,6 +21,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/rtcdev"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/util"
@@ -282,9 +283,19 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 				"remote":   false,
 			},
 		}
-		// 在线远程客户端：TS 遍历 dev.ts 的 remoteDevices（30s 心跳视为在线）。
-		// 【基础层缺口】dev handler 未移植，remoteDevices 注册表尚不存在；此处远程设备列表为空，
-		// 待 dev.go 落地后应暴露包级注册表供本处理器合并（字段：id/name/username/os/ip/online/remote）。
+		// 在线远程客户端：合并 rtcdev 注册表快照（dev:register 上报的被控端，30s 心跳视为在线；
+		// 字段 id/name/username/os/ip/online/remote 与 TS admin-users.ts 逐条对齐）。
+		for _, d := range rtcdev.ListDevices() {
+			devices = append(devices, map[string]any{
+				"id":       d.DeviceID,
+				"name":     d.Name,
+				"username": d.Username,
+				"os":       d.OS,
+				"ip":       d.IP,
+				"online":   d.Online,
+				"remote":   true,
+			})
+		}
 		ack(util.OK(map[string]any{"devices": devices}))
 		logger.Info(mod, "admin:listDevices 返回",
 			"devices", fmt.Sprintf("%v", devices))

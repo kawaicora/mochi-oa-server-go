@@ -52,6 +52,36 @@ var (
 	devices = map[string]*remoteDevice{}
 )
 
+// DeviceSnapshot 是远程设备注册表快照条目（供管理后台 admin:listDevices 与本机设备合并）。
+type DeviceSnapshot struct {
+	DeviceID string
+	Name     string
+	Username string
+	OS       string
+	IP       string
+	Online   bool
+}
+
+// ListDevices 返回远程设备注册表快照（只读拷贝；不改 register/heartbeat/断线任何现有逻辑）。
+// online 判定与 TS remoteDevices 一致：lastSeen 在 30 秒窗口内视为在线。
+func ListDevices() []DeviceSnapshot {
+	devMu.Lock()
+	defer devMu.Unlock()
+	cutoff := time.Now().UnixMilli() - 30_000
+	out := make([]DeviceSnapshot, 0, len(devices))
+	for id, d := range devices {
+		out = append(out, DeviceSnapshot{
+			DeviceID: id,
+			Name:     d.name,
+			Username: d.username,
+			OS:       d.osName,
+			IP:       d.ip,
+			Online:   d.lastSeen >= cutoff,
+		})
+	}
+	return out
+}
+
 // devInfoIn 是 upsert 入参（空串=该字段不更新）。
 type devInfoIn struct {
 	deviceID string
