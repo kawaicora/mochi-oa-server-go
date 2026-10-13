@@ -1,8 +1,8 @@
 // Package db 是存储层抽象与实现。
 //
 //   - Store：存储层接口（方法集原样移植自 db/store.ts，后续所有 handler 按它编码）；
-//   - MySqlStore：生产实现（database/sql + go-sql-driver/mysql，只读复用现有表，绝不建表/迁移）；
-//   - MemoryStore：STORAGE=memory 时的开发/测试实现；
+//   - MySqlStore：唯一实现（GORM + gorm.io/driver/mysql；默认启动时自动建库建表，
+//     见 setup.go，可用 AUTO_CREATE_DATABASE / AUTO_MIGRATE 关闭）；
 //   - Open/GetStore：包级单例（sync.Once），全局只连接一次。
 //
 // 所有方法首个参数为 context.Context（Go 惯例，用于取消/超时），不改变方法语义。
@@ -58,11 +58,11 @@ type CreateUserInput struct {
 
 // UserProfilePatch 更新资料（nil 字段不更新）。
 type UserProfilePatch struct {
-	Nick    *string
-	Avatar  *string
-	Phone   *string
-	Email   *string
-	Extra   *string
+	Nick   *string
+	Avatar *string
+	Phone  *string
+	Email  *string
+	Extra  *string
 }
 
 // CreateCompanyInput 创建公司。
@@ -81,11 +81,11 @@ type CreateDepartmentInput struct {
 
 // CreateGroupInput 创建群。
 type CreateGroupInput struct {
-	CompanyID   int64
+	CompanyID    int64
 	DepartmentID *int64
-	Name        string
-	Code        string
-	OwnerID     int64
+	Name         string
+	Code         string
+	OwnerID      int64
 }
 
 // CreateInvitationInput 创建公司邀请。
@@ -112,23 +112,23 @@ type CreateSessionInput struct {
 type UpsertAfdianOrderInput struct {
 	OutTradeNo    string
 	CustomOrderID string
-	PlanID       string
-	PlanTitle    string
-	Title        string
-	Month        int64
-	Amount       string
-	ShowAmount   string
-	Status       int64
-	Remark       string
-	RedeemID     string
-	ProductType  int64
-	Discount     string
-	BuyerUserID  string
-	BuyerName    string
-	BuyerAvatar  string
-	CreateTime   int64
-	SkuDetail    string
-	Raw          string
+	PlanID        string
+	PlanTitle     string
+	Title         string
+	Month         int64
+	Amount        string
+	ShowAmount    string
+	Status        int64
+	Remark        string
+	RedeemID      string
+	ProductType   int64
+	Discount      string
+	BuyerUserID   string
+	BuyerName     string
+	BuyerAvatar   string
+	CreateTime    int64
+	SkuDetail     string
+	Raw           string
 }
 
 // MailConfigScope 邮件配置查询作用域：CompanyID nil=主配置。
@@ -198,9 +198,9 @@ type SetTaskStatusInput struct {
 
 // TaskReminderInput 更新提醒阈值。
 type TaskReminderInput struct {
-	TaskID        int64
+	TaskID         int64
 	ReminderYellow int64
-	ReminderRed   int64
+	ReminderRed    int64
 }
 
 // AddAssignmentInput 新增分配。
@@ -235,10 +235,10 @@ type AddTaskIssueInput struct {
 
 // RequestExtensionInput 申请延期。
 type RequestExtensionInput struct {
-	TaskID          int64
-	UserID          int64
+	TaskID           int64
+	UserID           int64
 	RequestedDueTime string
-	Reason          string
+	Reason           string
 }
 
 // DecideExtensionInput 审批延期。
@@ -291,34 +291,34 @@ type LinkRequirementTasksInput struct {
 
 // CreateBugInput 创建缺陷。
 type CreateBugInput struct {
-	CompanyID    int64
-	ProjectID    *int64
+	CompanyID     int64
+	ProjectID     *int64
 	RequirementID *int64
-	Title        string
-	Description  string
-	Severity     string
-	Priority     string
-	HandlerID    *int64
-	FoundVersion string
-	CreatorID    int64
+	Title         string
+	Description   string
+	Severity      string
+	Priority      string
+	HandlerID     *int64
+	FoundVersion  string
+	CreatorID     int64
 }
 
 // UpdateBugInput 更新缺陷。
 type UpdateBugInput struct {
-	ID          int64
-	Title       *string
-	Description *string
-	Severity    *string
-	Priority    *string
-	HandlerID   *int64
+	ID           int64
+	Title        *string
+	Description  *string
+	Severity     *string
+	Priority     *string
+	HandlerID    *int64
 	FoundVersion *string
 }
 
 // SetBugStatusInput 变更缺陷状态。
 type SetBugStatusInput struct {
-	BugID   int64
-	Status  string
-	UserID  int64
+	BugID  int64
+	Status string
+	UserID int64
 }
 
 // CreatePlanInput 创建计划。
@@ -570,7 +570,7 @@ type Store interface {
 type MemberProfileInput struct {
 	RealName     *string
 	IDCard       *string
-	BankCard    *string
-	ResumeURL   *string
+	BankCard     *string
+	ResumeURL    *string
 	PortfolioURL *string
 }

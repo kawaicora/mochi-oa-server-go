@@ -42,7 +42,7 @@ services:
     ports:
       - "${SERVER_PORT:-3001}:3001"
     volumes:
-      - ./dist:/app:ro
+      - ./dist:/app
       - ./data:/app/data
     depends_on:
       mochi-oa-server-go-mysql-c54f8e4:
@@ -71,4 +71,3 @@ services:
       retries: 30
       start_period: 30s
     restart: unless-stopped
-

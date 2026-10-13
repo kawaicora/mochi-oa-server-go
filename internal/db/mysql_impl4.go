@@ -74,6 +74,24 @@ func (s *MySqlStore) GetDefaultMailConfig(ctx context.Context, scope MailConfigS
 	return &c, nil
 }
 
+// mailConfigInsertRow 只用于插入：列清单与原 INSERT 一致，且不带任何 default 标签，
+// 保证 secure/enabled 等显式 false 不会被 GORM 当成「未设置」而替换为库默认值。
+type mailConfigInsertRow struct {
+	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	CompanyID   *int64    `gorm:"column:company_id"`
+	Email       string    `gorm:"column:email"`
+	DisplayName string    `gorm:"column:display_name"`
+	Host        string    `gorm:"column:host"`
+	Port        int64     `gorm:"column:port"`
+	Secure      bool      `gorm:"column:secure"`
+	User        string    `gorm:"column:user"`
+	Password    string    `gorm:"column:password"`
+	IsDefault   bool      `gorm:"column:is_default"`
+	Enabled     bool      `gorm:"column:enabled"`
+	Priority    int64     `gorm:"column:priority"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+}
+
 // SaveMailConfig 新增（id=0）或更新邮件配置；更新时清空同作用域其他默认。
 func (s *MySqlStore) SaveMailConfig(ctx context.Context, in SaveMailConfigInput) (*types.MailConfig, error) {
 	if in.ID == nil || *in.ID == 0 {
@@ -89,9 +107,12 @@ func (s *MySqlStore) SaveMailConfig(ctx context.Context, in SaveMailConfigInput)
 		if in.Priority != nil {
 			priority = *in.Priority
 		}
-		// 用带主键的 Row 结构 Create，GORM 回填自增主键（等价 LastInsertId）；
-		// created_at 显式赋 time.Now().UTC()（等价原 SQL 的 NOW(3)）。
-		row := types.MailConfigRow{
+		// 用不带 default 标签的局部插入结构体 Create：
+		// MailConfigRow 上的 `default:...` 是给 AutoMigrate 生成 DDL 用的，而 GORM 在
+		// 结构体 Create 时会把「零值」替换成声明的默认值——那会让显式传入的
+		// secure=false / enabled=false 被悄悄改成 true。局部结构体没有默认值标签，
+		// 所有列都按实参写入，语义与原 SQL 完全一致，同时还能回填自增主键。
+		row := mailConfigInsertRow{
 			CompanyID:   in.CompanyID,
 			Email:       in.Email,
 			DisplayName: in.DisplayName,

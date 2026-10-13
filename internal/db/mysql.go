@@ -33,12 +33,20 @@ import (
 
 // MySqlStore 是生产存储实现。所有数据访问统一经 gorm 句柄。
 type MySqlStore struct {
-	sqlDB *sql.DB  // 仅用于 Close 释放连接池
-	gorm  *gorm.DB // GORM 句柄（连接池共享自 sqlDB）
+	sqlDB       *sql.DB  // 仅用于 Close 释放连接池
+	gorm        *gorm.DB // GORM 句柄（连接池共享自 sqlDB）
+	autoMigrate bool     // true=启动时 AutoMigrate 建表/补列
 }
 
-// NewMySqlStore 打开 MySQL 连接池（不建库不建表）。
+// NewMySqlStore 打开 MySQL 连接池。cfg.AutoCreateDatabase 为 true 时先确保数据库存在
+// （建表由 Init 里的 AutoMigrate 负责）。
 func NewMySqlStore(cfg config.MySQLConfig) (*MySqlStore, error) {
+	if cfg.AutoCreateDatabase {
+		if err := ensureDatabase(cfg); err != nil {
+			logger.Error("db", "自动建库失败", "error", err.Error())
+			return nil, err
+		}
+	}
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=true&loc=UTC",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
 	db, err := gorm.Open(gormmysql.Open(dsn), &gorm.Config{
@@ -58,16 +66,21 @@ func NewMySqlStore(cfg config.MySQLConfig) (*MySqlStore, error) {
 	pool.SetMaxOpenConns(10)
 	pool.SetMaxIdleConns(0)
 	logger.Info("db", "MySQL 连接池已创建", "host", cfg.Host, "port", cfg.Port, "database", cfg.Database)
-	return &MySqlStore{sqlDB: pool, gorm: db}, nil
+	return &MySqlStore{sqlDB: pool, gorm: db, autoMigrate: cfg.AutoMigrate}, nil
 }
 
-// Init 初始化：仅 Ping 验证连通（不做任何 DDL）。
+// Init 初始化：Ping 验证连通；开启 AUTO_MIGRATE 时再跑一次 AutoMigrate 建缺失的表/列。
 func (s *MySqlStore) Init(ctx context.Context) error {
 	if err := s.sqlDB.PingContext(ctx); err != nil {
 		logger.Error("db", "MySQL 连接失败", "error", err.Error())
 		return err
 	}
-	logger.Info("db", "MySQL 连接就绪")
+	if s.autoMigrate {
+		if err := s.autoMigrateTables(ctx); err != nil {
+			return err
+		}
+	}
+	logger.Info("db", "MySQL 连接就绪", "auto_migrate", s.autoMigrate)
 	return nil
 }
 

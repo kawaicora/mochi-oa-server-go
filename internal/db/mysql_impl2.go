@@ -123,21 +123,19 @@ func (s *MySqlStore) RemoveConversationMember(ctx context.Context, conversationI
 	return nil
 }
 
-// SetConversationPinned 设置置顶。先存在性校验，保证「无该成员」与「值未变化」语义与原 SQL 一致。
+// SetConversationPinned 设置置顶。
+// 语义与原 SQL 一致：影响行数为 0（成员不存在 或 置顶值本就相同）→ NotFound。
 func (s *MySqlStore) SetConversationPinned(ctx context.Context, conversationID, userID int64, pinned bool) error {
-	var exists int64
-	err := s.gorm.WithContext(ctx).Table("conversation_members").
+	res := s.gorm.WithContext(ctx).Table("conversation_members").
 		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-		Limit(1).Pluck("conversation_id", &exists).Error
-	if err != nil {
-		return err
+		Updates(map[string]any{"pinned": pinned})
+	if res.Error != nil {
+		return res.Error
 	}
-	if exists == 0 {
+	if res.RowsAffected == 0 {
 		return &NotFoundError{Msg: "not in conversation"}
 	}
-	return s.gorm.WithContext(ctx).Table("conversation_members").
-		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-		Updates(map[string]any{"pinned": pinned}).Error
+	return nil
 }
 
 // GetConversationMember 取会话成员状态。

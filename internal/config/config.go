@@ -49,6 +49,12 @@ type MySQLConfig struct {
 	User     string
 	Password string
 	Database string
+	// AutoCreateDatabase 为 true 时启动阶段自动建库（CREATE DATABASE IF NOT EXISTS），
+	// 对应环境变量 AUTO_CREATE_DATABASE，默认开启。
+	AutoCreateDatabase bool
+	// AutoMigrate 为 true 时启动阶段用 GORM AutoMigrate 建缺失的表/列/索引，
+	// 对应环境变量 AUTO_MIGRATE，默认开启。
+	AutoMigrate bool
 }
 
 // CloudflareTURNConfig 是 Cloudflare TURN 动态取 ICE 配置；nil 表示未启用。
@@ -338,11 +344,13 @@ func build() *ServerConfig {
 		Path:          strEnv("SOCKET_PATH", "/socket.io"),
 		Storage:       storage,
 		MySQL: MySQLConfig{
-			Host:     strEnv("MYSQL_HOST", "127.0.0.1"),
-			Port:     intEnv("MYSQL_PORT", 3306),
-			User:     strEnv("MYSQL_USER", "root"),
-			Password: os.Getenv("MYSQL_PASSWORD"),
-			Database: strEnv("MYSQL_DATABASE", "mochioa"),
+			Host:               strEnv("MYSQL_HOST", "127.0.0.1"),
+			Port:               intEnv("MYSQL_PORT", 3306),
+			User:               strEnv("MYSQL_USER", "root"),
+			Password:           os.Getenv("MYSQL_PASSWORD"),
+			Database:           strEnv("MYSQL_DATABASE", "mochioa"),
+			AutoCreateDatabase: boolEnv("AUTO_CREATE_DATABASE", true),
+			AutoMigrate:        boolEnv("AUTO_MIGRATE", true),
 		},
 		JWTSecret:    strEnv("JWT_SECRET", "change-me-in-production"),
 		JWTExpiresIn: strEnv("JWT_EXPIRES_IN", "30d"),

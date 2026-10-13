@@ -1,8 +1,9 @@
 // Package types 定义跨模块共享的数据结构。
 //
 // 包含三类：
-//  1. Row struct（*Row 后缀）：对应 32 张数据库表，列名严格 snake_case（sequelize underscored），
-//     带 db 标签供 database/sql 扫描；DATE(3) 列用 time.Time，可空列用指针。
+//  1. Row struct（*Row 后缀）：对应 32 张数据库表，列名严格 snake_case（sequelize underscored）。
+//     同时带 db 标签（历史扫描用途）与 gorm 标签（列类型/主键/索引/默认值，供 GORM 读写
+//     与 AutoMigrate 建表）；DATE(3) 列用 time.Time，可空列用指针。
 //  2. 负载 struct（无后缀）：对应 types.ts 的接口，序列化给客户端用，时间统一为 ISO 字符串。
 //  3. Auth：socket 认证中间件写入连接的身份结构（对标 index.ts 的 socket.data.auth）。
 //
@@ -16,391 +17,428 @@ import "time"
 
 // UserRow 对应 users 表。
 type UserRow struct {
-	ID           int64      `db:"id"`
-	Username     string     `db:"username"`
-	PasswordHash string     `db:"password_hash"` // 敏感，绝不进日志
-	Nick         string     `db:"nick"`
-	Avatar       string     `db:"avatar"`
-	Email        string     `db:"email"`
-	Phone        string     `db:"phone"`
-	Extra        *string    `db:"extra"`        // TEXT，可空
-	SessionDays  *int64     `db:"session_days"` // 可空：nil=用服务端默认
-	CreatedAt    time.Time  `db:"created_at"`
+	ID           int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	Username     string    `db:"username" gorm:"uniqueIndex;type:varchar(64);not null"`
+	PasswordHash string    `db:"password_hash" gorm:"type:varchar(255);not null"` // 敏感，绝不进日志
+	Nick         string    `db:"nick" gorm:"type:varchar(64);not null"`
+	Avatar       string    `db:"avatar" gorm:"type:varchar(255);not null"`
+	Email        string    `db:"email" gorm:"type:varchar(128);not null"`
+	Phone        string    `db:"phone" gorm:"type:varchar(32);not null"`
+	Extra        *string   `db:"extra" gorm:"type:text"`                // TEXT，可空
+	SessionDays  *int64    `db:"session_days" gorm:"type:int unsigned"` // 可空：nil=用服务端默认
+	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyRow 对应 companies 表。
 type CompanyRow struct {
-	ID        int64     `db:"id"`
-	Name      string    `db:"name"`
-	Code      string    `db:"code"`
-	OwnerID   int64     `db:"owner_id"`
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	Name      string    `db:"name" gorm:"type:varchar(128);not null"`
+	Code      string    `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
+	OwnerID   int64     `db:"owner_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyMemberRow 对应 company_members 表（联合主键 company_id+user_id）。
 type CompanyMemberRow struct {
-	CompanyID int64     `db:"company_id"`
-	UserID    int64     `db:"user_id"`
-	Role      string    `db:"role"` // owner|admin|member
-	JoinedAt  time.Time `db:"joined_at"`
+	CompanyID int64     `db:"company_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID    int64     `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
+	Role      string    `db:"role" gorm:"type:enum('owner','admin','member');not null;default:member"` // owner|admin|member
+	JoinedAt  time.Time `db:"joined_at" gorm:"type:datetime;not null"`
 }
 
 // DepartmentRow 对应 departments 表。
 type DepartmentRow struct {
-	ID        int64     `db:"id"`
-	CompanyID int64     `db:"company_id"`
-	Name      string    `db:"name"`
-	ParentID  *int64    `db:"parent_id"` // 可空：顶级部门
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Name      string    `db:"name" gorm:"type:varchar(64);not null"`
+	ParentID  *int64    `db:"parent_id" gorm:"index;type:bigint unsigned"` // 可空：顶级部门
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // DepartmentMemberRow 对应 department_members 表。
 type DepartmentMemberRow struct {
-	DepartmentID int64     `db:"department_id"`
-	UserID       int64     `db:"user_id"`
-	JoinedAt     time.Time `db:"joined_at"`
+	DepartmentID int64     `db:"department_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID       int64     `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
+	JoinedAt     time.Time `db:"joined_at" gorm:"type:datetime;not null"`
 }
 
 // GroupRow 对应 groups 表。company_id 可空（NULL 表示无公司，对齐 sequelize allowNull）。
 type GroupRow struct {
-	ID           int64     `db:"id"`
-	CompanyID    *int64    `db:"company_id"` // nil=无公司
-	DepartmentID *int64    `db:"department_id"`
-	Name         string    `db:"name"`
-	Code         string    `db:"code"`
-	OwnerID      int64     `db:"owner_id"`
-	CreatedAt    time.Time `db:"created_at"`
+	ID           int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID    *int64    `db:"company_id" gorm:"index;type:bigint unsigned"` // nil=无公司
+	DepartmentID *int64    `db:"department_id" gorm:"index;type:bigint unsigned"`
+	Name         string    `db:"name" gorm:"type:varchar(64);not null"`
+	Code         string    `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
+	OwnerID      int64     `db:"owner_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // GroupMemberRow 对应 group_members 表。
 type GroupMemberRow struct {
-	GroupID   int64      `db:"group_id"`
-	UserID    int64      `db:"user_id"`
-	Role      string     `db:"role"` // owner|admin|member
-	JoinedAt  time.Time  `db:"joined_at"`
-	MutedUntil *time.Time `db:"muted_until"` // 可空：禁言截止
+	GroupID    int64      `db:"group_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID     int64      `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
+	Role       string     `db:"role" gorm:"type:enum('owner','admin','member');not null;default:member"` // owner|admin|member
+	JoinedAt   time.Time  `db:"joined_at" gorm:"type:datetime;not null"`
+	MutedUntil *time.Time `db:"muted_until" gorm:"type:datetime"` // 可空：禁言截止
 }
 
 // ConversationRow 对应 conversations 表。
 type ConversationRow struct {
-	ID        int64     `db:"id"`
-	Type      string    `db:"type"` // group|dm
-	GroupID   *int64   `db:"group_id"`
-	DmUserA   *int64   `db:"dm_user_a"`
-	DmUserB   *int64   `db:"dm_user_b"`
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	Type      string    `db:"type" gorm:"type:enum('group','dm');not null"` // group|dm
+	GroupID   *int64    `db:"group_id" gorm:"type:bigint unsigned"`
+	DmUserA   *int64    `db:"dm_user_a" gorm:"type:bigint unsigned"`
+	DmUserB   *int64    `db:"dm_user_b" gorm:"type:bigint unsigned"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // ConversationMemberRow 对应 conversation_members 表（timestamps:false）。
 type ConversationMemberRow struct {
-	ConversationID     int64      `db:"conversation_id"`
-	UserID             int64      `db:"user_id"`
-	Pinned             bool       `db:"pinned"`
-	LastMessageAt      *time.Time `db:"last_message_at"`
-	LastPreview        *string    `db:"last_preview"`
-	Unread             int64      `db:"unread"`
-	LastReadMessageID  *int64     `db:"last_read_message_id"`
+	ConversationID    int64      `db:"conversation_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID            int64      `db:"user_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	Pinned            bool       `db:"pinned" gorm:"type:tinyint(1);not null;default:0"`
+	LastMessageAt     *time.Time `db:"last_message_at" gorm:"type:datetime(3)"`
+	LastPreview       *string    `db:"last_preview" gorm:"type:varchar(255)"`
+	Unread            int64      `db:"unread" gorm:"type:int;not null;default:0"`
+	LastReadMessageID *int64     `db:"last_read_message_id" gorm:"type:bigint unsigned"`
 }
 
 // MessageRow 对应 messages 表。
 type MessageRow struct {
-	ID             int64      `db:"id"`
-	ConversationID int64      `db:"conversation_id"`
-	FromID         int64      `db:"from_id"`
-	Kind           string     `db:"kind"` // text|image|video|audio|file|folder
-	Content        string     `db:"content"`
-	DeletedAt      *time.Time `db:"deleted_at"` // 软删除标记
-	CreatedAt      time.Time  `db:"created_at"`
+	ID             int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	ConversationID int64      `db:"conversation_id" gorm:"index;type:bigint unsigned;not null"`
+	FromID         int64      `db:"from_id" gorm:"type:bigint unsigned;not null"`
+	Kind           string     `db:"kind" gorm:"type:enum('text','image','file','video','audio','folder');not null;default:text"` // text|image|video|audio|file|folder
+	Content        string     `db:"content" gorm:"type:text;not null"`
+	DeletedAt      *time.Time `db:"deleted_at" gorm:"type:datetime(3)"` // 软删除标记
+	CreatedAt      time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // FileRow 对应 files 表（UUID 主键）。
 type FileRow struct {
-	UUID      string    `db:"uuid"`
-	Filename  string    `db:"filename"`
-	Mime      string    `db:"mime"`
-	Size      int64     `db:"size"`
-	Storage   string    `db:"storage"` // local|ftp
-	URL       string    `db:"url"`
-	CreatedAt time.Time `db:"created_at"`
+	UUID      string    `db:"uuid" gorm:"primaryKey;type:char(36);not null"`
+	Filename  string    `db:"filename" gorm:"type:varchar(255);not null"`
+	Mime      string    `db:"mime" gorm:"type:varchar(128);not null"`
+	Size      int64     `db:"size" gorm:"type:bigint unsigned;not null;default:0"`
+	Storage   string    `db:"storage" gorm:"type:enum('local','ftp');not null;default:local"` // local|ftp
+	URL       string    `db:"url" gorm:"type:varchar(512);not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // FriendRow 对应 friends 表（user_a<user_b 约定，联合主键）。
 type FriendRow struct {
-	UserA    int64     `db:"user_a"`
-	UserB    int64     `db:"user_b"`
-	CreatedAt time.Time `db:"created_at"`
+	UserA     int64     `db:"user_a" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserB     int64     `db:"user_b" gorm:"primaryKey;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyInvitationRow 对应 company_invitations 表。
 type CompanyInvitationRow struct {
-	ID          int64      `db:"id"`
-	CompanyID   int64      `db:"company_id"`
-	UserID      int64      `db:"user_id"`
-	DepartmentID *int64    `db:"department_id"`
-	InvitedBy   int64      `db:"invited_by"`
-	Code        string     `db:"code"`
-	ExpiresAt   *time.Time `db:"expires_at"`
-	Status      string     `db:"status"` // pending|accepted|declined|expired
-	CreatedAt   time.Time  `db:"created_at"`
+	ID           int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID    int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID       int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	DepartmentID *int64     `db:"department_id" gorm:"index;type:bigint unsigned"`
+	InvitedBy    int64      `db:"invited_by" gorm:"index;type:bigint unsigned;not null"`
+	Code         string     `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
+	ExpiresAt    *time.Time `db:"expires_at" gorm:"type:datetime(3)"`
+	Status       string     `db:"status" gorm:"type:enum('pending','accepted','declined','expired');not null;default:pending"` // pending|accepted|declined|expired
+	CreatedAt    time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // MemberProfileRow 对应 member_profiles 表（仅 updatedAt，无 createdAt）。
 type MemberProfileRow struct {
-	CompanyID    int64     `db:"company_id"`
-	UserID       int64     `db:"user_id"`
-	RealName     string    `db:"real_name"`
-	IDCard       string    `db:"id_card"`
-	BankCard     string    `db:"bank_card"`
-	ResumeURL    string    `db:"resume_url"`
-	PortfolioURL string    `db:"portfolio_url"`
-	UpdatedAt    time.Time `db:"updated_at"`
+	CompanyID    int64     `db:"company_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID       int64     `db:"user_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	RealName     string    `db:"real_name" gorm:"type:varchar(64);not null"`
+	IDCard       string    `db:"id_card" gorm:"type:varchar(64);not null"`
+	BankCard     string    `db:"bank_card" gorm:"type:varchar(64);not null"`
+	ResumeURL    string    `db:"resume_url" gorm:"type:varchar(512);not null"`
+	PortfolioURL string    `db:"portfolio_url" gorm:"type:varchar(512);not null"`
+	UpdatedAt    time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // SessionRow 对应 sessions 表（多端登录会话）。
 type SessionRow struct {
-	ID           int64     `db:"id"`
-	UserID       int64     `db:"user_id"`
-	TokenHash    string    `db:"token_hash"`
-	Device       string    `db:"device"`
-	IP           string    `db:"ip"`
-	Location     string    `db:"location"`
-	ExpiresAt    time.Time `db:"expires_at"`
-	LastActiveAt time.Time `db:"last_active_at"`
-	CreatedAt    time.Time `db:"created_at"`
+	ID           int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	UserID       int64     `db:"user_id" gorm:"type:bigint unsigned;not null"`
+	TokenHash    string    `db:"token_hash" gorm:"uniqueIndex;type:char(64);not null"`
+	Device       string    `db:"device" gorm:"type:varchar(128);not null"`
+	IP           string    `db:"ip" gorm:"type:varchar(64);not null"`
+	Location     string    `db:"location" gorm:"type:varchar(128);not null"`
+	ExpiresAt    time.Time `db:"expires_at" gorm:"type:datetime(3);not null"`
+	LastActiveAt time.Time `db:"last_active_at" gorm:"type:datetime(3);not null"`
+	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // MailConfigRow 对应 mail_configs 表。
 type MailConfigRow struct {
-	ID          int64     `db:"id"`
-	CompanyID   *int64    `db:"company_id"` // nil=主配置（全局）
-	Email       string    `db:"email"`
-	DisplayName string    `db:"display_name"`
-	Host        string    `db:"host"`
-	Port        int64     `db:"port"`
-	Secure      bool      `db:"secure"`
-	User        string    `db:"user"`
-	Password    string    `db:"password"` // 敏感
-	IsDefault   bool      `db:"is_default"`
-	Enabled     bool      `db:"enabled"`
-	Priority    int64     `db:"priority"`
-	CreatedAt   time.Time `db:"created_at"`
+	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   *int64    `db:"company_id" gorm:"index;type:bigint unsigned"` // nil=主配置（全局）
+	Email       string    `db:"email" gorm:"type:varchar(128);not null"`
+	DisplayName string    `db:"display_name" gorm:"type:varchar(128);not null"`
+	Host        string    `db:"host" gorm:"type:varchar(255);not null"`
+	Port        int64     `db:"port" gorm:"type:int unsigned;not null;default:465"`
+	Secure      bool      `db:"secure" gorm:"type:tinyint(1);not null;default:1"`
+	User        string    `db:"user" gorm:"type:varchar(128);not null"`
+	Password    string    `db:"password" gorm:"type:varchar(255);not null"` // 敏感
+	IsDefault   bool      `db:"is_default" gorm:"type:tinyint(1);not null;default:0"`
+	Enabled     bool      `db:"enabled" gorm:"type:tinyint(1);not null;default:1"`
+	Priority    int64     `db:"priority" gorm:"type:int;not null;default:100"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // HolidayRow 对应 holidays 表。
 type HolidayRow struct {
-	ID        int64     `db:"id"`
-	Date      string    `db:"date"` // YYYY-MM-DD 唯一
-	Name      string    `db:"name"`
-	Type      string    `db:"type"` // legal|workday|custom
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	Date      string    `db:"date" gorm:"uniqueIndex;type:varchar(10);not null"` // YYYY-MM-DD 唯一
+	Name      string    `db:"name" gorm:"type:varchar(64);not null"`
+	Type      string    `db:"type" gorm:"type:enum('legal','workday','custom');not null;default:legal"` // legal|workday|custom
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // ProjectRow 对应 projects 表。
 type ProjectRow struct {
-	ID        int64     `db:"id"`
-	CompanyID int64     `db:"company_id"`
-	Name      string    `db:"name"`
-	PmID      int64     `db:"pm_id"`
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Name      string    `db:"name" gorm:"type:varchar(64);not null"`
+	PmID      int64     `db:"pm_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // ProjectMemberRow 对应 project_members 表。
 type ProjectMemberRow struct {
-	ProjectID int64     `db:"project_id"`
-	UserID    int64     `db:"user_id"`
-	Role      string    `db:"role"` // pm|leader|member
-	JoinedAt  time.Time `db:"joined_at"`
+	ProjectID int64     `db:"project_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID    int64     `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
+	Role      string    `db:"role" gorm:"type:enum('pm','leader','member');not null;default:member"` // pm|leader|member
+	JoinedAt  time.Time `db:"joined_at" gorm:"type:datetime;not null"`
 }
 
 // TaskRow 对应 tasks 表。
 type TaskRow struct {
-	ID            int64      `db:"id"`
-	CompanyID     int64      `db:"company_id"`
-	ProjectID     *int64     `db:"project_id"`
-	Title         string     `db:"title"`
-	Description   string     `db:"description"`
-	StartTime     time.Time  `db:"start_time"`
-	DueTime       time.Time  `db:"due_time"`
-	CompletedTime *time.Time `db:"completed_time"`
-	Status        string     `db:"status"`
-	IsOverdue     bool       `db:"is_overdue"`
-	ReminderYellow int64     `db:"reminder_yellow"`
-	ReminderRed   int64      `db:"reminder_red"`
-	Images        string     `db:"images"` // JSON 字符串数组
-	CreatedBy     int64      `db:"created_by"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	ID             int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID      int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID      *int64     `db:"project_id" gorm:"index;type:bigint unsigned"`
+	Title          string     `db:"title" gorm:"type:varchar(128);not null"`
+	Description    string     `db:"description" gorm:"type:text;not null"`
+	StartTime      time.Time  `db:"start_time" gorm:"type:datetime(3);not null"`
+	DueTime        time.Time  `db:"due_time" gorm:"type:datetime(3);not null"`
+	CompletedTime  *time.Time `db:"completed_time" gorm:"type:datetime(3)"`
+	Status         string     `db:"status" gorm:"type:enum('created','in_progress','completed','pending_extension','extended','overdue');not null;default:created"`
+	IsOverdue      bool       `db:"is_overdue" gorm:"type:tinyint(1);not null;default:0"`
+	ReminderYellow int64      `db:"reminder_yellow" gorm:"type:int unsigned;not null;default:2"`
+	ReminderRed    int64      `db:"reminder_red" gorm:"type:int unsigned;not null;default:1"`
+	Images         string     `db:"images" gorm:"type:text;not null"` // JSON 字符串数组
+	CreatedBy      int64      `db:"created_by" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt      time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt      time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // TaskAssignmentRow 对应 task_assignments 表。
 type TaskAssignmentRow struct {
-	ID          int64      `db:"id"`
-	TaskID      int64      `db:"task_id"`
-	UserID      int64      `db:"user_id"`
-	Content     string     `db:"content"`
-	Status      string     `db:"status"` // created|in_progress|completed
-	CompletedAt *time.Time `db:"completed_at"`
-	CreatedAt   time.Time  `db:"created_at"`
+	ID          int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	TaskID      int64      `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID      int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Content     string     `db:"content" gorm:"type:text;not null"`
+	Status      string     `db:"status" gorm:"type:enum('created','in_progress','completed');not null;default:created"` // created|in_progress|completed
+	CompletedAt *time.Time `db:"completed_at" gorm:"type:datetime(3)"`
+	CreatedAt   time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // TaskCommentRow 对应 task_comments 表。
 type TaskCommentRow struct {
-	ID        int64     `db:"id"`
-	TaskID    int64     `db:"task_id"`
-	UserID    int64     `db:"user_id"`
-	Content   string    `db:"content"`
-	Images    *string   `db:"images"` // JSON 附件数组，可空
-	CreatedAt time.Time `db:"created_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	TaskID    int64     `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID    int64     `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Content   string    `db:"content" gorm:"type:text;not null"`
+	Images    *string   `db:"images" gorm:"type:text"` // JSON 附件数组，可空
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // TaskIssueRow 对应 task_issues 表。
 type TaskIssueRow struct {
-	ID         int64      `db:"id"`
-	TaskID     int64      `db:"task_id"`
-	UserID     int64      `db:"user_id"`
-	Title      string     `db:"title"`
-	Content    string     `db:"content"`
-	Status     string     `db:"status"` // open|resolved
-	ResolvedAt *time.Time `db:"resolved_at"`
-	CreatedAt  time.Time  `db:"created_at"`
+	ID         int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	TaskID     int64      `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID     int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Title      string     `db:"title" gorm:"type:varchar(128);not null"`
+	Content    string     `db:"content" gorm:"type:text;not null"`
+	Status     string     `db:"status" gorm:"type:enum('open','resolved');not null;default:open"` // open|resolved
+	ResolvedAt *time.Time `db:"resolved_at" gorm:"type:datetime(3)"`
+	CreatedAt  time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // TaskStatusLogRow 对应 task_status_logs 表。
 type TaskStatusLogRow struct {
-	ID         int64     `db:"id"`
-	TaskID     int64     `db:"task_id"`
-	UserID     int64     `db:"user_id"`
-	FromStatus string    `db:"from_status"`
-	ToStatus   string    `db:"to_status"`
-	Note       string    `db:"note"`
-	CreatedAt  time.Time `db:"created_at"`
+	ID         int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	TaskID     int64     `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID     int64     `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	FromStatus string    `db:"from_status" gorm:"type:varchar(32);not null"`
+	ToStatus   string    `db:"to_status" gorm:"type:enum('created','in_progress','completed','pending_extension','extended','overdue');not null"`
+	Note       string    `db:"note" gorm:"type:text;not null"`
+	CreatedAt  time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // TaskExtensionRow 对应 task_extensions 表。
 type TaskExtensionRow struct {
-	ID              int64      `db:"id"`
-	TaskID          int64      `db:"task_id"`
-	UserID          int64      `db:"user_id"`
-	RequestedDueTime time.Time `db:"requested_due_time"`
-	Reason          string     `db:"reason"`
-	Status          string     `db:"status"` // pending|approved|rejected
-	DecidedBy       *int64     `db:"decided_by"`
-	DecidedAt       *time.Time `db:"decided_at"`
-	CreatedAt       time.Time  `db:"created_at"`
+	ID               int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	TaskID           int64      `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID           int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	RequestedDueTime time.Time  `db:"requested_due_time" gorm:"type:datetime(3);not null"`
+	Reason           string     `db:"reason" gorm:"type:text;not null"`
+	Status           string     `db:"status" gorm:"type:enum('pending','approved','rejected');not null;default:pending"` // pending|approved|rejected
+	DecidedBy        *int64     `db:"decided_by" gorm:"type:bigint unsigned"`
+	DecidedAt        *time.Time `db:"decided_at" gorm:"type:datetime(3)"`
+	CreatedAt        time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // RequirementRow 对应 requirements 表。
 type RequirementRow struct {
-	ID            int64      `db:"id"`
-	CompanyID     int64      `db:"company_id"`
-	ProjectID     *int64     `db:"project_id"`
-	Code          string     `db:"code"`
-	Title         string     `db:"title"`
-	Description   string     `db:"description"`
-	Category      string     `db:"category"`
-	Priority      string     `db:"priority"`
-	Status        string     `db:"status"`
-	HandlerID     *int64     `db:"handler_id"`
-	CreatorID     int64      `db:"creator_id"`
-	StartTime     time.Time  `db:"start_time"`
-	DueTime       time.Time  `db:"due_time"`
-	CompletedTime *time.Time `db:"completed_time"`
-	CreatedAt     time.Time  `db:"created_at"`
-	UpdatedAt     time.Time  `db:"updated_at"`
+	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID     *int64     `db:"project_id" gorm:"index;type:bigint unsigned"`
+	Code          string     `db:"code" gorm:"type:varchar(32);not null"`
+	Title         string     `db:"title" gorm:"type:varchar(128);not null"`
+	Description   string     `db:"description" gorm:"type:text;not null"`
+	Category      string     `db:"category" gorm:"type:varchar(32);not null;default:uncategorized"`
+	Priority      string     `db:"priority" gorm:"type:varchar(32);not null;default:middle"`
+	Status        string     `db:"status" gorm:"type:varchar(32);not null;default:planning"`
+	HandlerID     *int64     `db:"handler_id" gorm:"index;type:bigint unsigned"`
+	CreatorID     int64      `db:"creator_id" gorm:"index;type:bigint unsigned;not null"`
+	StartTime     time.Time  `db:"start_time" gorm:"type:datetime(3);not null"`
+	DueTime       time.Time  `db:"due_time" gorm:"type:datetime(3);not null"`
+	CompletedTime *time.Time `db:"completed_time" gorm:"type:datetime(3)"`
+	CreatedAt     time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // BugRow 对应 bugs 表。
 type BugRow struct {
-	ID            int64     `db:"id"`
-	CompanyID     int64     `db:"company_id"`
-	ProjectID     *int64    `db:"project_id"`
-	RequirementID *int64    `db:"requirement_id"`
-	Code          string    `db:"code"`
-	Title         string    `db:"title"`
-	Description   string    `db:"description"`
-	Severity      string    `db:"severity"`
-	Priority      string    `db:"priority"`
-	Status        string    `db:"status"`
-	HandlerID     *int64    `db:"handler_id"`
-	CreatorID     int64     `db:"creator_id"`
-	FoundVersion  string    `db:"found_version"`
-	CreatedAt     time.Time `db:"created_at"`
-	UpdatedAt     time.Time `db:"updated_at"`
+	ID            int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID     *int64    `db:"project_id" gorm:"index;type:bigint unsigned"`
+	RequirementID *int64    `db:"requirement_id" gorm:"index;type:bigint unsigned"`
+	Code          string    `db:"code" gorm:"type:varchar(32);not null"`
+	Title         string    `db:"title" gorm:"type:varchar(128);not null"`
+	Description   string    `db:"description" gorm:"type:text;not null"`
+	Severity      string    `db:"severity" gorm:"type:varchar(32);not null;default:normal"`
+	Priority      string    `db:"priority" gorm:"type:varchar(32);not null;default:middle"`
+	Status        string    `db:"status" gorm:"type:varchar(32);not null;default:pending"`
+	HandlerID     *int64    `db:"handler_id" gorm:"index;type:bigint unsigned"`
+	CreatorID     int64     `db:"creator_id" gorm:"index;type:bigint unsigned;not null"`
+	FoundVersion  string    `db:"found_version" gorm:"type:varchar(64);not null"`
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // PlanRow 对应 plans 表。
 type PlanRow struct {
-	ID        int64     `db:"id"`
-	CompanyID int64     `db:"company_id"`
-	ProjectID *int64    `db:"project_id"`
-	Name      string    `db:"name"`
-	Description string  `db:"description"`
-	StartTime time.Time `db:"start_time"`
-	DueTime   time.Time `db:"due_time"`
-	Status    string    `db:"status"`
-	CreatorID int64     `db:"creator_id"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID   *int64    `db:"project_id" gorm:"index;type:bigint unsigned"`
+	Name        string    `db:"name" gorm:"type:varchar(128);not null"`
+	Description string    `db:"description" gorm:"type:text;not null"`
+	StartTime   time.Time `db:"start_time" gorm:"type:datetime(3);not null"`
+	DueTime     time.Time `db:"due_time" gorm:"type:datetime(3);not null"`
+	Status      string    `db:"status" gorm:"type:varchar(32);not null;default:not_started"`
+	CreatorID   int64     `db:"creator_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // DocumentRow 对应 documents 表（TAPD 项目文档）。
 type DocumentRow struct {
-	ID        int64     `db:"id"`
-	CompanyID int64     `db:"company_id"`
-	ProjectID *int64    `db:"project_id"`
-	Title     string    `db:"title"`
-	Content   string    `db:"content"`
-	CreatorID int64     `db:"creator_id"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID *int64    `db:"project_id" gorm:"index;type:bigint unsigned"`
+	Title     string    `db:"title" gorm:"type:varchar(128);not null"`
+	Content   string    `db:"content" gorm:"type:text;not null"`
+	CreatorID int64     `db:"creator_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // WikiPageRow 对应 wiki_pages 表。
 type WikiPageRow struct {
-	ID        int64     `db:"id"`
-	CompanyID int64     `db:"company_id"`
-	ProjectID *int64    `db:"project_id"`
-	Title     string    `db:"title"`
-	Content   string    `db:"content"`
-	CreatorID int64     `db:"creator_id"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	ProjectID *int64    `db:"project_id" gorm:"index;type:bigint unsigned"`
+	Title     string    `db:"title" gorm:"type:varchar(128);not null"`
+	Content   string    `db:"content" gorm:"type:text;not null"`
+	CreatorID int64     `db:"creator_id" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // RequirementLinkRow 对应 requirement_links 表（需求-任务关联）。
 type RequirementLinkRow struct {
-	ID            int64     `db:"id"`
-	CompanyID     int64     `db:"company_id"`
-	RequirementID int64     `db:"requirement_id"`
-	TaskID        int64     `db:"task_id"`
-	UserID        int64     `db:"user_id"`
-	CreatedAt     time.Time `db:"created_at"`
+	ID            int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64     `db:"company_id" gorm:"type:bigint unsigned;not null"`
+	RequirementID int64     `db:"requirement_id" gorm:"index;type:bigint unsigned;not null"`
+	TaskID        int64     `db:"task_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID        int64     `db:"user_id" gorm:"type:bigint unsigned;not null"`
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // AfdianOrderRow 对应 afdian_orders 表。
+// 注意：这张表不在项目自带的 mochioa.sql 里（那里只有另一张 pay_orders），
+// 但代码一直在读写它；AutoMigrate 会按本结构体把缺失的表建出来。
 type AfdianOrderRow struct {
-	ID             int64     `db:"id"`
-	OutTradeNo     string    `db:"out_trade_no"`
-	CustomOrderID  string    `db:"custom_order_id"`
-	PlanID         string    `db:"plan_id"`
-	PlanTitle      string    `db:"plan_title"`
-	Title          string    `db:"title"`
-	Month          int64     `db:"month"`
-	Amount         string    `db:"amount"`
-	ShowAmount     string    `db:"show_amount"`
-	Status         int64     `db:"status"`
-	Remark         string    `db:"remark"`
-	RedeemID       string    `db:"redeem_id"`
-	ProductType    int64     `db:"product_type"`
-	Discount       string    `db:"discount"`
-	BuyerUserID    string    `db:"buyer_user_id"`
-	BuyerName      string    `db:"buyer_name"`
-	BuyerAvatar    string    `db:"buyer_avatar"`
-	CreateTime     int64     `db:"create_time"`
-	SkuDetail      string    `db:"sku_detail"`
-	Raw            string    `db:"raw"`
-	CreatedAt      time.Time `db:"created_at"`
+	ID            int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	OutTradeNo    string    `db:"out_trade_no" gorm:"uniqueIndex;type:varchar(64);not null"`
+	CustomOrderID string    `db:"custom_order_id" gorm:"type:varchar(64);not null"`
+	PlanID        string    `db:"plan_id" gorm:"type:varchar(64);not null"`
+	PlanTitle     string    `db:"plan_title" gorm:"type:varchar(255);not null"`
+	Title         string    `db:"title" gorm:"type:varchar(255);not null"`
+	Month         int64     `db:"month" gorm:"type:int;not null;default:0"`
+	Amount        string    `db:"amount" gorm:"type:varchar(32);not null"`
+	ShowAmount    string    `db:"show_amount" gorm:"type:varchar(32);not null"`
+	Status        int64     `db:"status" gorm:"type:int;not null;default:0"`
+	Remark        string    `db:"remark" gorm:"type:text;not null"`
+	RedeemID      string    `db:"redeem_id" gorm:"type:varchar(64);not null"`
+	ProductType   int64     `db:"product_type" gorm:"type:int;not null;default:0"`
+	Discount      string    `db:"discount" gorm:"type:varchar(32);not null"`
+	BuyerUserID   string    `db:"buyer_user_id" gorm:"type:varchar(64);not null"`
+	BuyerName     string    `db:"buyer_name" gorm:"type:varchar(128);not null"`
+	BuyerAvatar   string    `db:"buyer_avatar" gorm:"type:varchar(512);not null"`
+	CreateTime    int64     `db:"create_time" gorm:"type:bigint;not null;default:0"`
+	SkuDetail     string    `db:"sku_detail" gorm:"type:text;not null"`
+	Raw           string    `db:"raw" gorm:"type:text;not null"`
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
+
+// ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
+
+func (UserRow) TableName() string               { return "users" }
+func (CompanyRow) TableName() string            { return "companies" }
+func (CompanyMemberRow) TableName() string      { return "company_members" }
+func (DepartmentRow) TableName() string         { return "departments" }
+func (DepartmentMemberRow) TableName() string   { return "department_members" }
+func (GroupRow) TableName() string              { return "groups" }
+func (GroupMemberRow) TableName() string        { return "group_members" }
+func (ConversationRow) TableName() string       { return "conversations" }
+func (ConversationMemberRow) TableName() string { return "conversation_members" }
+func (MessageRow) TableName() string            { return "messages" }
+func (FileRow) TableName() string               { return "files" }
+func (FriendRow) TableName() string             { return "friends" }
+func (CompanyInvitationRow) TableName() string  { return "company_invitations" }
+func (MemberProfileRow) TableName() string      { return "member_profiles" }
+func (SessionRow) TableName() string            { return "sessions" }
+func (MailConfigRow) TableName() string         { return "mail_configs" }
+func (HolidayRow) TableName() string            { return "holidays" }
+func (ProjectRow) TableName() string            { return "projects" }
+func (ProjectMemberRow) TableName() string      { return "project_members" }
+func (TaskRow) TableName() string               { return "tasks" }
+func (TaskAssignmentRow) TableName() string     { return "task_assignments" }
+func (TaskCommentRow) TableName() string        { return "task_comments" }
+func (TaskIssueRow) TableName() string          { return "task_issues" }
+func (TaskStatusLogRow) TableName() string      { return "task_status_logs" }
+func (TaskExtensionRow) TableName() string      { return "task_extensions" }
+func (RequirementRow) TableName() string        { return "requirements" }
+func (BugRow) TableName() string                { return "bugs" }
+func (PlanRow) TableName() string               { return "plans" }
+func (DocumentRow) TableName() string           { return "documents" }
+func (WikiPageRow) TableName() string           { return "wiki_pages" }
+func (RequirementLinkRow) TableName() string    { return "requirement_links" }
+func (AfdianOrderRow) TableName() string        { return "afdian_orders" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -455,17 +493,17 @@ type Member struct {
 
 // Membership 用户所持公司摘要。
 type Membership struct {
-	Company Company    `json:"company"`
-	Role    string     `json:"role"`
+	Company Company `json:"company"`
+	Role    string  `json:"role"`
 }
 
 // Department 部门。
 type Department struct {
-	ID        int64   `json:"id"`
-	CompanyID int64   `json:"companyId"`
-	Name      string  `json:"name"`
-	ParentID  *int64  `json:"parentId"`
-	CreatedAt string  `json:"createdAt"`
+	ID        int64  `json:"id"`
+	CompanyID int64  `json:"companyId"`
+	Name      string `json:"name"`
+	ParentID  *int64 `json:"parentId"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // DepartmentMember 部门成员。
@@ -484,13 +522,13 @@ type DepartmentMember struct {
 
 // Group 群。
 type Group struct {
-	ID          int64   `json:"id"`
-	CompanyID   int64   `json:"companyId"`
+	ID           int64  `json:"id"`
+	CompanyID    int64  `json:"companyId"`
 	DepartmentID *int64 `json:"departmentId"`
-	Name        string  `json:"name"`
-	Code        string  `json:"code"`
-	OwnerID     int64   `json:"ownerId"`
-	CreatedAt   string  `json:"createdAt"`
+	Name         string `json:"name"`
+	Code         string `json:"code"`
+	OwnerID      int64  `json:"ownerId"`
+	CreatedAt    string `json:"createdAt"`
 }
 
 // GroupMember 群成员。
@@ -514,12 +552,12 @@ type ChatKind = string
 
 // Conversation 对话。
 type Conversation struct {
-	ID        int64   `json:"id"`
-	Type      string  `json:"type"`
-	GroupID   *int64  `json:"groupId"`
-	DmUserA   *int64  `json:"dmUserA"`
-	DmUserB   *int64  `json:"dmUserB"`
-	CreatedAt string  `json:"createdAt"`
+	ID        int64  `json:"id"`
+	Type      string `json:"type"`
+	GroupID   *int64 `json:"groupId"`
+	DmUserA   *int64 `json:"dmUserA"`
+	DmUserB   *int64 `json:"dmUserB"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // ConversationMember 会话成员的个人状态。
@@ -534,21 +572,21 @@ type ConversationMember struct {
 
 // ReadReceipt 单条已读回执。
 type ReadReceipt struct {
-	UserID          int64   `json:"userId"`
+	UserID            int64  `json:"userId"`
 	LastReadMessageID *int64 `json:"lastReadMessageId"`
 }
 
 // ConversationItem 对话列表条目。
 type ConversationItem struct {
-	ConversationID int64          `json:"conversationId"`
-	Type           string         `json:"type"`
-	GroupID        *int64         `json:"groupId"`
-	DmUserID       *int64         `json:"dmUserId"`
-	Pinned         bool           `json:"pinned"`
-	LastMessageAt  *string        `json:"lastMessageAt"`
-	LastPreview    *string        `json:"lastPreview"`
-	Unread         int64          `json:"unread"`
-	ReadReceipts   []ReadReceipt  `json:"readReceipts"`
+	ConversationID int64         `json:"conversationId"`
+	Type           string        `json:"type"`
+	GroupID        *int64        `json:"groupId"`
+	DmUserID       *int64        `json:"dmUserId"`
+	Pinned         bool          `json:"pinned"`
+	LastMessageAt  *string       `json:"lastMessageAt"`
+	LastPreview    *string       `json:"lastPreview"`
+	Unread         int64         `json:"unread"`
+	ReadReceipts   []ReadReceipt `json:"readReceipts"`
 }
 
 // ChatMessage 消息。
@@ -589,21 +627,21 @@ type InvitationStatus = string
 
 // CompanyInvitation 公司入司邀请。
 type CompanyInvitation struct {
-	ID           int64    `json:"id"`
-	CompanyID    int64    `json:"companyId"`
-	CompanyName  string   `json:"companyName"`
-	CompanyCode  string   `json:"companyCode"`
-	UserID       int64    `json:"userId"`
-	Username     string   `json:"username"`
-	UserNick     string   `json:"userNick"`
-	DepartmentID *int64   `json:"departmentId"`
+	ID             int64   `json:"id"`
+	CompanyID      int64   `json:"companyId"`
+	CompanyName    string  `json:"companyName"`
+	CompanyCode    string  `json:"companyCode"`
+	UserID         int64   `json:"userId"`
+	Username       string  `json:"username"`
+	UserNick       string  `json:"userNick"`
+	DepartmentID   *int64  `json:"departmentId"`
 	DepartmentName *string `json:"departmentName"`
-	InvitedBy    int64    `json:"invitedBy"`
-	InviterNick  string   `json:"inviterNick"`
-	Code         string   `json:"code"`
-	ExpiresAt    *string  `json:"expiresAt"`
-	Status       string   `json:"status"`
-	CreatedAt    string   `json:"createdAt"`
+	InvitedBy      int64   `json:"invitedBy"`
+	InviterNick    string  `json:"inviterNick"`
+	Code           string  `json:"code"`
+	ExpiresAt      *string `json:"expiresAt"`
+	Status         string  `json:"status"`
+	CreatedAt      string  `json:"createdAt"`
 }
 
 // MemberProfile 成员人事信息。
@@ -658,19 +696,19 @@ type AfdianOrder struct {
 
 // MailConfig 邮件发送配置。
 type MailConfig struct {
-	ID          int64   `json:"id"`
-	CompanyID   *int64  `json:"companyId"` // nil=主配置（全局）
-	Email       string  `json:"email"`
-	DisplayName string  `json:"displayName"`
-	Host        string  `json:"host"`
-	Port        int64   `json:"port"`
-	Secure      bool    `json:"secure"`
-	User        string  `json:"user"`
-	Password    string  `json:"password"` // 敏感
-	IsDefault   bool    `json:"isDefault"`
-	Enabled     bool    `json:"enabled"`
-	Priority    int64   `json:"priority"`
-	CreatedAt   string  `json:"createdAt"`
+	ID          int64  `json:"id"`
+	CompanyID   *int64 `json:"companyId"` // nil=主配置（全局）
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
+	Host        string `json:"host"`
+	Port        int64  `json:"port"`
+	Secure      bool   `json:"secure"`
+	User        string `json:"user"`
+	Password    string `json:"password"` // 敏感
+	IsDefault   bool   `json:"isDefault"`
+	Enabled     bool   `json:"enabled"`
+	Priority    int64  `json:"priority"`
+	CreatedAt   string `json:"createdAt"`
 }
 
 // HolidayType 假期类型。
@@ -719,35 +757,35 @@ type ExtensionStatus = string
 
 // TaskItem 任务。
 type TaskItem struct {
-	ID            int64    `json:"id"`
-	CompanyID     int64    `json:"companyId"`
-	ProjectID     *int64   `json:"projectId"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	StartTime     string   `json:"startTime"`
-	DueTime       string   `json:"dueTime"`
-	CompletedTime *string  `json:"completedTime"`
-	Status        string   `json:"status"`
-	IsOverdue     bool     `json:"isOverdue"`
-	ReminderYellow int64   `json:"reminderYellow"`
-	ReminderRed   int64    `json:"reminderRed"`
-	Images        []string `json:"images"`
-	CreatedBy     int64    `json:"createdBy"`
-	CreatedAt     string   `json:"createdAt"`
-	UpdatedAt     string   `json:"updatedAt"`
+	ID             int64    `json:"id"`
+	CompanyID      int64    `json:"companyId"`
+	ProjectID      *int64   `json:"projectId"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	StartTime      string   `json:"startTime"`
+	DueTime        string   `json:"dueTime"`
+	CompletedTime  *string  `json:"completedTime"`
+	Status         string   `json:"status"`
+	IsOverdue      bool     `json:"isOverdue"`
+	ReminderYellow int64    `json:"reminderYellow"`
+	ReminderRed    int64    `json:"reminderRed"`
+	Images         []string `json:"images"`
+	CreatedBy      int64    `json:"createdBy"`
+	CreatedAt      string   `json:"createdAt"`
+	UpdatedAt      string   `json:"updatedAt"`
 }
 
 // TaskAssignment 任务分配。
 type TaskAssignment struct {
-	ID          int64    `json:"id"`
-	TaskID      int64    `json:"taskId"`
-	UserID      int64    `json:"userId"`
-	Content     string   `json:"content"`
-	Status      string   `json:"status"`
-	CompletedAt *string  `json:"completedAt"`
-	Username    *string  `json:"username,omitempty"`
-	Nick        *string  `json:"nick,omitempty"`
-	Avatar      *string  `json:"avatar,omitempty"`
+	ID          int64   `json:"id"`
+	TaskID      int64   `json:"taskId"`
+	UserID      int64   `json:"userId"`
+	Content     string  `json:"content"`
+	Status      string  `json:"status"`
+	CompletedAt *string `json:"completedAt"`
+	Username    *string `json:"username,omitempty"`
+	Nick        *string `json:"nick,omitempty"`
+	Avatar      *string `json:"avatar,omitempty"`
 }
 
 // TaskAttachmentKind 任务附件种类。
@@ -762,30 +800,30 @@ type TaskAttachment struct {
 
 // TaskComment 任务留言。
 type TaskComment struct {
-	ID          int64             `json:"id"`
-	TaskID      int64             `json:"taskId"`
-	UserID      int64             `json:"userId"`
-	Content     string            `json:"content"`
-	Attachments []TaskAttachment  `json:"attachments"`
-	CreatedAt   string            `json:"createdAt"`
-	Username    *string           `json:"username,omitempty"`
-	Nick        *string           `json:"nick,omitempty"`
-	Avatar      *string           `json:"avatar,omitempty"`
+	ID          int64            `json:"id"`
+	TaskID      int64            `json:"taskId"`
+	UserID      int64            `json:"userId"`
+	Content     string           `json:"content"`
+	Attachments []TaskAttachment `json:"attachments"`
+	CreatedAt   string           `json:"createdAt"`
+	Username    *string          `json:"username,omitempty"`
+	Nick        *string          `json:"nick,omitempty"`
+	Avatar      *string          `json:"avatar,omitempty"`
 }
 
 // TaskIssue 任务问题。
 type TaskIssue struct {
-	ID         int64    `json:"id"`
-	TaskID     int64    `json:"taskId"`
-	UserID     int64    `json:"userId"`
-	Title      string   `json:"title"`
-	Content    string   `json:"content"`
-	Status     string   `json:"status"`
-	ResolvedAt *string  `json:"resolvedAt"`
-	CreatedAt  string   `json:"createdAt"`
-	Username   *string  `json:"username,omitempty"`
-	Nick       *string  `json:"nick,omitempty"`
-	Avatar     *string  `json:"avatar,omitempty"`
+	ID         int64   `json:"id"`
+	TaskID     int64   `json:"taskId"`
+	UserID     int64   `json:"userId"`
+	Title      string  `json:"title"`
+	Content    string  `json:"content"`
+	Status     string  `json:"status"`
+	ResolvedAt *string `json:"resolvedAt"`
+	CreatedAt  string  `json:"createdAt"`
+	Username   *string `json:"username,omitempty"`
+	Nick       *string `json:"nick,omitempty"`
+	Avatar     *string `json:"avatar,omitempty"`
 }
 
 // TaskStatusLog 任务状态变更日志。
@@ -803,27 +841,27 @@ type TaskStatusLog struct {
 
 // TaskExtension 任务延期申请。
 type TaskExtension struct {
-	ID              int64    `json:"id"`
-	TaskID          int64    `json:"taskId"`
-	UserID          int64    `json:"userId"`
+	ID               int64   `json:"id"`
+	TaskID           int64   `json:"taskId"`
+	UserID           int64   `json:"userId"`
 	RequestedDueTime string  `json:"requestedDueTime"`
-	Reason          string   `json:"reason"`
-	Status          string   `json:"status"`
-	DecidedBy       *int64   `json:"decidedBy"`
-	DecidedAt       *string  `json:"decidedAt"`
-	CreatedAt       string   `json:"createdAt"`
-	Username        *string  `json:"username,omitempty"`
-	Nick            *string  `json:"nick,omitempty"`
+	Reason           string  `json:"reason"`
+	Status           string  `json:"status"`
+	DecidedBy        *int64  `json:"decidedBy"`
+	DecidedAt        *string `json:"decidedAt"`
+	CreatedAt        string  `json:"createdAt"`
+	Username         *string `json:"username,omitempty"`
+	Nick             *string `json:"nick,omitempty"`
 }
 
 // TaskDetail 任务详情（任务+分配+留言+问题+延期+状态日志）。
 type TaskDetail struct {
-	Task        TaskItem          `json:"task"`
-	Assignments []TaskAssignment  `json:"assignments"`
-	Comments    []TaskComment     `json:"comments"`
-	Issues      []TaskIssue       `json:"issues"`
-	Extensions  []TaskExtension   `json:"extensions"`
-	Logs        []TaskStatusLog    `json:"logs"`
+	Task        TaskItem         `json:"task"`
+	Assignments []TaskAssignment `json:"assignments"`
+	Comments    []TaskComment    `json:"comments"`
+	Issues      []TaskIssue      `json:"issues"`
+	Extensions  []TaskExtension  `json:"extensions"`
+	Logs        []TaskStatusLog  `json:"logs"`
 }
 
 // RequirementStatus 需求状态。
@@ -831,25 +869,25 @@ type RequirementStatus = string
 
 // Requirement 需求。
 type Requirement struct {
-	ID            int64    `json:"id"`
-	CompanyID     int64    `json:"companyId"`
-	ProjectID     *int64   `json:"projectId"`
-	Code          string   `json:"code"`
-	Title         string   `json:"title"`
-	Description   string   `json:"description"`
-	Category      string   `json:"category"`
-	Priority      string   `json:"priority"`
-	Status        string   `json:"status"`
-	HandlerID     *int64   `json:"handlerId"`
-	CreatorID     int64    `json:"creatorId"`
-	StartTime     string   `json:"startTime"`
-	DueTime       string   `json:"dueTime"`
-	CompletedTime *string  `json:"completedTime"`
-	LinkedTaskIDs []int64  `json:"linkedTaskIds"`
-	CreatedAt     string   `json:"createdAt"`
-	UpdatedAt     string   `json:"updatedAt"`
-	HandlerName   *string  `json:"handlerName,omitempty"`
-	CreatorName   *string  `json:"creatorName,omitempty"`
+	ID            int64   `json:"id"`
+	CompanyID     int64   `json:"companyId"`
+	ProjectID     *int64  `json:"projectId"`
+	Code          string  `json:"code"`
+	Title         string  `json:"title"`
+	Description   string  `json:"description"`
+	Category      string  `json:"category"`
+	Priority      string  `json:"priority"`
+	Status        string  `json:"status"`
+	HandlerID     *int64  `json:"handlerId"`
+	CreatorID     int64   `json:"creatorId"`
+	StartTime     string  `json:"startTime"`
+	DueTime       string  `json:"dueTime"`
+	CompletedTime *string `json:"completedTime"`
+	LinkedTaskIDs []int64 `json:"linkedTaskIds"`
+	CreatedAt     string  `json:"createdAt"`
+	UpdatedAt     string  `json:"updatedAt"`
+	HandlerName   *string `json:"handlerName,omitempty"`
+	CreatorName   *string `json:"creatorName,omitempty"`
 }
 
 // BugStatus 缺陷状态。
@@ -881,17 +919,17 @@ type PlanStatus = string
 
 // Plan 计划。
 type Plan struct {
-	ID          int64   `json:"id"`
-	CompanyID   int64   `json:"companyId"`
-	ProjectID   *int64  `json:"projectId"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	StartTime   string  `json:"startTime"`
-	DueTime     string  `json:"dueTime"`
-	Status      string  `json:"status"`
-	CreatorID   int64   `json:"creatorId"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
+	ID          int64  `json:"id"`
+	CompanyID   int64  `json:"companyId"`
+	ProjectID   *int64 `json:"projectId"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	StartTime   string `json:"startTime"`
+	DueTime     string `json:"dueTime"`
+	Status      string `json:"status"`
+	CreatorID   int64  `json:"creatorId"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
 }
 
 // ProjectDocument TAPD 文档。
@@ -920,23 +958,23 @@ type WikiPage struct {
 
 // DashboardStats 项目仪表盘聚合统计。
 type DashboardStats struct {
-	NewRequirement30d int64            `json:"newRequirement30d"`
-	OverdueRequirement int64            `json:"overdueRequirement"`
-	BugResolveRate    int64            `json:"bugResolveRate"`
-	UnresolvedBug      int64            `json:"unresolvedBug"`
+	NewRequirement30d   int64            `json:"newRequirement30d"`
+	OverdueRequirement  int64            `json:"overdueRequirement"`
+	BugResolveRate      int64            `json:"bugResolveRate"`
+	UnresolvedBug       int64            `json:"unresolvedBug"`
 	RequirementByStatus map[string]int64 `json:"requirementByStatus"`
-	BugBySeverity      map[string]int64 `json:"bugBySeverity"`
+	BugBySeverity       map[string]int64 `json:"bugBySeverity"`
 }
 
 // MemberTrackItem 成员任务跟踪。
 type MemberTrackItem struct {
-	UserID    int64  `json:"userId"`
-	Nick      string `json:"nick"`
-	Username  string `json:"username"`
-	Total     int64  `json:"total"`
-	Completed int64  `json:"completed"`
-	InProgress int64 `json:"inProgress"`
-	Overdue   int64  `json:"overdue"`
+	UserID     int64  `json:"userId"`
+	Nick       string `json:"nick"`
+	Username   string `json:"username"`
+	Total      int64  `json:"total"`
+	Completed  int64  `json:"completed"`
+	InProgress int64  `json:"inProgress"`
+	Overdue    int64  `json:"overdue"`
 }
 
 // Auth 是 socket 认证中间件写入连接的身份（对标 index.ts: socket.data.auth）。

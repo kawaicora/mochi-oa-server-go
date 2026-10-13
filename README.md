@@ -1,7 +1,7 @@
 # mochi-oa-server-go
 
 麻薯 OA 服务端的 Go 1:1 复刻版（源仓库为 `mochi-oa-server` 的 Node.js/TypeScript 实现）。
-Socket.IO 实时通信 + REST HTTP 路由 + MySQL 持久化（也支持内存模式跑通调试）。
+Socket.IO 实时通信 + REST HTTP 路由 + MySQL 持久化（GORM）。
 
 ## 功能
 
@@ -11,20 +11,17 @@ Socket.IO 实时通信 + REST HTTP 路由 + MySQL 持久化（也支持内存模
 
 ## 快速运行
 
-### 本地（开发，内存模式，无需 MySQL/.env）
-
-```powershell
-go run ./cmd/server
-# 默认监听 0.0.0.0:3001，STORAGE=memory 时数据存进程内，重启即清空
-```
-
-### 本地（MySQL 模式）
+### 本地运行
 
 ```powershell
 Copy-Item .env.example .env   # 改 MYSQL_* / JWT_SECRET / ADMIN_*
 go build -o bin\mochioa-server.exe .\cmd\server
 .\bin\mochioa-server.exe
 ```
+
+无需事先建库建表：默认 `AUTO_CREATE_DATABASE` / `AUTO_MIGRATE` 均为 `true`，服务端启动时会自己
+`CREATE DATABASE IF NOT EXISTS` 并按 GORM 模型 `AutoMigrate` 建全部表（库名取 `MYSQL_DATABASE`）。
+只要 MySQL 账号有 `CREATE` 权限即可；库表已存在时重复启动是幂等的，不会改数据。
 
 ### Docker
 
@@ -43,8 +40,10 @@ docker compose up -d --build
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `HOST` / `PORT` | `0.0.0.0` / `3001` | 监听地址 |
-| `STORAGE` | `mysql` | `mysql`（生产）/ `memory`（开发） |
+| `STORAGE` | `mysql` | 仅 `mysql`（内存模式已移除，保留仅为兼容旧 .env） |
 | `MYSQL_HOST/PORT/USER/PASSWORD/DATABASE` | — | MySQL 连接 |
+| `AUTO_CREATE_DATABASE` | `true` | 库不存在时自动 `CREATE DATABASE IF NOT EXISTS` |
+| `AUTO_MIGRATE` | `true` | 启动时按 GORM 模型自动建表/补列（不删列、不改数据） |
 | `JWT_SECRET` | — | 会话签名密钥（必改） |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | 空 | 首次启动播种初始管理员 |
 | `SERVER_ADMIN_USERS` | 空 | SERVER_ADMIN 用户名列表（逗号分隔） |
