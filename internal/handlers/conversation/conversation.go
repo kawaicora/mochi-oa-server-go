@@ -904,8 +904,8 @@ func Register(c Ctx) {
 				if err != nil {
 					logger.Error(module, "GetGroupByID 失败", "error", err)
 				}
-				if g != nil && g.CompanyID != nil {
-					admin, err = isCompanyAdmin(ctx, store, *g.CompanyID, auth.ID)
+				if g != nil && g.CompanyID > 0 {
+					admin, err = isCompanyAdmin(ctx, store, g.CompanyID, auth.ID)
 					if err != nil {
 						logger.Error(module, "isCompanyAdmin 失败", "error", err)
 					}
@@ -977,8 +977,8 @@ func Register(c Ctx) {
 				if err != nil {
 					logger.Error(module, "GetGroupByID 失败", "error", err)
 				}
-				if g != nil && g.CompanyID != nil {
-					allowed, err = isCompanyAdmin(ctx, store, *g.CompanyID, auth.ID)
+				if g != nil && g.CompanyID > 0 {
+					allowed, err = isCompanyAdmin(ctx, store, g.CompanyID, auth.ID)
 					if err != nil {
 						logger.Error(module, "isCompanyAdmin 失败", "error", err)
 					}
