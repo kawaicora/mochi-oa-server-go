@@ -31,8 +31,8 @@ type Transport = string
 
 // IceServer 是 WebRTC ICE 服务器（stun/turn），下发给客户端建 P2P 用。
 type IceServer struct {
-	URLs      any      `json:"urls"`              // string 或 []string
-	Username  string   `json:"username,omitempty"` // turn 鉴权用户名
+	URLs       any    `json:"urls"`                 // string 或 []string
+	Username   string `json:"username,omitempty"`   // turn 鉴权用户名
 	Credential string `json:"credential,omitempty"` // turn 鉴权凭证
 }
 
@@ -67,10 +67,10 @@ type CloudflareTURNConfig struct {
 
 // FileConfig 是本地文件存储配置。
 type FileConfig struct {
-	Dir           string
-	PublicBase    string // 公开访问源（origin，不带 /files）
-	MaxBytes      int64  // 单文件大小上限（字节）
-	UseRelativeURL bool  // true=返回 /files/xxx 相对路径
+	Dir            string
+	PublicBase     string // 公开访问源（origin，不带 /files）
+	MaxBytes       int64  // 单文件大小上限（字节）
+	UseRelativeURL bool   // true=返回 /files/xxx 相对路径
 }
 
 // AdminConfig 是初始管理员（首次启动播种）；Username/Password 空串表示未配置。
@@ -100,25 +100,25 @@ type AfdianConfig struct {
 
 // ServerConfig 是全局配置根结构（对应 config.ts 的 ServerConfig）。
 type ServerConfig struct {
-	Host           string
-	Port           int
-	HTTPS          *HTTPSConfig // nil=HTTP
-	CORSStar       bool         // true=CORSOrigin 为 '*'；false 时用 CORSList
-	CORSList       []string     // 逗号分隔的来源列表（CORSStar=false 时有效）
-	Transports     []Transport
-	TrustProxy     bool
-	Path           string
-	Storage        string // "mysql" | "memory"
-	MySQL          MySQLConfig
-	JWTSecret      string
-	JWTExpiresIn   string
-	IceServers     []IceServer
-	IceCloudflare  *CloudflareTURNConfig // nil=未启用
-	File           FileConfig
-	Admin          AdminConfig
-	ServerAdmins   []string
-	Mail           *ServerMailConfig // nil=未配置环境级主邮件
-	Afdian         *AfdianConfig     // nil=未启用
+	Host          string
+	Port          int
+	HTTPS         *HTTPSConfig // nil=HTTP
+	CORSStar      bool         // true=CORSOrigin 为 '*'；false 时用 CORSList
+	CORSList      []string     // 逗号分隔的来源列表（CORSStar=false 时有效）
+	Transports    []Transport
+	TrustProxy    bool
+	Path          string
+	Storage       string // "mysql" | "memory"
+	MySQL         MySQLConfig
+	JWTSecret     string
+	JWTExpiresIn  string
+	IceServers    []IceServer
+	IceCloudflare *CloudflareTURNConfig // nil=未启用
+	File          FileConfig
+	Admin         AdminConfig
+	ServerAdmins  []string
+	Mail          *ServerMailConfig // nil=未配置环境级主邮件
+	Afdian        *AfdianConfig     // nil=未启用
 }
 
 var (
@@ -290,8 +290,7 @@ func orDefault(v, dft string) string {
 // build 组装完整配置（对应 loadConfig）。
 func build() *ServerConfig {
 	host := strEnv("HOST", "0.0.0.0")
-	// 端口默认 3001（用户要求默认端口；源码硬编码回退为 3000，这里按需求改为 3001）。
-	port := intEnv("PORT", 3001)
+	port := intEnv("PORT", 80)
 
 	// CORS：未设置 或 '*' → 通配；否则逗号列表。
 	corsRaw, corsSet := os.LookupEnv("CORS_ORIGIN")
@@ -334,15 +333,15 @@ func build() *ServerConfig {
 	storage := "mysql"
 
 	return &ServerConfig{
-		Host:          host,
-		Port:          port,
-		HTTPS:         httpsCfg,
-		CORSStar:      corsStar,
-		CORSList:      corsList,
-		Transports:    transports(),
-		TrustProxy:    boolEnv("TRUST_PROXY", false),
-		Path:          strEnv("SOCKET_PATH", "/socket.io"),
-		Storage:       storage,
+		Host:       host,
+		Port:       port,
+		HTTPS:      httpsCfg,
+		CORSStar:   corsStar,
+		CORSList:   corsList,
+		Transports: transports(),
+		TrustProxy: boolEnv("TRUST_PROXY", false),
+		Path:       strEnv("SOCKET_PATH", "/socket.io"),
+		Storage:    storage,
 		MySQL: MySQLConfig{
 			Host:               strEnv("MYSQL_HOST", "127.0.0.1"),
 			Port:               intEnv("MYSQL_PORT", 3306),
@@ -352,9 +351,9 @@ func build() *ServerConfig {
 			AutoCreateDatabase: boolEnv("AUTO_CREATE_DATABASE", true),
 			AutoMigrate:        boolEnv("AUTO_MIGRATE", true),
 		},
-		JWTSecret:    strEnv("JWT_SECRET", "change-me-in-production"),
-		JWTExpiresIn: strEnv("JWT_EXPIRES_IN", "30d"),
-		IceServers:   iceServers(),
+		JWTSecret:     strEnv("JWT_SECRET", "change-me-in-production"),
+		JWTExpiresIn:  strEnv("JWT_EXPIRES_IN", "30d"),
+		IceServers:    iceServers(),
 		IceCloudflare: iceCF,
 		File: FileConfig{
 			Dir:            strEnv("FILE_DIR", "./data"),

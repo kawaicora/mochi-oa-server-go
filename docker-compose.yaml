@@ -28,7 +28,7 @@ services:
     env_file: .env
     environment:
       HOST: 0.0.0.0
-      PORT: "3001"
+      PORT: "80"
       STORAGE: mysql
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
       MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
@@ -40,7 +40,7 @@ services:
       AUTO_CREATE_DATABASE: "true"
       AUTO_MIGRATE: "true"
     ports:
-      - "${SERVER_PORT:-3001}:3001"
+      - "${SERVER_PORT:-3000}:80"
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
