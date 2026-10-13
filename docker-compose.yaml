@@ -25,7 +25,6 @@ services:
     command: ["/app/mochi-oa-server_linux_amd64"]
     # ubuntu 精简镜像无 ca-certificates/tzdata（邮件 TLS、爱发电 HTTPS 需要 CA）。需要时改用：
     # command: ["sh", "-lc", "apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && exec /app/mochi-oa-server_linux_amd64"]
-    env_file: .env
     environment:
       HOST: 0.0.0.0
       PORT: "80"
@@ -34,11 +33,35 @@ services:
       MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
       FILE_DIR: /app/data
       TZ: Asia/Shanghai
       # 全新服务器：库不存在就建库，表按 GORM 模型自动建/补
       AUTO_CREATE_DATABASE: "true"
       AUTO_MIGRATE: "true"
+       
+      ADMIN_USER: ${ADMIN_USER:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # 服务器管理员（SERVER_ADMIN）：逗号分隔用户名，基于用户、与公司/群角色无关；留空回退 ADMIN_USER
+      SERVER_ADMIN_USERS: ${SERVER_ADMIN_USERS:-}
+      # 主邮件（环境级，第一优先级）：配置了 MAIL_HOST 即启用；未配则由客户端(SERVER_ADMIN)在设置里写入
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_SECURE: ${MAIL_SECURE:-true}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      MAIL_ENABLED: ${MAIL_ENABLED:-true}
+
+      # ICE CONFIG
+      ICE_SERVERS: ${ICE_SERVERS:-stun:stun.l.google.com:19302}
+      ICE_USE_CLOUDFLARE: ${ICE_USE_CLOUDFLARE:-false}
+      CLOUDFLARE_TURN_TOKEN: ${CLOUDFLARE_TURN_TOKEN:-}
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      ICE_SERVERS_TOKEN_SECOND: ${ICE_SERVERS_TOKEN_SECOND:-86400}
     ports:
       - "${SERVER_PORT:-3000}:80"
     volumes:
