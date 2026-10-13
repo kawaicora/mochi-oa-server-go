@@ -18,9 +18,16 @@
 
 services:
   mochi-oa-server-go-app-c54f8e4:
-    image: debian:bookworm
+    # 用本仓库的 Dockerfile 构一个「debian + ca-certificates + tzdata」的运行时镜像。
+    # 不能直接用 debian/ubuntu 官方镜像：它们都不带 ca-certificates，容器里没有 /etc/ssl，
+    # 出站 HTTPS 会全部报 x509: certificate signed by unknown authority（CF ICE / 爱发电 / SMTP TLS）。
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mochi-oa-server-go-app:bookworm
     container_name: mochi-oa-server-go-app-c54f8e4
     working_dir: /app
+    # 二进制仍由下面的 volume 挂载进来，entrypoint 直接执行它（PID 1，SIGTERM 正常）
     command: ["/app/mochi-oa-server_linux_amd64"]
     environment:
       HOST: 0.0.0.0

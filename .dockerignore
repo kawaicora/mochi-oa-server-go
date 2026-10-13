@@ -1,0 +1,8 @@
+# 构建上下文不需要仓库里的任何文件：镜像只负责提供「带 CA 根证书的运行时」，
+# 真正的二进制由 docker-compose 的 volume（./dist:/app）挂载进来，Dockerfile 里没有 COPY。
+#
+# 因此把整个上下文排除掉，避免每次 build 都把 data/（上传的音视频，可能几百 MB）、
+# mysql_data/、dist/ 等传给 docker daemon（否则构建上下文会有 GB 级，构建极慢甚至失败）。
+*
+!Dockerfile
+!docker-compose.yaml
