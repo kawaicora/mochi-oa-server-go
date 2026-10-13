@@ -203,9 +203,9 @@
     $('cam-btn').onclick = S.cam
     S.bindExecResult()
     // 远程查看按钮（remote-view.js）
-    $('rv-cam').onclick = () => { if (A.remoteView) A.remoteView.cam() }
+    // 麦克风/摄像头：单击直接用默认设备开始，右键/长按弹设备列表（见 RV.bindDeviceButtons）
+    if (A.remoteView && A.remoteView.bindDeviceButtons) A.remoteView.bindDeviceButtons()
     $('rv-screen').onclick = () => { if (A.remoteView) A.remoteView.screen() }
-    $('rv-mic').onclick = () => { if (A.remoteView) A.remoteView.mic() }
     $('rv-stop').onclick = () => { if (A.remoteView) A.remoteView.stop() }
     $('rv-win').onclick = () => {
       const d = S.currentDevice
@@ -214,8 +214,6 @@
       const w = window.open(url, '_blank', 'width=980,height=720')
       if (!w) A.toast('浏览器拦截了弹窗，请允许本网站弹出窗口后重试')
     }
-    $('rv-cam').addEventListener('contextmenu', (e) => { e.preventDefault(); if (A.remoteView) A.remoteView.cam() })
-    $('rv-mic').addEventListener('contextmenu', (e) => { e.preventDefault(); if (A.remoteView) A.remoteView.mic() })
     document.addEventListener('click', (e) => { if (!e.target.closest('#rv-menu')) A.remoteView && A.remoteView.hideMenu() })
     // 设备列表自动刷新（每 5s）：客户端上线/离线实时反映，无需手动点"刷新"；
     // 仅当停留在设备列表视图时刷新，避免详情页被反复重绘。

@@ -249,7 +249,7 @@
   }
 
   RV.start = async function (kind, device) {
-    if (!RV.deviceId) return
+    if (!RV.deviceId) { A.toast('请先在上方设备列表里选择一台在线电脑'); return }
     RV._pendCands = []
     RV._kind = kind
     $('rv-empty').style.display = ''
@@ -269,6 +269,45 @@
   RV.cam = function () { RV._menu(RV.cams, 'camera', '选择摄像头') }
   RV.mic = function () { RV._menu(RV.mics, 'mic', '选择麦克风') }
   RV.screen = function () { RV.start('screen') }
+
+  // 设备按钮（麦克风/摄像头）的统一交互，管理页与独立窗口共用：
+  //   单击 / 点按 → 直接用「默认设备」开始（不再先弹列表，点了就有画面/声音）
+  //   右键        → 弹出设备列表，手动指定设备
+  //   长按        → 弹出设备列表（移动端没有右键；iOS 长按不会触发 contextmenu，必须自己计时）
+  RV.bindDeviceButtons = function () {
+    const defs = [
+      { id: 'rv-mic', kind: 'mic', title: '选择麦克风', list: () => RV.mics },
+      { id: 'rv-cam', kind: 'camera', title: '选择摄像头', list: () => RV.cams }
+    ]
+    defs.forEach((d) => {
+      const btn = $(d.id)
+      if (!btn || btn.dataset.rvWire === '1') return // 幂等：重复 init 不重复绑定
+      btn.dataset.rvWire = '1'
+      const openMenu = () => RV._menu(d.list(), d.kind, d.title)
+
+      let pressTimer = null
+      let longPressed = false
+      const LONG_PRESS_MS = 500
+
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        // 长按结束后浏览器还会补发一次 click，这里吞掉，避免“长按选择设备”又立刻改用默认设备
+        if (longPressed) { longPressed = false; return }
+        RV.start(d.kind)
+      })
+      btn.addEventListener('contextmenu', (e) => { e.preventDefault(); openMenu() })
+
+      const cancelPress = () => { clearTimeout(pressTimer) }
+      btn.addEventListener('touchstart', () => {
+        longPressed = false
+        cancelPress()
+        pressTimer = setTimeout(() => { longPressed = true; openMenu() }, LONG_PRESS_MS)
+      }, { passive: true })
+      btn.addEventListener('touchend', cancelPress)
+      btn.addEventListener('touchcancel', cancelPress)
+      btn.addEventListener('touchmove', cancelPress, { passive: true }) // 手指滑动（滚动页面）不算长按
+    })
+  }
 
   // 右键设备菜单（摄像头/麦克风列表）
   RV._menu = function (list, kind, title) {

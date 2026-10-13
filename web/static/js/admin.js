@@ -46,10 +46,23 @@
     A.sock.on('rtc:chatMessage', (d) => { A.room && A.room.onChatMessage && A.room.onChatMessage(d) })
   }
 
+  // 手机顶栏（头像 + 标题）；桌面下 .topbar 是 display:none，这里填了也不显示。
+  function setTopbar() {
+    const av = $('tb-avatar'), ti = $('tb-title')
+    if (!av || !ti) return
+    const nick = A.myNick || '管理后台'
+    ti.textContent = nick
+    if (A.myAvatar) {
+      av.innerHTML = '<img src="' + A.esc(A.myAvatar) + '" alt="">'
+    } else {
+      av.textContent = (nick.charAt(0) || '·').toUpperCase()
+    }
+  }
+
   // ═══ 视图切换 ═══
   function showLogin() { $('view-login').style.display = ''; $('view-noperm').style.display = 'none'; $('view-admin').style.display = 'none' }
   function showNoPerm() { $('view-login').style.display = 'none'; $('view-noperm').style.display = ''; $('view-admin').style.display = 'none' }
-  function showAdmin() { $('view-login').style.display = 'none'; $('view-noperm').style.display = 'none'; $('view-admin').style.display = ''; $('side-user').textContent = A.myNick }
+  function showAdmin() { $('view-login').style.display = 'none'; $('view-noperm').style.display = 'none'; $('view-admin').style.display = ''; $('side-user').textContent = A.myNick; setTopbar() }
   function go(page) {
     if (page !== 'room' && A.room && A.room.isInCall) { try { A.room.leaveCall(false) } catch (e) {} }
     A.currentPage = page

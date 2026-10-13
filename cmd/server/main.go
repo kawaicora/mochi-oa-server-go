@@ -199,6 +199,15 @@ type handshakeHolder interface {
 	Query() url.Values
 }
 
+// 编译期断言：握手中间件靠类型断言拿到握手信息，*socket.Conn 必须实现 handshakeHolder。
+//
+// 这条断言专治一个曾经真实发生的静默故障：socket.Conn 的 Query() 曾返回别名
+// map[string][]string，而本接口要求 url.Values（定义类型）——Go 要求方法签名完全一致，
+// 于是 c.(handshakeHolder) 永远失败、hh 恒为 nil，中间件直接 return next()，
+// 「用握手 token 自动登录」整条链路被静默跳过（独立终端/远程窗口报「需要 SERVER_ADMIN 权限」，
+// 且客户端在 token 有效期内也无法自动登录）。有了这行，同类问题会在编译期报错而不是运行时静默。
+var _ handshakeHolder = (*socket.Conn)(nil)
+
 // remoteHolder 是可选扩展接口：若引擎将来暴露 RemoteAddr() 即可取到；当前版本降级为空串
 // （auth.go realIp 有 headers 链兜底，行为与 TS 缺省一致）。
 type remoteHolder interface {
@@ -210,10 +219,15 @@ type remoteHolder interface {
 func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.MiddlewareFunc {
 	return func(c socketapi.Conn, next func() error) error {
 		// ---- 先补齐握手状态（auth handler 约定的三个 key） ----
-		hh, _ := c.(handshakeHolder)
+		hh, okHH := c.(handshakeHolder)
+		if !okHH {
+			// 正常不该发生（上面有编译期断言）；真发生就明确报出来，
+			// 不要再像以前那样静默跳过认证，否则表现为「谁都登录不上/自动登录失效」。
+			logger.Error("auth", "连接未实现 handshakeHolder，握手 token 认证被跳过", "conn", c.ID())
+		}
 		handshakeDevice := ""
 		headers := map[string]any{}
-		if hh != nil {
+		if okHH {
 			var authObj struct {
 				Token  string `json:"token"`
 				Device string `json:"device"`
@@ -235,7 +249,7 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 
 		// ---- token 认证 ----
 		tokenStr := ""
-		if hh != nil {
+		if okHH {
 			var authObj struct {
 				Token string `json:"token"`
 			}
@@ -255,9 +269,13 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 			return next()
 		}
 		if sess == nil {
+			// 带了 token 却查不到会话：多为登出/换设备后本地仍留着旧 token。
+			// 打一行日志，便于区分「token 失效」与「压根没带 token」。
+			logger.Warn("auth", "握手 token 未匹配到会话（已登出或 token 过期后被清理）")
 			return next()
 		}
 		if !sessionValid(sess.ExpiresAt) {
+			logger.Warn("auth", "握手会话已过期，删除并放行为未登录", "userID", sess.UserID, "expiresAt", sess.ExpiresAt)
 			_ = store.DeleteSession(context.Background(), sess.ID)
 			return next()
 		}

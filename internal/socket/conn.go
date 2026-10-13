@@ -3,6 +3,7 @@ package socket
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -419,7 +420,13 @@ func (c *Conn) HandshakeAuth() json.RawMessage { return c.handshakeAuth }
 func (c *Conn) Headers() http.Header { return c.headers }
 
 // Query 返回握手请求的 query 参数。
-func (c *Conn) Query() urlQuery { return c.query }
+//
+// 返回值必须是 url.Values（定义类型），不能写成别名 urlQuery = map[string][]string：
+// cmd/server 的握手中间件用的接口签名是 Query() url.Values，而 Go 要求方法签名完全一致
+// （定义类型之间不会因为底层类型相同而互相满足），一旦返回别名，conn.(handshakeHolder)
+// 就会永远断言失败 → 握手 token 认证被静默跳过（表现为自动登录失效、独立窗口提示
+//「需要 SERVER_ADMIN 权限」）。cmd/server/main.go 里加了编译期断言来兜住这一点。
+func (c *Conn) Query() url.Values { return url.Values(c.query) }
 
 // setHandshakeAuth 记录 CONNECT body。
 func (c *Conn) setHandshakeAuth(raw json.RawMessage) { c.handshakeAuth = raw }

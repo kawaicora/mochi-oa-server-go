@@ -12,6 +12,7 @@ package rtcdev
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,21 @@ import (
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/util"
 )
+
+// countAny 统计上报条目数：cams/mics 字段是 any（可能是数组，也可能是 null/其它），
+// 只用于日志，取值失败按 0 计。
+func countAny(v any) int {
+	if v == nil {
+		return 0
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return rv.Len()
+	default:
+		return 0
+	}
+}
 
 // deviceStaleAfter 是心跳超时阈值：超此时长无 register/heartbeat/sys 上报即视为离线。
 const deviceStaleAfter = 90 * time.Second
@@ -364,8 +380,14 @@ func RegisterDev(c Ctx) {
 		devMu.Lock()
 		ctrlID := dev.controller
 		devMu.Unlock()
+		// 设备列表为空时打个日志：控制端菜单里显示「暂无设备」基本都卡在这一步，
+		// 有这行就能立刻区分「被控端没上报」与「上报了但没转发给控制端」。
+		logger.Info(module, "dev:devices 收到枚举结果", "deviceId", deviceID,
+			"cams", countAny(cams), "mics", countAny(mics), "controller", ctrlID)
 		if ctrlID != "" {
 			send(connByID(srv, ctrlID), "dev:devices", payload)
+		} else {
+			logger.Warn(module, "dev:devices 无控制端可转发（控制端可能未先 dev:view）", "deviceId", deviceID)
 		}
 		ack(util.OK(map[string]any{"deviceId": deviceID}))
 	})
@@ -537,6 +559,7 @@ func RegisterDev(c Ctx) {
 			return
 		}
 		send(dev.conn, "dev:enumerate", map[string]any{"deviceId": deviceID})
+		logger.Info(module, "dev:enumerate 已转发给被控端（等待其 dev:devices 回报）", "deviceId", deviceID)
 		ack(util.OK(map[string]any{"deviceId": deviceID}))
 	})
 

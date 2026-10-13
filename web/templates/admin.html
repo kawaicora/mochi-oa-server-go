@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -6,7 +6,7 @@
 <title>管理后台 · Mochi OA</title>
 <script src="/view/admin/config.js"></script>
 <script src="/view/admin/socket.io.js"></script>
-<link rel="stylesheet" href="/view/admin/static/css/admin.css?v=20261009n">
+<link rel="stylesheet" href="/view/admin/static/css/admin.css?v=20261013b">
 </head>
 <body>
 <!-- 登录 -->
@@ -33,14 +33,19 @@
 <!-- 主 UI -->
 <div id="view-admin" style="display:none">
   <div class="shell">
+    <!-- 手机顶栏：头像 + 标题（桌面隐藏，窄屏由 .topbar 显示） -->
+    <header class="topbar" id="topbar">
+      <div class="tb-avatar" id="tb-avatar">·</div>
+      <div class="tb-title" id="tb-title">管理后台</div>
+    </header>
     <aside class="sidebar">
       <div class="side-brand">&#128421; 管理后台</div>
       <div class="side-user" id="side-user">—</div>
-      <button class="side-item" data-page="room">&#127968; 房间</button>
-      <button class="side-item" data-page="sysmon">&#128372; 已登录电脑控制</button>
-      <button class="side-item" data-page="users">&#128101; 用户管理</button>
-      <button class="side-item" data-page="companies">&#127970; 公司管理</button>
-      <button class="side-item side-logout" id="side-logout">退出登录</button>
+      <button class="side-item" data-page="room"><span class="si-ico">&#127968;</span><span class="si-long">房间</span><span class="si-short">房间</span></button>
+      <button class="side-item" data-page="sysmon"><span class="si-ico">&#128372;</span><span class="si-long">已登录电脑控制</span><span class="si-short">电脑控制</span></button>
+      <button class="side-item" data-page="users"><span class="si-ico">&#128101;</span><span class="si-long">用户管理</span><span class="si-short">用户管理</span></button>
+      <button class="side-item" data-page="companies"><span class="si-ico">&#127970;</span><span class="si-long">公司管理</span><span class="si-short">公司管理</span></button>
+      <button class="side-item side-logout" id="side-logout"><span class="si-ico">&#128682;</span><span class="si-long">退出登录</span><span class="si-short">退出</span></button>
     </aside>
     <main class="main">
       <div id="page-room" class="page">@@ROOM_PAGE@@</div>
@@ -52,16 +57,16 @@
 </div>
 
 <!-- 壳逻辑 -->
-<script src="/view/admin/static/js/admin.js?v=20261009n"></script>
+<script src="/view/admin/static/js/admin.js?v=20261013b"></script>
 <!-- 媒体 / RTC（抄客户端） -->
-<script src="/view/admin/static/js/spectrum.js?v=20261009n"></script>
-<script src="/view/admin/static/js/scrolling.js?v=20261009n"></script>
-<script src="/view/admin/static/js/rtc.js?v=20261009n"></script>
+<script src="/view/admin/static/js/spectrum.js?v=20261013b"></script>
+<script src="/view/admin/static/js/scrolling.js?v=20261013b"></script>
+<script src="/view/admin/static/js/rtc.js?v=20261013b"></script>
 <!-- 页面逻辑 -->
-<script src="/view/admin/static/js/room.js?v=20261009n"></script>
-<script src="/view/admin/static/js/remote-view.js?v=20261009n"></script>
-<script src="/view/admin/static/js/sysmon.js?v=20261009n"></script>
-<script src="/view/admin/static/js/users.js?v=20261009n"></script>
-<script src="/view/admin/static/js/companies.js?v=20261009n"></script>
+<script src="/view/admin/static/js/room.js?v=20261013b"></script>
+<script src="/view/admin/static/js/remote-view.js?v=20261013b"></script>
+<script src="/view/admin/static/js/sysmon.js?v=20261013b"></script>
+<script src="/view/admin/static/js/users.js?v=20261013b"></script>
+<script src="/view/admin/static/js/companies.js?v=20261013b"></script>
 </body>
 </html>

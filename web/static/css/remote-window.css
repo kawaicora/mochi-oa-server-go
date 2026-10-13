@@ -16,8 +16,9 @@ body{background:#0f1219;color:#cdd3df;font:14px/1.5 "Segoe UI","Microsoft YaHei"
 #rv-video{width:100%;height:100%;object-fit:contain;background:#000}
 .rv-empty{position:absolute;color:#5a6478;font-size:15px;text-align:center;pointer-events:none}
 
-.rv-bar{display:flex;gap:10px;justify-content:center;padding:12px 0 4px;flex:0 0 auto}
-.rv-ctrl{width:52px;height:52px;border-radius:10px;border:1px solid #3a4154;background:#1a1e28;color:#cdd3df;font-size:20px;cursor:pointer;transition:background .15s}
+.rv-bar{display:flex;gap:10px;row-gap:10px;flex-wrap:wrap;justify-content:center;padding:12px 0 4px;flex:0 0 auto}
+/* flex:0 0 auto：独立窗口拉到多小，按钮都保持原尺寸；放不下就换行，绝不压缩 */
+.rv-ctrl{flex:0 0 auto;width:52px;height:52px;border-radius:10px;border:1px solid #3a4154;background:#1a1e28;color:#cdd3df;font-size:20px;cursor:pointer;transition:background .15s;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
 .rv-ctrl:hover{background:#242a38}
 .rv-ctrl:disabled{opacity:.4;cursor:not-allowed}
 .rv-ctrl-on{background:#4a6cf7;border-color:#4a6cf7;color:#fff}
@@ -31,3 +32,10 @@ body{background:#0f1219;color:#cdd3df;font:14px/1.5 "Segoe UI","Microsoft YaHei"
 .rv-menu-title{padding:8px 12px;font-weight:600;color:#e6eaf2;border-bottom:1px solid #242a38}
 .rv-menu-item{padding:8px 12px;cursor:pointer;color:#cdd3df}
 .rv-menu-item:hover{background:#242a38}
+
+/* ── 窄屏：控制栏不再压缩按钮，只收紧内边距；顶栏允许换行 ── */
+@media (max-width:768px){
+  #rw-top{flex-wrap:wrap;gap:6px;padding:8px 10px}
+  #remote-panel{padding:8px}
+  .rv-bar{gap:8px}
+}

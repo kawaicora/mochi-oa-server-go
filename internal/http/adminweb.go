@@ -72,6 +72,9 @@ func (h *adminWebHandler) pageHtml() string {
 // index GET /view/admin → 主页。
 func (h *adminWebHandler) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// HTML 里引用的是带 ?v= 版本号的静态资源；HTML 本身必须每次校验，
+	// 否则浏览器拿旧 HTML 就永远引用旧版本的 js/css（静态资源缓存 24h）。
+	w.Header().Set("Cache-Control", "no-cache")
 	fmt.Fprint(w, h.pageHtml())
 }
 
@@ -91,9 +94,11 @@ func (h *adminWebHandler) subtree(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(web.SocketIOClientJS)
 	case p == "/view/admin/terminal":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, h.tmpl["terminal.html"])
 	case p == "/view/admin/remote-window":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		fmt.Fprint(w, h.tmpl["remote-window.html"])
 	case strings.HasPrefix(p, "/view/admin/static/"):
 		// 静态资源子树：embed 的 static/ 目录。
