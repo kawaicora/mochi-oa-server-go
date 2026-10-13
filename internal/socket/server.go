@@ -373,8 +373,8 @@ func (s *Server) handleConnect(c *Conn, p sioPacket) {
 		return
 	}
 
-	// 回 CONNECT 成功。
-	c.sendEIO(eioMESSAGE, encodeSIOConnect())
+	// 回 CONNECT 成功（带 socket id）。
+	c.sendEIO(eioMESSAGE, encodeSIOConnect(c.id))
 	// 启动服务端心跳。
 	c.startPingLoop()
 	logger.Info("socket", "socket.io connected", "sid", c.idShort())
