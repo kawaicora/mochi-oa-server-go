@@ -6,6 +6,10 @@
 FROM golang:1.27-alpine AS build
 WORKDIR /src
 
+# 国内直连 proxy.golang.org 被墙：build 阶段默认走 goproxy.cn（ARG 可外部 --build-arg GOPROXY=... 覆盖）。
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
+
 # 先拷依赖清单，利用层缓存
 COPY go.mod go.sum ./
 RUN go mod download
