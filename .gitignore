@@ -4,7 +4,7 @@
 # 本地数据与日志
 data/
 *.log
-
+mysql_data/
 # 构建产物
 bin/
 dist/
