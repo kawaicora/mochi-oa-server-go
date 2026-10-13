@@ -55,13 +55,6 @@ docker compose up -d --build
 | `ICE_SERVERS` / `ICE_USE_CLOUDFLARE` | STUN 谷歌 / `false` | WebRTC |
 | `AFDIAN_USER_ID` / `AFDIAN_TOKEN` | 空 | 爱发电（`AFDIAN_USER_ID` 存在即启用） |
 
-## 老数据库复用（本仓库**不自带建表/迁移 SQL**，直接接管老库数据）
-
-三选一：
-
-- **A. 直连老库**：`.env` 的 `MYSQL_HOST` 等指向现有 MySQL 实例与库即可，启动即用。
-- **B. 导出导入新库**：老库 `mysqldump -uroot -p olddb > olddb.sql`，新库 `mysql -uroot -p newdb < olddb.sql`，再把 `.env` 指向新库。
-- **C. 复用老容器数据卷**：把老 MySQL 容器的 `mysql_data` 卷挂到本 compose 的 `mysql` 服务上（**必须先停掉老容器**，否则同一数据目录两个实例会损坏），卷名按老 compose 实际名称调整。
 
 ## 目录结构
 

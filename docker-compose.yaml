@@ -1,20 +1,48 @@
-# mochi-oa-server-go 一键启动（app + mysql 8.0）
-# 用法：cp .env.example .env 后 docker compose up -d
+# mochi-oa-server-go 一键启动（ubuntu 基础镜像直接执行二进制 + mysql 8.0）
 #
-# 说明：
-#   - 本仓库不自带任何建表/迁移/初始化 SQL——老系统的表结构与数据直接复用：
-#     A. 把 MYSQL_HOST 指向老库；B. mysqldump 导出老库再导入新库；C. 挂载老 mysql_data 卷（需先停老容器）。
-#   - mysql 数据持久化在 named volume mysql_data；
-#   - app 数据（上传文件）挂载 ./data:/app/data。
+# 启动流程：
+#   1) ./build.ps1           交叉编译 -> dist/mochi-oa-server_linux_amd64
+#   2) ./start.ps1 停掉现有容器
+#   3) docker compose up -d
+#   4) docker compose logs -f app
+#   （./start.ps1 把 1~4 串成一条命令）
+#
+# 全新服务器：库和表由服务端自己按模型创建（GORM AutoMigrate），
+#   不依赖任何老库、不依赖任何初始化 SQL。MySQL 账号只要有 CREATE 权限即可。
+#
+# 网络：
+#   - app 与 mysql 在同一个 compose 网络，app 用【容器名/服务名】连 mysql：
+#     MYSQL_HOST=mochi-oa-server-go-mysql-c54f8e4（见 .env，compose 里也再显式覆盖一次）。
+#   - mysql 对外 open 3306（宿主机可用客户端直连调试；换宿主机端口改 MYSQL_HOST_PORT）。
+#   - app 对外 open ${SERVER_PORT:-3001}。
 
 services:
   mochi-oa-server-go-app-c54f8e4:
+    image: ubuntu:24.04
     container_name: mochi-oa-server-go-app-c54f8e4
-    build: .
+    working_dir: /app
+    # 直接执行挂载进来的 Linux 二进制，不 build 镜像
+    command: ["/app/mochi-oa-server_linux_amd64"]
+    # ubuntu 精简镜像无 ca-certificates/tzdata（邮件 TLS、爱发电 HTTPS 需要 CA）。需要时改用：
+    # command: ["sh", "-lc", "apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && exec /app/mochi-oa-server_linux_amd64"]
     env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3001"
+      STORAGE: mysql
+      # 容器内必须用服务名/容器名，不能写 127.0.0.1
+      MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+      FILE_DIR: /app/data
+      TZ: Asia/Shanghai
+      # 全新服务器：库不存在就建库，表按 GORM 模型自动建/补
+      AUTO_CREATE_DATABASE: "true"
+      AUTO_MIGRATE: "true"
     ports:
       - "${SERVER_PORT:-3001}:3001"
     volumes:
+      - ./dist:/app:ro
       - ./data:/app/data
     depends_on:
       mochi-oa-server-go-mysql-c54f8e4:
@@ -22,19 +50,25 @@ services:
     restart: unless-stopped
 
   mochi-oa-server-go-mysql-c54f8e4:
-    container_name: mochi-oa-server-go-mysql-c54f8e4
     image: mysql:8.0
+    container_name: mochi-oa-server-go-mysql-c54f8e4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
+      # 故意不设 MYSQL_DATABASE：库不存在，交给服务端自己创建（全新服务器场景）。
+      # 若想让镜像先建空库，放开下一行；服务端 AutoMigrate 仍会补表。
+      # MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - ./mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 30s
     restart: unless-stopped
 
-volumes:
-  mysql_data:
