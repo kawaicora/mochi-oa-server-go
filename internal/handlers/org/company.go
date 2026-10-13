@@ -46,6 +46,7 @@ func isName(v any) bool {
 }
 
 var codeRe = regexp.MustCompile(`^[A-Za-z0-9]{3,32}$`)
+var digitsOnlyRe = regexp.MustCompile(`^\d+$`)
 
 // isCode 校验加入码：3-32 位字母数字。
 func isCode(v any) bool {
@@ -283,9 +284,10 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			ack(util.OK(map[string]any{"users": []any{}}))
 			return
 		}
+		// TS: /^\d+$/.test(kw) ? Number(kw) : 0
 		idMatch := int64(0)
-		if n, ok := parseIntStrict(kw); ok && n > 0 {
-			idMatch = n
+		if digitsOnlyRe.MatchString(kw) {
+			fmt.Sscanf(kw, "%d", &idMatch)
 		}
 		all, err := store.ListUsers(ctx)
 		if err != nil {
@@ -1356,23 +1358,4 @@ func strVal(m map[string]any, key string) string {
 		}
 	}
 	return ""
-}
-
-// parseIntStrict 严格解析正整数字符串（用于 user:search 的 ID 匹配）。
-func parseIntStrict(s string) (int64, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, false
-	}
-	var n int64
-	_, err := fmt.Sscanf(s, "%d", &n)
-	if err != nil || n <= 0 {
-		return 0, false
-	}
-	// 确保整个字符串都是数字
-	cleaned := strings.TrimLeft(s, "0")
-	if cleaned == "" {
-		cleaned = "0"
-	}
-	return n, fmt.Sprint(n) == cleaned || (n > 0 && s == fmt.Sprintf("%d", n))
 }
