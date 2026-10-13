@@ -1,6 +1,6 @@
 # 环境变量（含密钥/密码，绝不提交）
 .env
-
+.dsh-workspace
 # 本地数据与日志
 data/
 *.log
@@ -11,3 +11,4 @@ dist/
 
 # Node 残留（本仓库为 Go 移植，不保留 node 产物）
 node_modules/
+internal/http/files_escape_test.go

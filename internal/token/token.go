@@ -65,24 +65,18 @@ func ParseExpiry(s string) time.Duration {
 // SignToken 签发 JWT：payload{ sub, username }，secret 签名，expiresIn 见 ParseExpiry。
 func SignToken(payload TokenPayload, secret, expiresIn string) (string, error) {
 	now := time.Now()
-	claims := jwt.RegisteredClaims{
-		Subject:   payload.Sub,
-		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(ParseExpiry(expiresIn))),
-	}
-	// 业务字段 username 放入私有 claim（RegisteredClaims 无 username）。
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	if tok.Claims.(jwt.MapClaims) == nil {
-		_ = claims
-	}
-	// 使用 MapClaims 以便同时携带 username。
-	mapClaims := jwt.MapClaims{
+	// 用 MapClaims 以便同时携带 username（jwt.RegisteredClaims 没有该字段）。
+	//
+	// 注：这里原有一句 `tok.Claims.(jwt.MapClaims)` 的类型断言，而 tok.Claims 实际是
+	// jwt.RegisteredClaims，断言必然 panic（interface conversion），等于 SignToken 永远不可用。
+	// 该断言没有任何作用，已删除。
+	claims := jwt.MapClaims{
 		"sub":      payload.Sub,
 		"username": payload.Username,
 		"iat":      now.Unix(),
 		"exp":      now.Add(ParseExpiry(expiresIn)).Unix(),
 	}
-	tok = jwt.NewWithClaims(jwt.SigningMethodHS256, mapClaims)
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString([]byte(secret))
 }
 

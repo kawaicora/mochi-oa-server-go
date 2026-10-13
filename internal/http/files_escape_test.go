@@ -1,6 +1,14 @@
 package http
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"mochi-oa-server-go/internal/config"
+)
 
 // TestUrlQueryEscape 锁定 URL 编码行为（对齐 JS encodeURIComponent）。
 //
@@ -90,4 +98,37 @@ func containsByte(s string, c byte) bool {
 		}
 	}
 	return false
+}
+
+// TestDownloadChineseFilename 端到端回归：把中文名文件放进 FILE_DIR，
+// 用 urlQueryEscape 生成的 URL 去请求 /files/，必须 200 且字节一致。
+// 修复前该用例会 404（编码非法 → 解码出的路径不是真实文件名）。
+func TestDownloadChineseFilename(t *testing.T) {
+	const name = "泪尽铃音响翻唱+混音.mp4"
+	const body = "fake-mp4-bytes"
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "default"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "default", name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &filesHandler{cfg: &config.ServerConfig{File: config.FileConfig{Dir: dir}}}
+	url := "/files/default/" + urlQueryEscape(name)
+
+	req := httptest.NewRequest("GET", url, nil)
+	rec := httptest.NewRecorder()
+	h.download(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s → %d（期望 200）；编码必须能被服务端正确解码回真实文件名", url, rec.Code)
+	}
+	if got := rec.Body.String(); got != body {
+		t.Fatalf("响应体 = %q，期望 %q", got, body)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "video/mp4" {
+		t.Fatalf("Content-Type = %q，期望 video/mp4", ct)
+	}
 }
