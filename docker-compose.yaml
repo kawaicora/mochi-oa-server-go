@@ -30,8 +30,8 @@ services:
     # 二进制仍由下面的 volume 挂载进来，entrypoint 直接执行它（PID 1，SIGTERM 正常）
     command: ["/app/mochi-oa-server_linux_amd64"]
     environment:
-      HOST: 0.0.0.0
-      PORT: "3000"
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-80}
       STORAGE: mysql
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
       MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
@@ -67,7 +67,7 @@ services:
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       ICE_SERVERS_TOKEN_SECOND: ${ICE_SERVERS_TOKEN_SECOND:-86400}
     ports:
-      - "${SERVER_PORT:-3000}:3000"
+      - "${SERVER_PORT:-3000}:${PORT:-80}"
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
