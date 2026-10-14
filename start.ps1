@@ -2,12 +2,45 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 Set-Location $root
 
+
+ Remove-Item Env:HOST -ErrorAction SilentlyContinue
+ Remove-Item Env:PORT -ErrorAction SilentlyContinue
 # 封装调用外部命令，返回退出码，同时输出stdout/stderr
 function Invoke-Native([string]$cmdline) {
     Write-Host "> $cmdline"
     & cmd /c "$cmdline 2>&1"
     return $LASTEXITCODE
 }
+
+Write-Host ''
+Write-Host '===== [0/4] clear env =====' -ForegroundColor Cyan
+
+Remove-Item Env:HOST -ErrorAction SilentlyContinue
+Remove-Item Env:PORT -ErrorAction SilentlyContinue
+Remove-Item Env:SERVER_PORT -ErrorAction SilentlyContinue
+Remove-Item Env:TRANSPORTS -ErrorAction SilentlyContinue
+Remove-Item Env:TRUST_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:CORS_ORIGIN -ErrorAction SilentlyContinue
+
+Remove-Item Env:SCOKET_PATH -ErrorAction SilentlyContinue
+Remove-Item Env:STORAGE -ErrorAction SilentlyContinue
+
+Remove-Item Env:MYSQL_HOST -ErrorAction SilentlyContinue
+Remove-Item Env:MYSQL_PORT -ErrorAction SilentlyContinue
+
+Remove-Item Env:MYSQL_USER -ErrorAction SilentlyContinue
+Remove-Item Env:MYSQL_PASSWORD -ErrorAction SilentlyContinue
+
+Remove-Item Env:MYSQL_DATABASE -ErrorAction SilentlyContinue
+Remove-Item Env:AUTO_CREATE_DATABASE -ErrorAction SilentlyContinue
+
+Remove-Item Env:AUTO_MIGRATE -ErrorAction SilentlyContinue
+Remove-Item Env:JWT_SECRET -ErrorAction SilentlyContinue
+Remove-Item Env:JWT_EXPIRES_IN -ErrorAction SilentlyContinue
+Remove-Item Env:ADMIN_USER -ErrorAction SilentlyContinue
+Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:SERVER_ADMIN_USERS -ErrorAction SilentlyContinue
+
 
 Write-Host ''
 Write-Host '===== [1/4] build.ps1 build dist =====' -ForegroundColor Cyan
