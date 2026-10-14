@@ -6,6 +6,7 @@
 //  5. seedHolidays（失败仅 Error 日志，不中断）→ 6. 初始管理员播种
 //  7. HTTP(S) server + socket.io server（path/transports）→ 8. io.use 认证中间件
 //  9. 注册全部 socket handler + HTTP 路由模块 → 10. io.on('connection') presence 接线
+//
 // 11. listen host:port → 12. 优雅退出（socket close → http close → store close）。
 //
 // 单例纪律：config/db/socket/mailer/presence 全部只初始化一次（db/mailer/config 内部 sync.Once，
@@ -25,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	apphttp "mochi-oa-server-go/internal/http"
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/handlers/auth"
@@ -35,6 +35,7 @@ import (
 	"mochi-oa-server-go/internal/handlers/pm"
 	"mochi-oa-server-go/internal/handlers/rtcdev"
 	"mochi-oa-server-go/internal/handlers/task"
+	apphttp "mochi-oa-server-go/internal/http"
 	"mochi-oa-server-go/internal/ice"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/mailer"
@@ -338,8 +339,12 @@ func onDisconnect(srv socketapi.Server, store db.Store) func(socketapi.Conn, str
 		v := c.Get("auth")
 		a, ok := v.(*types.Auth)
 		if !ok || a == nil {
+			logger.Warn("main", "客户端断线，但取不到用户认证信息")
 			return
 		}
+		// 注意 logger 的 kv 是「键值成对」，不是 printf：写成 ("...:%s %s", u, n) 会变成
+		// 「%s %s」原样输出 + 把 n 当成 u 的值（之前那行日志就是这么打歪的）。
+		logger.Info("main", "客户端断线", "username", a.Username, "nick", a.Nick, "sessionID", a.SessionID)
 		stillOnline := presence.Remove(a.ID, c.ID())
 		if !stillOnline {
 			presence.Broadcast(srv, store, c, false)

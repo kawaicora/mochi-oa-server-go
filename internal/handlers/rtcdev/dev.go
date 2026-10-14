@@ -479,22 +479,37 @@ func RegisterDev(c Ctx) {
 		ack(util.OK(nil))
 	})
 
-	// ---- 断开：清在线表 + 解除控制端绑定 ----
+	// ---- 断开：清在线表 + 解除控制端绑定 + 广播离线 ----
+	//
+	// 这是设备离线的主判定路径：被控端进程被强杀时，操作系统会关闭它的 fd 并发出 FIN，
+	// 服务端读循环立刻出错 → 立即触发这里。实测「强制退出」与「正常退出」都走这条路径。
+	// （对端整机断电/拔网线没有 FIN，TCP 不马上报错，那种极端情况由 engine.io 的 ping
+	//  超时兜底，以及 sweepDevices 的 deviceStaleAfter 清理条目。）
 	srv.OnDisconnect(func(c socketapi.Conn, _ string) {
+		type goneDev struct{ id, name, user string }
+		offline := []goneDev{}
 		devMu.Lock()
-		removed := []string{}
 		for k, v := range devices {
 			if v.conn == c {
+				// 先记下名字再删（广播文案要用）
+				offline = append(offline, goneDev{id: k, name: v.name, user: v.username})
 				delete(devices, k)
-				removed = append(removed, k)
 			}
 			if v.controller == c.ID() {
 				v.controller = ""
 			}
 		}
 		devMu.Unlock()
-		if len(removed) > 0 {
-			logger.Info(module, "被控端离线", "devices", strings.Join(removed, ","))
+		if len(offline) > 0 {
+			ids := make([]string, 0, len(offline))
+			for _, o := range offline {
+				ids = append(ids, o.id)
+			}
+			logger.Info(module, "被控端离线", "devices", strings.Join(ids, ","))
+		}
+		// 广播给所有端：其他被控端客户端 + 所有管理前端（管理前端据此停掉远程画面并回列表）
+		for _, o := range offline {
+			broadcastDevStatus(srv, o.id, false, o.name, o.user, "disconnected")
 		}
 	})
 
@@ -820,11 +835,14 @@ func RegisterDev(c Ctx) {
 // sweepDevices 防御性扫表：剔除连接已消失或超 deviceStaleAfter 无心跳的设备。
 func sweepDevices(srv socketapi.Server) {
 	cutoff := nowMs() - int64(deviceStaleAfter/time.Millisecond)
+	type goneDev struct{ id, name, user string }
+	offline := []goneDev{}
 	devMu.Lock()
 	removed := []string{}
 	for k, v := range devices {
 		gone := connByID(srv, v.conn.ID()) == nil
 		if gone || v.lastSeen < cutoff {
+			offline = append(offline, goneDev{id: k, name: v.name, user: v.username})
 			delete(devices, k)
 			removed = append(removed, k)
 		}
@@ -833,4 +851,25 @@ func sweepDevices(srv socketapi.Server) {
 	if len(removed) > 0 {
 		logger.Info(module, "设备超时清理", "devices", strings.Join(removed, ","), "online", len(devices))
 	}
+	// 兜底通知：被清掉的设备也广播一次离线，避免前端还当它在线
+	for _, o := range offline {
+		broadcastDevStatus(srv, o.id, false, o.name, o.user, "removed")
+	}
+}
+
+// broadcastDevStatus 把设备在线状态变化广播给所有连接（其他被控端客户端 + 所有管理前端）。
+// 管理前端据此停掉远程画面、刷新设备卡片状态。
+//
+// 判定来源只有一处：管理/被控 socket 断开（OnDisconnect）。被控端进程被强杀时，
+// 操作系统会关闭它的 fd 并发出 FIN，服务端读循环立刻出错，所以「强制退出」「正常退出」
+// 都能立即走到。心跳阈值（deviceStaleAfter=90s）只用于兜底清理条目，不承担实时判定。
+func broadcastDevStatus(srv socketapi.Server, deviceID string, online bool, name, username, reason string) {
+	_ = srv.Broadcast("dev:status", map[string]any{
+		"deviceId": deviceID,
+		"online":   online,
+		"name":     name,
+		"username": username,
+		"reason":   reason, // disconnected | removed
+		"ts":       nowMs(),
+	})
 }

@@ -156,6 +156,22 @@
     $('exec-out').textContent = 'exit=' + ack.exitCode + '\n\n' + (ack.stdout || '') + (ack.stderr ? ('\n[stderr]\n' + ack.stderr) : '')
   }
 
+  // 设备在线状态变化（服务端广播 dev:status）：立刻刷新卡片，避免留下过期的「在线」卡片，
+  // 不用等 5s 的轮询。注意列表里设备 id 字段是 id，而广播里是 deviceId。
+  S.bindDevStatus = function () {
+    if (S._statusBound) return
+    S._statusBound = true
+    A.sock.on('dev:status', (d) => {
+      if (!d || !d.deviceId) return
+      if (S.currentDevice && S.currentDevice.id === d.deviceId) {
+        S.currentDevice.online = d.online !== false
+      }
+      const known = (S.devices || []).some((x) => x.id === d.deviceId)
+      // 已知设备状态变化、或新设备上线：重新拉一次列表（幂等、最省心）
+      if (known || d.online) S.loadDevices()
+    })
+  }
+
   // 远程命令执行结果回传（仅接受当前设备）
   S.bindExecResult = function () {
     if (S._execBound) return
@@ -202,6 +218,7 @@
     $('shot-btn').onclick = S.shot
     $('cam-btn').onclick = S.cam
     S.bindExecResult()
+    S.bindDevStatus()
     // 远程查看按钮（remote-view.js）
     // 麦克风/摄像头：单击直接用默认设备开始，右键/长按弹设备列表（见 RV.bindDeviceButtons）
     if (A.remoteView && A.remoteView.bindDeviceButtons) A.remoteView.bindDeviceButtons()

@@ -155,8 +155,35 @@
       RV._handleSignal(d.signal || {})
     })
     A.sock.on('dev:start', () => {})
-    // 设备离线/被抢占兜底
-    A.sock.on('disconnect', () => RV.stop())
+    // 服务端广播的设备在线状态变化。判定来源只有一处：控制端/被控端 socket 断开——
+    // 被控端进程被强杀时 OS 会关闭 fd 发出 FIN，服务端读循环立刻报错，随即广播 dev:status。
+    A.sock.on('dev:status', (d) => {
+      if (!d || !RV.deviceId || d.deviceId !== RV.deviceId) return
+      if (d.online !== false) return
+      log('收到设备离线广播 reason=' + (d.reason || ''))
+      RV.handleDeviceOffline(d.reason)
+    })
+    // 注意：这是「浏览器 ↔ 服务端」的 socket 断开，不是被控设备断开（别把两者混为一谈）。
+    // 断开后收不到任何推送，画面会停在最后一帧，所以先把远程查看收尾。
+    A.sock.on('disconnect', () => {
+      log('与服务端 socket 断开（非设备离线）→ 停止远程查看')
+      RV.stop()
+    })
+  }
+
+  // handleDeviceOffline 被控端设备离线：停止远程查看 + 提示 + 退回设备列表。
+  RV.handleDeviceOffline = function (reason) {
+    RV.stop()
+    const msg = reason === 'removed'
+      ? '远程设备已离线（服务端已清理该设备）'
+      : '远程设备已离线（连接已断开：被强制退出或掉线）'
+    A.toast(msg)
+    const st = $('rv-state')
+    if (st) st.textContent = msg
+    // 只在详情页仍显示着该设备时才点「返回」，避免误触
+    const detail = $('dev-detail')
+    const back = $('dd-back')
+    if (back && detail && detail.style.display !== 'none') back.click()
   }
 
   RV.open = async function (device) {

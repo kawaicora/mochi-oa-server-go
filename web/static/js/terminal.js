@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 远程终端独立窗口 —— 交互式 shell（会话保持，cwd/变量持久）。
  * 输入命令 → dev:termIn 写到被控端常驻 shell stdin；stdout/stderr 经 dev:termOut 实时回显。
  */
@@ -72,6 +72,14 @@
       if (!d || d.deviceId !== deviceId) return
       setState('会话已结束', 'err')
       append('\r\n[会话已结束 exit=' + (d.code ?? 0) + ']', 'err')
+    })
+    // 目标设备离线（服务端 OnDisconnect 广播）：本窗口是独立弹出的，主界面管不到它，
+    // 自己收尾并关掉，避免留一个连不上的终端窗口。
+    sock.on('dev:status', (d) => {
+      if (!d || d.deviceId !== deviceId || d.online !== false) return
+      setState('设备已离线', 'err')
+      append('\r\n[远程设备已离线，窗口即将关闭]\r\n', 'err')
+      setTimeout(() => { try { window.close() } catch {} }, 600)
     })
   }
   connect()

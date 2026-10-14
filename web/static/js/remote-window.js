@@ -64,5 +64,15 @@
       }
     })
     A.sock.on('connect_error', (e) => { $('rw-state').textContent = '连接失败: ' + (e && e.message ? e.message : e) })
+
+    // 目标设备离线（服务端 OnDisconnect 广播）：本窗口是独立弹出的，主界面管不到它，
+    // 所以自己收尾并关掉，避免留一个永远黑屏的窗口。
+    A.sock.on('dev:status', (d) => {
+      if (!d || d.deviceId !== deviceId || d.online !== false) return
+      try { RV && RV.stop() } catch {}
+      const el = $('rw-state')
+      if (el) { el.textContent = '设备已离线，窗口即将关闭'; el.classList.remove('ok') }
+      setTimeout(() => { try { window.close() } catch {} }, 600)
+    })
   })
 })()
