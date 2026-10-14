@@ -1,13 +1,13 @@
 // adminweb.go 1:1 移植自 server/src/web/admin.ts（管理后台静态页托管）。
 //
 // 路由（一个不少，逐一对齐 TS）：
-//   GET /view/admin                 → 管理后台主页（admin.html 内嵌 room/sysmon/users/companies 四个子页 @@占位符替换@@）
-//   GET /view/admin/terminal        → terminal.html 整页（终端窗口）
-//   GET /view/admin/remote-window   → remote-window.html 整页（远程窗口）
-//   GET /view/room                  → 301 永久跳 /view/admin（旧收藏兼容）
-//   GET /view/admin/config.js       → 注入 socket path/transports 的运行时配置脚本
-//   GET /view/admin/socket.io.js    → socket.io 官方浏览器端脚本（embed）
-//   GET /view/admin/static/*        → css/js 静态资源（embed）
+//
+//	GET /view/admin                 → 管理后台主页（admin.html 内嵌 room/sysmon/users/companies 四个子页 @@占位符替换@@）
+//	GET /view/admin/terminal        → terminal.html 整页（终端窗口）
+//	GET /view/admin/remote-window   → remote-window.html 整页（远程窗口）
+//	GET /view/admin/config.js       → 注入 socket path/transports 的运行时配置脚本
+//	GET /view/admin/socket.io.js    → socket.io 官方浏览器端脚本（embed）
+//	GET /view/admin/static/*        → css/js 静态资源（embed）
 package http
 
 import (
@@ -65,12 +65,11 @@ func RegisterAdminWeb(mux *http.ServeMux, cfg *config.ServerConfig) {
 	h := &adminWebHandler{cfg: cfg, tmpl: loadTemplates(web.Assets)}
 	mux.HandleFunc("GET /view/admin", h.index)
 	mux.HandleFunc("GET /view/admin/", h.subtree)
-	mux.HandleFunc("GET /view/room", h.legacyRoomRedirect)
 }
 
 type adminWebHandler struct {
-	cfg   *config.ServerConfig
-	tmpl  map[string]string
+	cfg  *config.ServerConfig
+	tmpl map[string]string
 }
 
 // loadTemplates 从 embed.FS 读出全部页面模板。
@@ -98,7 +97,7 @@ func (h *adminWebHandler) pageHtml() string {
 	repl := map[string]string{
 		"@@ROOM_PAGE@@":      h.tmpl["room.html"],
 		"@@SYSMON_PAGE@@":    h.tmpl["sysmon.html"],
-		"@@USERS_PAGE@@":      h.tmpl["users.html"],
+		"@@USERS_PAGE@@":     h.tmpl["users.html"],
 		"@@COMPANIES_PAGE@@": h.tmpl["companies.html"],
 	}
 	for k, v := range repl {
@@ -152,11 +151,6 @@ func (h *adminWebHandler) subtree(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
-}
-
-// legacyRoomRedirect GET /view/room → 301 /view/admin（旧收藏链接兼容）。
-func (h *adminWebHandler) legacyRoomRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/view/admin", http.StatusMovedPermanently)
 }
 
 // guessStaticType 简单按扩展名回 Content-Type。
