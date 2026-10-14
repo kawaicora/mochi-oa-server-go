@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>远程终端</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="/view/admin/static/css/terminal.css?v=20261009f">
-<script src="/view/admin/config.js"></script>
-<script src="/view/admin/socket.io.js"></script>
+<link rel="stylesheet" href="/view/admin/static/css/terminal.css?v=@@ASSET_VER@@">
+<script src="/view/admin/config.js?v=@@ASSET_VER@@"></script>
+<script src="/view/admin/socket.io.js?v=@@ASSET_VER@@"></script>
 </head>
 <body>
   <div id="term-bar">
@@ -20,6 +20,6 @@
     <span class="term-prompt">&gt;</span>
     <input id="term-input" autocomplete="off" spellcheck="false" placeholder="输入命令后回车（会话保持，cd/变量持久）">
   </div>
-  <script src="/view/admin/static/js/terminal.js?v=20261013c"></script>
+  <script src="/view/admin/static/js/terminal.js?v=@@ASSET_VER@@"></script>
 </body>
 </html>
