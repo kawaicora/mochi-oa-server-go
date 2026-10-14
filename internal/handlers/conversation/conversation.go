@@ -797,7 +797,10 @@ func Register(c Ctx) {
 				v := *req.LastMessageID
 				lastReadMessageID = &v
 			}
-			if err := store.MarkRead(ctx, conversationID, auth.ID, lastReadMessageID); err != nil {
+			// 客户端只在「窗口可见 + 消息真的滚进可视区域」时才上报可视区内最大的消息 id，
+			// 因此这里要按位置重算未读（不是一律清零），并广播实际生效的位置。
+			unread, readPos, err := store.MarkRead(ctx, conversationID, auth.ID, lastReadMessageID)
+			if err != nil {
 				logger.Error(module, "MarkRead 失败", "error", err)
 			}
 			// 已读回执广播：通知会话内其他成员"我读到了 lastReadMessageId"
@@ -809,7 +812,7 @@ func Register(c Ctx) {
 				rc := readReceiptBroadcast{
 					ConversationID:    conversationID,
 					UserID:            auth.ID,
-					LastReadMessageID: lastReadMessageID,
+					LastReadMessageID: readPos,
 				}
 				if conv.Type == "group" && conv.GroupID != nil {
 					_ = srv.EmitToSkip(util.GroupRoom(*conv.GroupID), "chat:readReceipt", rc, conn.ID())
@@ -820,7 +823,7 @@ func Register(c Ctx) {
 			}
 			_ = srv.EmitTo(util.UserRoom(auth.ID), "conversations:updated", map[string]any{
 				"conversationId": conversationID,
-				"unread":         0,
+				"unread":         unread,
 			})
 			ack(util.OK(nil))
 		})

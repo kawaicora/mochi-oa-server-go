@@ -384,16 +384,74 @@ func (s *MySqlStore) TouchConversation(ctx context.Context, conversationID, user
 		Updates(updates).Error
 }
 
-// MarkRead 清未读并记录已读位置。
-func (s *MySqlStore) MarkRead(ctx context.Context, conversationID, userID int64, lastReadMessageID *int64) error {
+// MarkRead 记录已读位置（只前进）并重算未读数；返回 (未读数, 实际生效的已读位置)。
+//
+// 语义（配合客户端「只有窗口可见且该条消息滚进可视区域才算已读」）：
+//   - 已读位置只前进不后退：乱序上报、多端并用、以及滚动到中间时都不会把已读打回去；
+//   - 未读 = 该会话中 id > 已读位置、不是自己发的、未被软删的消息数。
+//     客户端上报的是「可视区里最大的消息 id」，所以只滚到中间时下方消息仍算未读，
+//     不能像以前那样一律清零。
+//   - lastReadMessageID 为 nil = 兼容旧客户端的「清未读」：等价于读到该会话最新一条。
+func (s *MySqlStore) MarkRead(ctx context.Context, conversationID, userID int64, lastReadMessageID *int64) (int64, *int64, error) {
+	db := s.gorm.WithContext(ctx)
+
+	pos := int64(0)
 	if lastReadMessageID != nil && *lastReadMessageID > 0 {
-		return s.gorm.WithContext(ctx).Table("conversation_members").
-			Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-			Updates(map[string]any{"unread": 0, "last_read_message_id": *lastReadMessageID}).Error
+		pos = *lastReadMessageID
+	} else {
+		// 旧语义「标记全部已读」：读到该会话最新一条（含自己发的，取最大 id 即可）
+		var maxID *int64
+		if err := db.Table("messages").
+			Select("MAX(id)").
+			Where("conversation_id = ? AND deleted_at IS NULL", conversationID).
+			Scan(&maxID).Error; err != nil {
+			return 0, nil, err
+		}
+		if maxID != nil && *maxID > 0 {
+			pos = *maxID
+		}
 	}
-	return s.gorm.WithContext(ctx).Table("conversation_members").
+
+	if pos > 0 {
+		// GREATEST + COALESCE：位置只前进；MySQL 里 GREATEST(NULL, x) 会返回 NULL，必须先兜底
+		if err := db.Table("conversation_members").
+			Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+			Update("last_read_message_id", gorm.Expr("GREATEST(COALESCE(last_read_message_id, 0), ?)", pos)).Error; err != nil {
+			return 0, nil, err
+		}
+		// 读回实际位置：并发的更靠前的上报可能已经把位置推得更远，广播要用真实值
+		var cur struct {
+			LastReadMessageID *int64 `gorm:"column:last_read_message_id"`
+		}
+		if err := db.Table("conversation_members").
+			Select("last_read_message_id").
+			Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+			Take(&cur).Error; err == nil && cur.LastReadMessageID != nil {
+			pos = *cur.LastReadMessageID
+		}
+	}
+
+	var unread int64
+	q := db.Table("messages").
+		Where("conversation_id = ? AND from_id <> ? AND deleted_at IS NULL", conversationID, userID)
+	if pos > 0 {
+		q = q.Where("id > ?", pos)
+	}
+	if err := q.Count(&unread).Error; err != nil {
+		return 0, nil, err
+	}
+	if err := db.Table("conversation_members").
 		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-		Updates(map[string]any{"unread": 0}).Error
+		Update("unread", unread).Error; err != nil {
+		return 0, nil, err
+	}
+
+	var readPos *int64
+	if pos > 0 {
+		v := pos
+		readPos = &v
+	}
+	return unread, readPos, nil
 }
 
 // GetReadReceipts 会话内各成员已读位置。

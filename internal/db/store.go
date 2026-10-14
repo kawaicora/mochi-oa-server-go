@@ -460,7 +460,9 @@ type Store interface {
 	SoftDeleteMessage(ctx context.Context, conversationID int64, messageID string) (bool, error)
 	HardDeleteMessage(ctx context.Context, conversationID int64, messageID string) (bool, error)
 	TouchConversation(ctx context.Context, conversationID, userID int64, preview string, fromID int64) error
-	MarkRead(ctx context.Context, conversationID, userID int64, lastReadMessageID *int64) error
+	// MarkRead 记录已读位置（只前进）并重算未读；返回 (未读数, 实际生效的已读位置)。
+	// lastReadMessageID 为 nil 时表示「读到该会话最新一条」（兼容旧客户端）。
+	MarkRead(ctx context.Context, conversationID, userID int64, lastReadMessageID *int64) (int64, *int64, error)
 	GetReadReceipts(ctx context.Context, conversationID int64) ([]types.ReadReceipt, error)
 
 	// ---- 文件 ----
