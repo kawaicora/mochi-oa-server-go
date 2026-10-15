@@ -35,6 +35,9 @@ type IceServer struct {
 	Username   string `json:"username,omitempty"`   // turn 鉴权用户名
 	Credential string `json:"credential,omitempty"` // turn 鉴权凭证
 }
+type iceWrapper struct {
+	IceServers []IceServer `json:"iceServers"`
+}
 
 // HTTPSConfig 是直接提供 HTTPS 时的证书；nil 表示 HTTP。
 type HTTPSConfig struct {
@@ -196,29 +199,52 @@ func transports() []Transport {
 
 // iceServers 解析 ICE_SERVERS：JSON 数组 或 逗号分隔 stun/turn URL；默认公共 STUN。
 func iceServers() []IceServer {
+	const mod = "config"
 	raw := strings.TrimSpace(os.Getenv("ICE_SERVERS"))
-	dft := []IceServer{{URLs: "stun:stun.l.google.com:19302"}}
+	dft := []IceServer{{URLs: []string{"stun:stun.l.google.com:19302"}}}
+
 	if raw == "" {
+		logger.Info(mod, "ICE_SERVERS env empty, use default stun")
 		return dft
 	}
+
+	// 场景1：外层大包装 { "iceServers": [...] }
+	if strings.HasPrefix(raw, "{") {
+		var wrapper iceWrapper
+		err := json.Unmarshal([]byte(raw), &wrapper)
+		if err == nil && len(wrapper.IceServers) > 0 {
+			logger.Info(mod, "loaded ICE servers from wrapped object", "count", len(wrapper.IceServers))
+			return wrapper.IceServers
+		}
+		logger.Warn(mod, "parse wrapped iceServers failed", "error", err)
+	}
+
+	// 场景2：直接数组 [...]
 	if strings.HasPrefix(raw, "[") {
 		var arr []IceServer
-		if err := json.Unmarshal([]byte(raw), &arr); err != nil || len(arr) == 0 {
-			return dft
+		err := json.Unmarshal([]byte(raw), &arr)
+		if err == nil && len(arr) > 0 {
+			logger.Info(mod, "loaded ICE servers from json array", "count", len(arr))
+			return arr
 		}
-		return arr
+		logger.Warn(mod, "ICE_SERVERS json array parse error", "error", err)
+		return dft
 	}
+
+	// 场景3：逗号分隔简易url列表（向后兼容）
 	parts := strings.Split(raw, ",")
 	out := make([]IceServer, 0, len(parts))
 	for _, u := range parts {
 		u = strings.TrimSpace(u)
 		if u != "" {
-			out = append(out, IceServer{URLs: u})
+			out = append(out, IceServer{URLs: []string{u}})
 		}
 	}
 	if len(out) == 0 {
+		logger.Warn(mod, "ICE_SERVERS comma split empty, fallback default stun")
 		return dft
 	}
+	logger.Info(mod, "loaded ICE servers from comma list", "count", len(out))
 	return out
 }
 
