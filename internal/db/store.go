@@ -566,6 +566,22 @@ type Store interface {
 	DeleteWikiPage(ctx context.Context, wikiID int64) error
 	DashboardStats(ctx context.Context, companyID int64, projectID *int64) (*types.DashboardStats, error)
 	MemberTracking(ctx context.Context, companyID int64, projectID *int64) ([]types.MemberTrackItem, error)
+
+	// ---- 日报/周报（公司隔离；仅 company_members 成员可用） ----
+	CreateReportTemplate(ctx context.Context, in CreateReportTemplateInput) (*types.ReportTemplate, error)
+	UpdateReportTemplate(ctx context.Context, id int64, in UpdateReportTemplateInput) (*types.ReportTemplate, error)
+	DeleteReportTemplate(ctx context.Context, id int64) error
+	ListReportTemplates(ctx context.Context, companyID int64) ([]types.ReportTemplate, error)
+	CreateReport(ctx context.Context, in CreateReportInput) (*types.ReportItem, error)
+	GetReportByID(ctx context.Context, id int64) (*types.ReportItem, error)
+	GetReportByPeriod(ctx context.Context, companyID, userID int64, typ, periodDate string) (*types.ReportItem, error)
+	UpdateReport(ctx context.Context, id int64, in UpdateReportInput) (*types.ReportItem, error)
+	SubmitReport(ctx context.Context, id int64) (*types.ReportItem, error)
+	DeleteReport(ctx context.Context, id int64) error
+	// ListReports 公司+筛选+分页，返回（当前页行, 满足条件总数）。
+	ListReports(ctx context.Context, in ListReportsInput) ([]types.ReportItem, int64, error)
+	// ListReportsByPeriod 统计用：一次取 [periodStart,periodEnd] 内全部报告；userIDs 为空=全公司。
+	ListReportsByPeriod(ctx context.Context, companyID int64, typ, periodStart, periodEnd string, userIDs []int64) ([]types.ReportItem, error)
 }
 
 // MemberProfileInput 是 upsertMemberProfile 的可更新字段（nil 字段沿用旧值）。
@@ -575,4 +591,49 @@ type MemberProfileInput struct {
 	BankCard     *string
 	ResumeURL    *string
 	PortfolioURL *string
+}
+
+// CreateReportTemplateInput 创建日报/周报模板。
+type CreateReportTemplateInput struct {
+	CompanyID   int64
+	Name        string
+	Description string
+	Sections    []string // 分节标题数组，落库为 JSON 字符串
+	CreatedBy   int64
+}
+
+// UpdateReportTemplateInput 更新模板（nil 字段不更新；Sections 非 nil 时整体覆盖）。
+type UpdateReportTemplateInput struct {
+	Name        *string
+	Description *string
+	Sections    []string
+}
+
+// CreateReportInput 创建日报/周报。
+type CreateReportInput struct {
+	CompanyID  int64
+	UserID     int64
+	Type       string // daily|weekly
+	PeriodDate string // YYYY-MM-DD：日报=当天，周报=本周周一
+	Title      string
+	Content    string
+	TemplateID int64 // 0=不关联模板
+}
+
+// UpdateReportInput 更新报告（nil 字段不更新；已提交也可改内容，submitted 状态不变）。
+type UpdateReportInput struct {
+	Title      *string
+	Content    *string
+	TemplateID *int64
+}
+
+// ListReportsInput 报告列表筛选 + 分页（periodStart/periodEnd 含两端）。
+type ListReportsInput struct {
+	CompanyID   int64
+	Type        string  // 空串=不限
+	UserID      int64   // 0=不限
+	PeriodStart string  // 空串=不限
+	PeriodEnd   string  // 空串=不限
+	Page        int64   // 调用方兜底默认 1
+	PageSize    int64   // 调用方兜底默认 20、上限 100
 }
