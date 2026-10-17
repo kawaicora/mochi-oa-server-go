@@ -538,6 +538,32 @@ type ProxyAccessRequestRow struct {
 	UpdatedAt    time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// AssetRow 对应 assets 表（公司资产）。code 公司内唯一，按 日期+当日序号 生成（AS20261017-001）。
+type AssetRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Code      string    `db:"code" gorm:"type:varchar(32);not null"`
+	Name      string    `db:"name" gorm:"type:varchar(128);not null"`
+	Price     float64   `db:"price" gorm:"type:decimal(10,2);not null;default:0"`
+	AssetType string    `db:"asset_type" gorm:"type:varchar(16);not null"`              // purchase/rent/borrow
+	Status    string    `db:"status" gorm:"type:varchar(16);not null;default:in_stock"` // in_stock/out
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
+// AssetFlowRow 对应 asset_flows 表（资产流转记录，只增不改）。
+type AssetFlowRow struct {
+	ID         int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID  int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	AssetID    int64     `db:"asset_id" gorm:"index;type:bigint unsigned;not null"`
+	FlowType   string    `db:"flow_type" gorm:"type:varchar(32);not null"` // in_*/out_*
+	Direction  string    `db:"direction" gorm:"type:varchar(8);not null"`  // in/out
+	OperatorID int64     `db:"operator_id" gorm:"index;type:bigint unsigned;not null"`
+	RelatedTo  *string   `db:"related_to" gorm:"type:varchar(128)"`
+	Note       *string   `db:"note" gorm:"type:text"`
+	CreatedAt  time.Time `db:"created_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
 func (UserRow) TableName() string                   { return "users" }
@@ -580,6 +606,8 @@ func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
 func (ProxyAccessRequestRow) TableName() string     { return "proxy_access_requests" }
+func (AssetRow) TableName() string                  { return "assets" }
+func (AssetFlowRow) TableName() string              { return "asset_flows" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1270,4 +1298,33 @@ type ProxyRequestItem struct {
 	ExpiresAt    *string `json:"expiresAt"`
 	CreatedAt    string  `json:"createdAt"`
 	UpdatedAt    string  `json:"updatedAt"`
+}
+
+// AssetItem 资产视图。
+type AssetItem struct {
+	ID        int64   `json:"id"`
+	CompanyID int64   `json:"companyId"`
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	Price     float64 `json:"price"`
+	AssetType string  `json:"assetType"`
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"createdAt"`
+	UpdatedAt string  `json:"updatedAt"`
+}
+
+// FlowItem 流转记录视图（联表补资产 code/name 与经办人昵称）。
+type FlowItem struct {
+	ID           int64   `json:"id"`
+	CompanyID    int64   `json:"companyId"`
+	AssetID      int64   `json:"assetId"`
+	AssetCode    string  `json:"assetCode"`
+	AssetName    string  `json:"assetName"`
+	FlowType     string  `json:"flowType"`
+	Direction    string  `json:"direction"`
+	OperatorID   int64   `json:"operatorId"`
+	OperatorNick string  `json:"operatorNick"`
+	RelatedTo    *string `json:"relatedTo"`
+	Note         *string `json:"note"`
+	CreatedAt    string  `json:"createdAt"`
 }

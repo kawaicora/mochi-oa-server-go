@@ -28,6 +28,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/asset"
 	"mochi-oa-server-go/internal/handlers/attendance"
 	"mochi-oa-server-go/internal/handlers/auth"
 	"mochi-oa-server-go/internal/handlers/checkin"
@@ -131,6 +132,7 @@ func main() {
 	apphttp.RegisterResetPwd(mux, store, srv, cfg)
 	apphttp.RegisterAdminWeb(mux, cfg)
 	apphttp.RegisterAfdianRoutes(mux, store, cfg)
+	apphttp.RegisterAssetQRRoute(mux, store)
 
 	// ---- 8. io.use 认证中间件（对标 index.ts io.use 逐行语义） ----
 	srv.Use(authMiddleware(store, cfg))
@@ -157,6 +159,7 @@ func main() {
 	attendance.RegisterAttendanceHandlers(srv, store)
 	checkin.RegisterCheckinHandlers(srv, store)
 	proxyh.RegisterProxyHandlers(srv, store)
+	asset.RegisterAssetHandlers(srv, store)
 
 	// ---- 出网代理（默认关闭；PROXY_ENABLED=true 才起 HTTP+SOCKS5 监听，失败降级打日志继续主服务） ----
 	var proxySrv *proxypkg.Server

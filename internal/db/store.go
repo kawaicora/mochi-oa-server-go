@@ -647,6 +647,43 @@ type Store interface {
 	ListProxyAccessRequests(ctx context.Context, companyID, userID int64, all bool, status string, page, pageSize int64) ([]types.ProxyRequestItem, int64, error)
 	// UpdateProxyAccessRequest 通用状态/字段更新（approve/reject/renew 复用）。
 	UpdateProxyAccessRequest(ctx context.Context, id int64, in UpdateProxyAccessRequestInput) (*types.ProxyRequestItem, error)
+
+	// ─── 资产管理 ───
+	CreateAsset(ctx context.Context, in CreateAssetInput) (*types.AssetItem, error)
+	GetAssetByID(ctx context.Context, id int64) (*types.AssetItem, error)
+	GetAssetRowByCode(ctx context.Context, code string) (*types.AssetRow, error) // 二维码页用
+	ListAssets(ctx context.Context, companyID int64, keyword string, page, pageSize int64) ([]types.AssetItem, int64, error)
+	UpdateAsset(ctx context.Context, id int64, in UpdateAssetInput) (*types.AssetItem, error)
+	DeleteAsset(ctx context.Context, id int64) error // 连同流转记录一起删
+	CreateAssetFlow(ctx context.Context, in CreateAssetFlowInput) (*types.FlowItem, *types.AssetItem, error)
+	ListAssetFlows(ctx context.Context, companyID, assetID int64, page, pageSize int64) ([]types.FlowItem, int64, error)
+}
+
+// CreateAssetInput 新建资产。
+type CreateAssetInput struct {
+	CompanyID int64
+	Name      string
+	Price     float64
+	AssetType string
+}
+
+// UpdateAssetInput 更新资产（nil 不动）。
+type UpdateAssetInput struct {
+	Name      *string
+	Price     *float64
+	AssetType *string
+	Status    *string
+}
+
+// CreateAssetFlowInput 新建流转记录。
+type CreateAssetFlowInput struct {
+	CompanyID  int64
+	AssetID    int64
+	FlowType   string
+	Direction  string // in/out
+	OperatorID int64
+	RelatedTo  *string
+	Note       *string
 }
 
 // CreateProxyAccessRequestInput 新建上网申请。
