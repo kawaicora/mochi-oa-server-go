@@ -1,0 +1,492 @@
+// Package attendance 实现考勤申请（补卡/请假/调休）与公司级审批流配置的 socket 事件。
+//
+// 事件（均 requireMember 公司隔离；审批/审批流写操作需 admin/owner 或落在该条申请 approverIds 内）：
+//   - attendance:create / list / approve / reject
+//   - approval:flow:get / save / list
+package attendance
+
+import (
+	"context"
+	"encoding/json"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
+	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/logger"
+	"mochi-oa-server-go/internal/socketapi"
+	"mochi-oa-server-go/internal/types"
+	"mochi-oa-server-go/internal/util"
+)
+
+// 日志模块前缀（硬性约束）。
+const mod = "handlers/attendance"
+
+// 申请类型白名单。
+var attendanceTypes = map[string]struct{}{
+	"make_up":   {}, // 补卡
+	"leave":     {}, // 请假
+	"comp_time": {}, // 调休
+}
+
+// 审批流配置类型白名单（含预留 overtime/expense）。
+var flowTypes = map[string]struct{}{
+	"leave": {}, "make_up": {}, "comp_time": {}, "overtime": {}, "expense": {},
+}
+
+// ─── 共享小工具（本包私有副本，与 report/org/task 包同款语义） ───
+
+func getAuth(c socketapi.Conn) *types.Auth {
+	v := c.Get("auth")
+	if a, ok := v.(*types.Auth); ok && a != nil {
+		return a
+	}
+	return nil
+}
+
+func parseData(data json.RawMessage) map[string]any {
+	m := map[string]any{}
+	if len(data) == 0 {
+		return m
+	}
+	_ = json.Unmarshal(data, &m)
+	return m
+}
+
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n != math.Trunc(n) {
+			return 0, false
+		}
+		return int64(n), true
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	}
+	return 0, false
+}
+
+// toFloat64 把 JSON any 值转 float64。
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
+func strField(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// strPtr 取可选字符串字段；未传/空 → nil，否则 trim 后指针（空串也保留为 *string("")）。
+func strPtr(m map[string]any, key string) *string {
+	v, present := m[key]
+	if !present || v == nil {
+		return nil
+	}
+	s, _ := v.(string)
+	return &s
+}
+
+func roleRank(role string) int {
+	switch role {
+	case "owner":
+		return 3
+	case "admin":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func requireMember(c socketapi.Conn, d map[string]any, st db.Store, ack socketapi.Ack) (*types.Auth, int64, string, bool) {
+	a := getAuth(c)
+	if a == nil {
+		ack(util.Fail("未登录"))
+		return nil, 0, "", false
+	}
+	cid, ok := toInt64(d["companyId"])
+	if !ok || cid <= 0 {
+		ack(util.Fail("参数不合法"))
+		return nil, 0, "", false
+	}
+	role, err := st.GetMemberRole(context.Background(), cid, a.ID)
+	if err != nil {
+		logger.Error(mod, "查询成员角色失败", "companyId", cid, "userId", a.ID, "error", err.Error())
+		ack(util.Fail("操作失败"))
+		return nil, 0, "", false
+	}
+	if role == "" {
+		ack(util.Fail("未加入该公司"))
+		return nil, 0, "", false
+	}
+	return a, cid, role, true
+}
+
+func requireAdmin(c socketapi.Conn, d map[string]any, st db.Store, ack socketapi.Ack) (*types.Auth, int64, bool) {
+	a, cid, role, ok := requireMember(c, d, st, ack)
+	if !ok {
+		return nil, 0, false
+	}
+	if roleRank(role) < roleRank("admin") {
+		ack(util.Fail("仅管理员可操作"))
+		return nil, 0, false
+	}
+	return a, cid, true
+}
+
+// parseTimePtr 解析可选时间字段（ISO8601/RFC3339）；未传→nil；非法→(nil,false)。
+func parseTimePtr(m map[string]any, key string) (*time.Time, bool) {
+	v, present := m[key]
+	if !present || v == nil {
+		return nil, true
+	}
+	s, _ := v.(string)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, true
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, false
+	}
+	utc := t.UTC()
+	return &utc, true
+}
+
+// idList 从 payload 取 []int64（用于 approverIds/ccIds）；非法元素返回 false。
+func idList(m map[string]any, key string) ([]int64, bool) {
+	arr, ok := m[key].([]any)
+	if !ok {
+		return nil, false
+	}
+	out := []int64{}
+	for _, x := range arr {
+		n, ok := toInt64(x)
+		if !ok || n <= 0 {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+// ─── 注册入口 ───
+
+// RegisterAttendanceHandlers 注册 attendance:* 与 approval:flow:* 事件。
+func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
+	ctx := context.Background()
+
+	// ---- attendance:create：发起申请 ----
+	srv.On("attendance:create", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		typ := strField(d, "type")
+		if _, ok := attendanceTypes[typ]; !ok {
+			ack(util.Fail("申请类型不合法"))
+			return
+		}
+		reason := strField(d, "reason")
+		if reason == "" {
+			ack(util.Fail("理由不能为空"))
+			return
+		}
+		startT, ok := parseTimePtr(d, "startTime")
+		if !ok {
+			ack(util.Fail("开始时间格式不合法"))
+			return
+		}
+		endT, ok := parseTimePtr(d, "endTime")
+		if !ok {
+			ack(util.Fail("结束时间格式不合法"))
+			return
+		}
+		if startT != nil && endT != nil && startT.After(*endT) {
+			ack(util.Fail("开始时间不能晚于结束时间"))
+			return
+		}
+		var dur *float64
+		if v, present := d["durationHours"]; present && v != nil {
+			f, ok := toFloat64(v)
+			if !ok {
+				ack(util.Fail("时长不合法"))
+				return
+			}
+			if f <= 0 {
+				ack(util.Fail("时长必须大于0"))
+				return
+			}
+			dur = &f
+		}
+		// 按公司该类型审批流配置快照审批人/抄送人（未配→空数组）。
+		approverIDs := []int64{}
+		ccIDs := []int64{}
+		if flow, ferr := store.GetApprovalFlow(ctx, cid, typ); ferr != nil {
+			logger.Error(mod, "attendance:create 查审批流失败", "companyId", cid, "type", typ, "error", ferr.Error())
+			ack(util.Fail("创建失败"))
+			return
+		} else if flow != nil {
+			approverIDs = flow.ApproverIDs
+			ccIDs = flow.CcIDs
+		}
+		req, err := store.CreateAttendanceRequest(ctx, db.CreateAttendanceRequestInput{
+			CompanyID:     cid,
+			UserID:        a.ID,
+			Type:          typ,
+			PunchTime:     strPtr(d, "punchTime"),
+			LeaveType:     strPtr(d, "leaveType"),
+			CompType:      strPtr(d, "compType"),
+			StartTime:     startT,
+			EndTime:       endT,
+			DurationHours: dur,
+			Reason:        reason,
+			ApproverIDs:   approverIDs,
+			CcIDs:         ccIDs,
+		})
+		if err != nil {
+			logger.Error(mod, "attendance:create 失败", "companyId", cid, "userId", a.ID, "error", err.Error())
+			ack(util.Fail("创建失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"request": req}))
+	})
+
+	// ---- attendance:list：只看本人历史 ----
+	srv.On("attendance:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		typ := strField(d, "type")
+		if typ != "" {
+			if _, ok := attendanceTypes[typ]; !ok {
+				ack(util.Fail("申请类型不合法"))
+				return
+			}
+		}
+		page := int64(1)
+		if v, present := d["page"]; present && v != nil {
+			if n, ok := toInt64(v); ok && n > 0 {
+				page = n
+			}
+		}
+		pageSize := int64(10)
+		if v, present := d["pageSize"]; present && v != nil {
+			if n, ok := toInt64(v); ok && n > 0 {
+				pageSize = n
+			}
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		rows, total, err := store.ListAttendanceRequestsByUser(ctx, cid, a.ID, typ, page, pageSize)
+		if err != nil {
+			logger.Error(mod, "attendance:list 失败", "companyId", cid, "userId", a.ID, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if rows == nil {
+			rows = []types.AttendanceRequest{}
+		}
+		ack(util.OK(map[string]any{"requests": rows, "total": total}))
+	})
+
+	// ---- attendance:approve ----
+	srv.On("attendance:approve", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, role, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		id, ok := toInt64(d["id"])
+		if !ok || id <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		req, err := store.GetAttendanceRequestByID(ctx, id)
+		if err != nil {
+			logger.Error(mod, "attendance:approve 查申请失败", "id", id, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if req == nil || req.CompanyID != cid {
+			ack(util.Fail("申请不存在"))
+			return
+		}
+		if !approveAllowed(req, role, a.ID) {
+			logger.Error(mod, "attendance:approve 无权审批", "companyId", cid, "userId", a.ID, "requestId", id)
+			ack(util.Fail("无权审批该申请"))
+			return
+		}
+		updated, err := store.ApproveAttendanceRequest(ctx, id, a.ID)
+		if err != nil {
+			logger.Error(mod, "attendance:approve 失败", "id", id, "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"request": updated}))
+	})
+
+	// ---- attendance:reject ----
+	srv.On("attendance:reject", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, role, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		id, ok := toInt64(d["id"])
+		if !ok || id <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		req, err := store.GetAttendanceRequestByID(ctx, id)
+		if err != nil {
+			logger.Error(mod, "attendance:reject 查申请失败", "id", id, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if req == nil || req.CompanyID != cid {
+			ack(util.Fail("申请不存在"))
+			return
+		}
+		if !approveAllowed(req, role, a.ID) {
+			logger.Error(mod, "attendance:reject 无权审批", "companyId", cid, "userId", a.ID, "requestId", id)
+			ack(util.Fail("无权审批该申请"))
+			return
+		}
+		note := strField(d, "note")
+		updated, err := store.RejectAttendanceRequest(ctx, id, note)
+		if err != nil {
+			logger.Error(mod, "attendance:reject 失败", "id", id, "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"request": updated}))
+	})
+
+	// ---- approval:flow:get：任何成员可查 ----
+	srv.On("approval:flow:get", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		_, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		typ := strField(d, "type")
+		if _, ok := flowTypes[typ]; !ok {
+			ack(util.Fail("配置类型不合法"))
+			return
+		}
+		flow, err := store.GetApprovalFlow(ctx, cid, typ)
+		if err != nil {
+			logger.Error(mod, "approval:flow:get 失败", "companyId", cid, "type", typ, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"flow": flow}))
+	})
+
+	// ---- approval:flow:save：admin/owner，逐 id 校验本公司成员 ----
+	srv.On("approval:flow:save", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, ok := requireAdmin(c, d, store, ack)
+		if !ok {
+			return
+		}
+		typ := strField(d, "type")
+		if _, ok := flowTypes[typ]; !ok {
+			ack(util.Fail("配置类型不合法"))
+			return
+		}
+		approverIDs, ok := idList(d, "approverIds")
+		if !ok {
+			logger.Error(mod, "approval:flow:save 审批人 id 非法", "companyId", cid)
+			ack(util.Fail("审批人不在该公司"))
+			return
+		}
+		for _, uid := range approverIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "approval:flow:save 审批人不在该公司", "companyId", cid, "userId", uid, "err", errStr(err))
+				ack(util.Fail("审批人不在该公司"))
+				return
+			}
+		}
+		ccIDs, ok := idList(d, "ccIds")
+		if !ok {
+			logger.Error(mod, "approval:flow:save 抄送人 id 非法", "companyId", cid)
+			ack(util.Fail("抄送人不在该公司"))
+			return
+		}
+		for _, uid := range ccIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "approval:flow:save 抄送人不在该公司", "companyId", cid, "userId", uid, "err", errStr(err))
+				ack(util.Fail("抄送人不在该公司"))
+				return
+			}
+		}
+		flow, err := store.SaveApprovalFlow(ctx, cid, typ, approverIDs, ccIDs, a.ID)
+		if err != nil {
+			logger.Error(mod, "approval:flow:save 失败", "companyId", cid, "type", typ, "error", err.Error())
+			ack(util.Fail("保存失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"flow": flow}))
+	})
+
+	// ---- approval:flow:list：admin/owner ----
+	srv.On("approval:flow:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		_, cid, ok := requireAdmin(c, d, store, ack)
+		if !ok {
+			return
+		}
+		flows, err := store.ListApprovalFlows(ctx, cid)
+		if err != nil {
+			logger.Error(mod, "approval:flow:list 失败", "companyId", cid, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if flows == nil {
+			flows = []types.ApprovalFlow{}
+		}
+		ack(util.OK(map[string]any{"flows": flows}))
+	})
+}
+
+// approveAllowed：admin/owner 恒可审批；否则须在该条申请的 approverIds 快照内。
+func approveAllowed(req *types.AttendanceRequest, role string, currentUID int64) bool {
+	if roleRank(role) >= roleRank("admin") {
+		return true
+	}
+	for _, uid := range req.ApproverIDs {
+		if uid == currentUID {
+			return true
+		}
+	}
+	return false
+}
+
+// errStr 把 error 安全转字符串（nil → ""）。
+func errStr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
