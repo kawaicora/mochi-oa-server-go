@@ -439,6 +439,46 @@ type ReportRow struct {
 	UpdatedAt    time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// AttendanceRequestRow 对应 attendance_requests 表（考勤申请：补卡/请假/调休，公司隔离）。
+// 无唯一约束：同一人可多次发起。审批流 pending → approved/rejected（admin/owner 审批）。
+type AttendanceRequestRow struct {
+	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Type          string     `db:"type" gorm:"type:varchar(16);not null"`                   // make_up|leave|comp_time
+	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected
+	PunchTime     *string    `db:"punch_time" gorm:"type:varchar(32)"`                      // 补卡时间，如 "2026-10-17 09:00"
+	LeaveType     *string    `db:"leave_type" gorm:"type:varchar(32)"`                      // 请假类型
+	CompType      *string    `db:"comp_type" gorm:"type:varchar(32)"`                       // 调休类型
+	StartTime     *time.Time `db:"start_time" gorm:"type:datetime(3)"`                      // 可空：补卡无区间
+	EndTime       *time.Time `db:"end_time" gorm:"type:datetime(3)"`
+	DurationHours *float64   `db:"duration_hours" gorm:"type:float"` // 可空：时长（小时）
+	Reason        string     `db:"reason" gorm:"type:text;not null"` // HTML 富文本
+	ApproverID    *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
+	ApprovalNote  *string    `db:"approval_note" gorm:"type:text"` // 驳回理由
+	ApprovedAt    *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
+	// ApproverIDs/CcIDs 是创建时按公司审批流配置的快照（JSON 数组字符串）。
+	// JSON 列一律可空、无 default（MySQL 8 禁止 JSON 列字面 DEFAULT，Error 1101）；
+	// 写入侧空数组落 "[]"，读取侧 NULL/空兜底 []。
+	ApproverIDs string    `db:"approver_ids" gorm:"type:json"`
+	CcIDs       string    `db:"cc_ids" gorm:"type:json"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
+// ApprovalFlowRow 对应 approval_flows 表（公司级审批流配置，按申请类型配置审批人/抄送人）。
+// 联合唯一 (company_id, type)：每公司每类型一条配置。
+type ApprovalFlowRow struct {
+	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   int64     `db:"company_id" gorm:"uniqueIndex:idx_approval_flow;index;type:bigint unsigned;not null"`
+	Type        string    `db:"type" gorm:"uniqueIndex:idx_approval_flow;type:varchar(32);not null"` // leave|make_up|comp_time|overtime|expense
+	ApproverIDs string    `db:"approver_ids" gorm:"type:json"`                                       // JSON 数组字符串，可空无 default
+	CcIDs       string    `db:"cc_ids" gorm:"type:json"`
+	CreatedBy   int64     `db:"created_by" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
 func (UserRow) TableName() string               { return "users" }
@@ -475,6 +515,8 @@ func (RequirementLinkRow) TableName() string    { return "requirement_links" }
 func (AfdianOrderRow) TableName() string        { return "afdian_orders" }
 func (ReportTemplateRow) TableName() string     { return "report_templates" }
 func (ReportRow) TableName() string             { return "reports" }
+func (AttendanceRequestRow) TableName() string  { return "attendance_requests" }
+func (ApprovalFlowRow) TableName() string       { return "approval_flows" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1062,4 +1104,41 @@ type ReportMemberStat struct {
 	SubmittedDays   int64   `json:"submittedDays"`
 	MissingDays     int64   `json:"missingDays"`
 	LastSubmittedAt *string `json:"lastSubmittedAt"` // null=从未提交
+}
+
+// AttendanceRequest 考勤申请（查询时 LEFT JOIN users 补 nick/username）。
+type AttendanceRequest struct {
+	ID            int64    `json:"id"`
+	CompanyID     int64    `json:"companyId"`
+	UserID        int64    `json:"userId"`
+	Type          string   `json:"type"`   // make_up|leave|comp_time
+	Status        string   `json:"status"` // pending|approved|rejected
+	PunchTime     *string  `json:"punchTime"`
+	LeaveType     *string  `json:"leaveType"`
+	CompType      *string  `json:"compType"`
+	StartTime     *string  `json:"startTime"`
+	EndTime       *string  `json:"endTime"`
+	DurationHours *float64 `json:"durationHours"`
+	Reason        string   `json:"reason"`
+	ApproverID    *int64   `json:"approverId"`
+	ApprovalNote  *string  `json:"approvalNote"`
+	ApprovedAt    *string  `json:"approvedAt"`
+	ApproverIDs   []int64  `json:"approverIds"` // 创建时按审批流配置的快照
+	CcIDs         []int64  `json:"ccIds"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	Nick          string   `json:"nick"`
+	Username      string   `json:"username"`
+}
+
+// ApprovalFlow 公司级审批流配置（按申请类型）。
+type ApprovalFlow struct {
+	ID          int64   `json:"id"`
+	CompanyID   int64   `json:"companyId"`
+	Type        string  `json:"type"`
+	ApproverIDs []int64 `json:"approverIds"`
+	CcIDs       []int64 `json:"ccIds"`
+	CreatedBy   int64   `json:"createdBy"`
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
 }

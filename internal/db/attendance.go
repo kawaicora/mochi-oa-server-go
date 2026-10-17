@@ -1,0 +1,299 @@
+package db
+
+import (
+	"context"
+	"time"
+
+	"gorm.io/gorm"
+
+	"mochi-oa-server-go/internal/types"
+)
+
+// 本文件实现考勤申请（补卡/请假/调休）与公司级审批流配置的 MySQL 访问。
+// 风格照 mysql_methods.go / report.go：s.gorm.WithContext(ctx).Table("显式表名")，
+// 联表用自定义 scan struct + gorm:"column:xxx"，统一转换函数输出 JSON 视图。
+
+// attendanceScanRow 联表行：考勤申请字段 + 发起人 nick/username。
+type attendanceScanRow struct {
+	ID            int64      `gorm:"column:id"`
+	CompanyID     int64      `gorm:"column:company_id"`
+	UserID        int64      `gorm:"column:user_id"`
+	Type          string     `gorm:"column:type"`
+	Status        string     `gorm:"column:status"`
+	PunchTime     *string    `gorm:"column:punch_time"`
+	LeaveType     *string    `gorm:"column:leave_type"`
+	CompType      *string    `gorm:"column:comp_type"`
+	StartTime     *time.Time `gorm:"column:start_time"`
+	EndTime       *time.Time `gorm:"column:end_time"`
+	DurationHours *float64   `gorm:"column:duration_hours"`
+	Reason        string     `gorm:"column:reason"`
+	ApproverID    *int64     `gorm:"column:approver_id"`
+	ApprovalNote  *string    `gorm:"column:approval_note"`
+	ApprovedAt    *time.Time `gorm:"column:approved_at"`
+	ApproverIDs   string     `gorm:"column:approver_ids"`
+	CcIDs         string     `gorm:"column:cc_ids"`
+	CreatedAt     time.Time  `gorm:"column:created_at"`
+	UpdatedAt     time.Time  `gorm:"column:updated_at"`
+	Username      string     `gorm:"column:username"`
+	Nick          string     `gorm:"column:nick"`
+}
+
+// attendanceBaseQuery 带 LEFT JOIN users 的基础查询。
+func (s *MySqlStore) attendanceBaseQuery(ctx context.Context) *gorm.DB {
+	return s.gorm.WithContext(ctx).Table("attendance_requests r").
+		Joins("LEFT JOIN users u ON u.id = r.user_id")
+}
+
+// scanRowToAttendance 联表行 → JSON 视图；JSON 数组列经 decodeRecipients 兜底 []。
+func scanRowToAttendance(r attendanceScanRow) types.AttendanceRequest {
+	return types.AttendanceRequest{
+		ID:            r.ID,
+		CompanyID:     r.CompanyID,
+		UserID:        r.UserID,
+		Type:          r.Type,
+		Status:        r.Status,
+		PunchTime:     r.PunchTime,
+		LeaveType:     r.LeaveType,
+		CompType:      r.CompType,
+		StartTime:     isoPtr(r.StartTime),
+		EndTime:       isoPtr(r.EndTime),
+		DurationHours: r.DurationHours,
+		Reason:        r.Reason,
+		ApproverID:    r.ApproverID,
+		ApprovalNote:  r.ApprovalNote,
+		ApprovedAt:    isoPtr(r.ApprovedAt),
+		ApproverIDs:   decodeRecipients(r.ApproverIDs),
+		CcIDs:         decodeRecipients(r.CcIDs),
+		CreatedAt:     toIso(r.CreatedAt),
+		UpdatedAt:     toIso(r.UpdatedAt),
+		Nick:          r.Nick,
+		Username:      r.Username,
+	}
+}
+
+// attendanceSelect 联表查询统一列清单（含 approver_ids/cc_ids）。
+const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.created_at, r.updated_at, u.username, u.nick"
+
+// CreateAttendanceRequest 发起考勤申请；审批人/抄送人由调用方按流程快照传入。
+func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
+	now := time.Now().UTC()
+	row := types.AttendanceRequestRow{
+		CompanyID:     in.CompanyID,
+		UserID:        in.UserID,
+		Type:          in.Type,
+		PunchTime:     in.PunchTime,
+		LeaveType:     in.LeaveType,
+		CompType:      in.CompType,
+		StartTime:     in.StartTime,
+		EndTime:       in.EndTime,
+		DurationHours: in.DurationHours,
+		Reason:        in.Reason,
+		ApproverIDs:   encodeRecipients(in.ApproverIDs),
+		CcIDs:         encodeRecipients(in.CcIDs),
+		ApproverID:    nil,
+		ApprovalNote:  nil,
+		ApprovedAt:    nil,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("attendance_requests").Create(&row).Error; err != nil {
+		return nil, err
+	}
+	return s.GetAttendanceRequestByID(ctx, row.ID)
+}
+
+// GetAttendanceRequestByID 按 id 取单条（联表补 nick/username）。
+func (s *MySqlStore) GetAttendanceRequestByID(ctx context.Context, id int64) (*types.AttendanceRequest, error) {
+	var r attendanceScanRow
+	err := s.attendanceBaseQuery(ctx).Select(attendanceSelect).Where("r.id = ?", id).Take(&r).Error
+	if err != nil {
+		if gormNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := scanRowToAttendance(r)
+	return &out, nil
+}
+
+// ListAttendanceRequestsByUser 只看本人历史；type 空串=不限；createdAt 倒序分页。
+func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ string, page, pageSize int64) ([]types.AttendanceRequest, int64, error) {
+	q := s.gorm.WithContext(ctx).Table("attendance_requests r").
+		Where("r.company_id = ?", companyID).
+		Where("r.user_id = ?", userID)
+	if typ != "" {
+		q = q.Where("r.type = ?", typ)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+	rows := []attendanceScanRow{}
+	listQ := s.attendanceBaseQuery(ctx).Select(attendanceSelect).
+		Where("r.company_id = ?", companyID).
+		Where("r.user_id = ?", userID)
+	if typ != "" {
+		listQ = listQ.Where("r.type = ?", typ)
+	}
+	if err := listQ.Order("r.created_at DESC, r.id DESC").
+		Limit(int(pageSize)).
+		Offset(int(offset)).
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	out := []types.AttendanceRequest{}
+	for _, r := range rows {
+		out = append(out, scanRowToAttendance(r))
+	}
+	return out, total, nil
+}
+
+// ApproveAttendanceRequest 置 approved：approver_id=审批人、approved_at=now。
+func (s *MySqlStore) ApproveAttendanceRequest(ctx context.Context, id, approverID int64) (*types.AttendanceRequest, error) {
+	now := time.Now().UTC()
+	res := s.gorm.WithContext(ctx).Table("attendance_requests").
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":      "approved",
+			"approver_id": approverID,
+			"approved_at": now,
+			"updated_at":  now,
+		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, &NotFoundError{Msg: "attendance request not found"}
+	}
+	return s.GetAttendanceRequestByID(ctx, id)
+}
+
+// RejectAttendanceRequest 置 rejected：approval_note=驳回理由。
+func (s *MySqlStore) RejectAttendanceRequest(ctx context.Context, id int64, note string) (*types.AttendanceRequest, error) {
+	now := time.Now().UTC()
+	res := s.gorm.WithContext(ctx).Table("attendance_requests").
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":        "rejected",
+			"approval_note": note,
+			"updated_at":    now,
+		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, &NotFoundError{Msg: "attendance request not found"}
+	}
+	return s.GetAttendanceRequestByID(ctx, id)
+}
+
+// ─── 公司级审批流配置 ───
+
+// flowScanRow 审批流配置行。
+type flowScanRow struct {
+	ID          int64     `gorm:"column:id"`
+	CompanyID   int64     `gorm:"column:company_id"`
+	Type        string    `gorm:"column:type"`
+	ApproverIDs string    `gorm:"column:approver_ids"`
+	CcIDs       string    `gorm:"column:cc_ids"`
+	CreatedBy   int64     `gorm:"column:created_by"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at"`
+}
+
+func scanRowToFlow(r flowScanRow) types.ApprovalFlow {
+	return types.ApprovalFlow{
+		ID:          r.ID,
+		CompanyID:   r.CompanyID,
+		Type:        r.Type,
+		ApproverIDs: decodeRecipients(r.ApproverIDs),
+		CcIDs:       decodeRecipients(r.CcIDs),
+		CreatedBy:   r.CreatedBy,
+		CreatedAt:   toIso(r.CreatedAt),
+		UpdatedAt:   toIso(r.UpdatedAt),
+	}
+}
+
+// GetApprovalFlow 取某公司某类型配置；未配置返回 (nil, nil)。
+func (s *MySqlStore) GetApprovalFlow(ctx context.Context, companyID int64, typ string) (*types.ApprovalFlow, error) {
+	var r flowScanRow
+	err := s.gorm.WithContext(ctx).Table("approval_flows").
+		Where("company_id = ?", companyID).
+		Where("type = ?", typ).
+		Take(&r).Error
+	if err != nil {
+		if gormNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := scanRowToFlow(r)
+	return &out, nil
+}
+
+// SaveApprovalFlow 按 (companyID,type) upsert：存在则更新 approver_ids/cc_ids，否则新建。
+func (s *MySqlStore) SaveApprovalFlow(ctx context.Context, companyID int64, typ string, approverIDs, ccIDs []int64, createdBy int64) (*types.ApprovalFlow, error) {
+	now := time.Now().UTC()
+	var existing types.ApprovalFlowRow
+	err := s.gorm.WithContext(ctx).Table("approval_flows").
+		Where("company_id = ?", companyID).
+		Where("type = ?", typ).
+		Take(&existing).Error
+	if err != nil && !gormNotFound(err) {
+		return nil, err
+	}
+	if err == nil {
+		// 已存在：更新审批人/抄送人。
+		res := s.gorm.WithContext(ctx).Table("approval_flows").
+			Where("id = ?", existing.ID).
+			Updates(map[string]any{
+				"approver_ids": encodeRecipients(approverIDs),
+				"cc_ids":       encodeRecipients(ccIDs),
+				"updated_at":   now,
+			})
+		if res.Error != nil {
+			return nil, res.Error
+		}
+		return s.GetApprovalFlow(ctx, companyID, typ)
+	}
+	// 新建。
+	row := types.ApprovalFlowRow{
+		CompanyID:   companyID,
+		Type:        typ,
+		ApproverIDs: encodeRecipients(approverIDs),
+		CcIDs:       encodeRecipients(ccIDs),
+		CreatedBy:   createdBy,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := s.gorm.WithContext(ctx).Table("approval_flows").Create(&row).Error; err != nil {
+		return nil, err
+	}
+	return s.GetApprovalFlow(ctx, companyID, typ)
+}
+
+// ListApprovalFlows 列公司全部审批流配置（id 升序）。
+func (s *MySqlStore) ListApprovalFlows(ctx context.Context, companyID int64) ([]types.ApprovalFlow, error) {
+	rows := []flowScanRow{}
+	if err := s.gorm.WithContext(ctx).Table("approval_flows").
+		Where("company_id = ?", companyID).
+		Order("id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []types.ApprovalFlow{}
+	for _, r := range rows {
+		out = append(out, scanRowToFlow(r))
+	}
+	return out, nil
+}

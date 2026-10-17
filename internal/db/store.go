@@ -11,6 +11,7 @@ package db
 import (
 	"context"
 	"errors"
+	"time"
 
 	"mochi-oa-server-go/internal/types"
 )
@@ -586,6 +587,26 @@ type Store interface {
 	// ListInboxReports 收件箱：查「别人发给我的」（JSON_CONTAINS recipient_ids 含本人），
 	// createdAt 倒序分页，返回（当前页行, 总数）。
 	ListInboxReports(ctx context.Context, companyID, userID int64, page, pageSize int64) ([]types.ReportItem, int64, error)
+
+	// ─── 考勤申请 ───
+	// CreateAttendanceRequest 发起申请（approver/cc 为创建时流程快照）。
+	CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error)
+	// GetAttendanceRequestByID 按 id 取（联表补 nick/username）。
+	GetAttendanceRequestByID(ctx context.Context, id int64) (*types.AttendanceRequest, error)
+	// ListAttendanceRequestsByUser 只看本人历史（createdAt 倒序分页），type 可筛选。
+	ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ string, page, pageSize int64) ([]types.AttendanceRequest, int64, error)
+	// ApproveAttendanceRequest 置 approved：approverID=审批人、approvedAt=now。
+	ApproveAttendanceRequest(ctx context.Context, id, approverID int64) (*types.AttendanceRequest, error)
+	// RejectAttendanceRequest 置 rejected：approvalNote=驳回理由。
+	RejectAttendanceRequest(ctx context.Context, id int64, note string) (*types.AttendanceRequest, error)
+
+	// ─── 公司级审批流配置 ───
+	// GetApprovalFlow 取某公司某类型配置；未配置返回 (nil, nil)。
+	GetApprovalFlow(ctx context.Context, companyID int64, typ string) (*types.ApprovalFlow, error)
+	// SaveApprovalFlow 按 (companyID,type) upsert 审批人/抄送人。
+	SaveApprovalFlow(ctx context.Context, companyID int64, typ string, approverIDs, ccIDs []int64, createdBy int64) (*types.ApprovalFlow, error)
+	// ListApprovalFlows 列公司全部审批流配置。
+	ListApprovalFlows(ctx context.Context, companyID int64) ([]types.ApprovalFlow, error)
 }
 
 // MemberProfileInput 是 upsertMemberProfile 的可更新字段（nil 字段沿用旧值）。
@@ -642,4 +663,21 @@ type ListReportsInput struct {
 	PeriodEnd   string // 空串=不限
 	Page        int64  // 调用方兜底默认 1
 	PageSize    int64  // 调用方兜底默认 20、上限 100
+}
+
+// CreateAttendanceRequestInput 发起考勤申请。
+// ApproverIDs/CcIDs 是创建时按公司审批流配置的快照（未配则为空数组）。
+type CreateAttendanceRequestInput struct {
+	CompanyID     int64
+	UserID        int64
+	Type          string     // make_up|leave|comp_time
+	PunchTime     *string    // 补卡时间
+	LeaveType     *string    // 请假类型
+	CompType      *string    // 调休类型
+	StartTime     *time.Time // 可空
+	EndTime       *time.Time // 可空
+	DurationHours *float64   // 可空
+	Reason        string
+	ApproverIDs   []int64 // 快照，空数组=无
+	CcIDs         []int64 // 快照，空数组=无
 }
