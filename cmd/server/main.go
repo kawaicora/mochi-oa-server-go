@@ -30,6 +30,7 @@ import (
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/handlers/attendance"
 	"mochi-oa-server-go/internal/handlers/auth"
+	"mochi-oa-server-go/internal/handlers/checkin"
 	"mochi-oa-server-go/internal/handlers/conversation"
 	"mochi-oa-server-go/internal/handlers/mailholiday"
 	"mochi-oa-server-go/internal/handlers/org"
@@ -152,6 +153,7 @@ func main() {
 	mailholiday.RegisterAdminUsers(srv, store, cfg)
 	report.RegisterReportHandlers(srv, store, cfg)
 	attendance.RegisterAttendanceHandlers(srv, store)
+	checkin.RegisterCheckinHandlers(srv, store)
 
 	// ---- 10. presence 接线（对标 io.on('connection') / io.on('disconnect')） ----
 	srv.OnConnection(onConnection(srv, store))

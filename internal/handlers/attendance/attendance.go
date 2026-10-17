@@ -295,7 +295,10 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		if pageSize > 100 {
 			pageSize = 100
 		}
-		rows, total, err := store.ListAttendanceRequestsByUser(ctx, cid, a.ID, typ, page, pageSize)
+		// 可选日期区间（YYYY-MM-DD 含两端）：日历紫色点用；不传=行为不变。
+		dateStart := strField(d, "dateStart")
+		dateEnd := strField(d, "dateEnd")
+		rows, total, err := store.ListAttendanceRequestsByUser(ctx, cid, a.ID, typ, dateStart, dateEnd, page, pageSize)
 		if err != nil {
 			logger.Error(mod, "attendance:list 失败", "companyId", cid, "userId", a.ID, "error", err.Error())
 			ack(util.Fail("获取失败"))
