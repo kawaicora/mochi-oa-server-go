@@ -126,6 +126,16 @@ type ServerConfig struct {
 	ReportRemindDaily string
 	// ReportRemindWeekly 周报未交提醒时刻（"HH:MM"，当地时间；仅周五触发），默认 18:00。
 	ReportRemindWeekly string
+	// Proxy 出网代理配置（默认全部不启用，不影响现有服务）。
+	Proxy ProxyConfig
+}
+
+// ProxyConfig 是无外网员工出网代理（HTTP 隧道 + SOCKS5）配置。
+// 默认全部关闭；PROXY_ENABLED=true 时 main.go 才起代理监听（失败降级打日志继续主服务）。
+type ProxyConfig struct {
+	Enabled        bool // PROXY_ENABLED，默认 false
+	HTTPPort       int  // PROXY_HTTP_PORT，默认 1081
+	SOCKS5Port     int  // PROXY_SOCKS5_PORT，默认 1082
 }
 
 var (

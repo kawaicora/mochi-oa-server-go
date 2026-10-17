@@ -78,19 +78,28 @@ func roleRank(role string) int {
 	}
 }
 
-// headerGet 从 handshakeHeaders 取头值（兼容 string / []any 多值）。
+// headerGet 从 handshakeHeaders 取头值（与 auth.go 同款：逐 key 大小写不敏感扫描）。
+// 注意：main.go 构建 handshakeHeaders 时直接遍历 http.Header，key 是 Go canonical 形式
+// （如 "X-Real-Ip"），不能用 m[strings.ToLower(name)] 直查（会永远 miss 导致 realIp 恒空）。
+// 兼容 string / []string / []any 多值。
 func headerGet(m map[string]any, name string) string {
-	v, ok := m[strings.ToLower(name)]
-	if !ok {
-		return ""
-	}
-	switch t := v.(type) {
-	case string:
-		return t
-	case []any:
-		if len(t) > 0 {
-			if s, ok := t[0].(string); ok {
-				return s
+	n := strings.ToLower(name)
+	for k, v := range m {
+		if strings.ToLower(k) != n {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			return strings.TrimSpace(t)
+		case []string:
+			if len(t) > 0 {
+				return strings.TrimSpace(t[0])
+			}
+		case []any:
+			if len(t) > 0 {
+				if s, ok := t[0].(string); ok {
+					return strings.TrimSpace(s)
+				}
 			}
 		}
 	}
