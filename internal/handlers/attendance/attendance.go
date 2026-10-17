@@ -30,9 +30,9 @@ var attendanceTypes = map[string]struct{}{
 	"comp_time": {}, // 调休
 }
 
-// 审批流配置类型白名单（含预留 overtime/expense）。
+// 审批流配置类型白名单（含预留 overtime/expense，以及上网申请 internet）。
 var flowTypes = map[string]struct{}{
-	"leave": {}, "make_up": {}, "comp_time": {}, "overtime": {}, "expense": {},
+	"leave": {}, "make_up": {}, "comp_time": {}, "overtime": {}, "expense": {}, "internet": {},
 }
 
 // ─── 共享小工具（本包私有副本，与 report/org/task 包同款语义） ───

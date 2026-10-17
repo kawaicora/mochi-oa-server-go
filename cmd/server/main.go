@@ -35,6 +35,7 @@ import (
 	"mochi-oa-server-go/internal/handlers/mailholiday"
 	"mochi-oa-server-go/internal/handlers/org"
 	"mochi-oa-server-go/internal/handlers/pm"
+	proxyh "mochi-oa-server-go/internal/handlers/proxy"
 	"mochi-oa-server-go/internal/handlers/report"
 	"mochi-oa-server-go/internal/handlers/rtcdev"
 	"mochi-oa-server-go/internal/handlers/task"
@@ -44,6 +45,7 @@ import (
 	"mochi-oa-server-go/internal/mailer"
 	"mochi-oa-server-go/internal/password"
 	"mochi-oa-server-go/internal/presence"
+	proxypkg "mochi-oa-server-go/internal/proxy"
 	"mochi-oa-server-go/internal/socket"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/token"
@@ -154,6 +156,15 @@ func main() {
 	report.RegisterReportHandlers(srv, store, cfg)
 	attendance.RegisterAttendanceHandlers(srv, store)
 	checkin.RegisterCheckinHandlers(srv, store)
+	proxyh.RegisterProxyHandlers(srv, store)
+
+	// ---- 出网代理（默认关闭；PROXY_ENABLED=true 才起 HTTP+SOCKS5 监听，失败降级打日志继续主服务） ----
+	var proxySrv *proxypkg.Server
+	if cfg.Proxy.Enabled {
+		proxySrv = proxypkg.New(store, cfg.Proxy.HTTPPort, cfg.Proxy.SOCKS5Port)
+		proxySrv.Start()
+		logger.Info("mochioa-server", "出网代理已启用", "httpPort", cfg.Proxy.HTTPPort, "socks5Port", cfg.Proxy.SOCKS5Port)
+	}
 
 	// ---- 10. presence 接线（对标 io.on('connection') / io.on('disconnect')） ----
 	srv.OnConnection(onConnection(srv, store))
