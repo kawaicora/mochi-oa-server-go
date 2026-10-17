@@ -33,6 +33,7 @@ import (
 	"mochi-oa-server-go/internal/handlers/auth"
 	"mochi-oa-server-go/internal/handlers/checkin"
 	"mochi-oa-server-go/internal/handlers/conversation"
+	"mochi-oa-server-go/internal/handlers/job"
 	"mochi-oa-server-go/internal/handlers/mailholiday"
 	"mochi-oa-server-go/internal/handlers/org"
 	"mochi-oa-server-go/internal/handlers/pm"
@@ -160,6 +161,7 @@ func main() {
 	checkin.RegisterCheckinHandlers(srv, store)
 	proxyh.RegisterProxyHandlers(srv, store)
 	asset.RegisterAssetHandlers(srv, store)
+	job.RegisterJobHandlers(srv, store)
 
 	// ---- 出网代理（默认关闭；PROXY_ENABLED=true 才起 HTTP+SOCKS5 监听，失败降级打日志继续主服务） ----
 	var proxySrv *proxypkg.Server

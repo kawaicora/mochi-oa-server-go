@@ -40,10 +40,12 @@ type CompanyRow struct {
 
 // CompanyMemberRow 对应 company_members 表（联合主键 company_id+user_id）。
 type CompanyMemberRow struct {
-	CompanyID int64     `db:"company_id" gorm:"primaryKey;type:bigint unsigned;not null"`
-	UserID    int64     `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
-	Role      string    `db:"role" gorm:"type:enum('owner','admin','member');not null;default:member"` // owner|admin|member
-	JoinedAt  time.Time `db:"joined_at" gorm:"type:datetime;not null"`
+	CompanyID     int64     `db:"company_id" gorm:"primaryKey;type:bigint unsigned;not null"`
+	UserID        int64     `db:"user_id" gorm:"primaryKey;index;type:bigint unsigned;not null"`
+	Role          string    `db:"role" gorm:"type:enum('owner','admin','member');not null;default:member"` // owner|admin|member
+	PositionID    *int64    `db:"position_id" gorm:"index;type:bigint unsigned"`                           // 绑定职位（jobs.id），可空=未绑定
+	PositionExtra *string   `db:"position_extra" gorm:"type:varchar(64)"`                                  // 兼任标记，如"兼任"
+	JoinedAt      time.Time `db:"joined_at" gorm:"type:datetime;not null"`
 }
 
 // DepartmentRow 对应 departments 表。
@@ -551,6 +553,18 @@ type AssetFlowRow struct {
 	CreatedAt  time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
+// JobRow 对应 jobs 表（公司职位，管理员自定义，无唯一约束）。
+type JobRow struct {
+	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Name        string    `db:"name" gorm:"type:varchar(64);not null"`
+	Description *string   `db:"description" gorm:"type:varchar(200)"`
+	Enabled     bool      `db:"enabled" gorm:"type:tinyint;not null;default:1"`
+	SortOrder   int64     `db:"sort_order" gorm:"type:int;not null;default:0"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
 func (UserRow) TableName() string                   { return "users" }
@@ -594,6 +608,7 @@ func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
 func (ProxyAccessRequestRow) TableName() string     { return "proxy_access_requests" }
 func (AssetRow) TableName() string                  { return "assets" }
 func (AssetFlowRow) TableName() string              { return "asset_flows" }
+func (JobRow) TableName() string                    { return "jobs" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1301,4 +1316,28 @@ type FlowItem struct {
 	RelatedTo    *string `json:"relatedTo"`
 	Note         *string `json:"note"`
 	CreatedAt    string  `json:"createdAt"`
+}
+
+// JobItem 职位视图。
+type JobItem struct {
+	ID          int64   `json:"id"`
+	CompanyID   int64   `json:"companyId"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Enabled     bool    `json:"enabled"`
+	SortOrder   int64   `json:"sortOrder"`
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
+}
+
+// BindingItem 成员-职位绑定视图（联表用户昵称、部门、职位）。
+type BindingItem struct {
+	UserID         int64   `json:"userId"`
+	Nick           string  `json:"nick"`
+	Username       string  `json:"username"`
+	DepartmentID   *int64  `json:"departmentId"`
+	DepartmentName *string `json:"departmentName"`
+	PositionID     *int64  `json:"positionId"`
+	PositionName   *string `json:"positionName"`
+	PositionExtra  *string `json:"positionExtra"`
 }

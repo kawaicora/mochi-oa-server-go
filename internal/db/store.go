@@ -649,6 +649,31 @@ type Store interface {
 	DeleteAsset(ctx context.Context, id int64) error // 连同流转记录一起删
 	CreateAssetFlow(ctx context.Context, in CreateAssetFlowInput) (*types.FlowItem, *types.AssetItem, error)
 	ListAssetFlows(ctx context.Context, companyID, assetID int64, page, pageSize int64) ([]types.FlowItem, int64, error)
+
+	// ─── 公司职位 ───
+	EnsureDefaultJobs(ctx context.Context, companyID int64) (int64, error) // 该公司 jobs 为空时播种默认清单，返回插入条数
+	CreateJob(ctx context.Context, in CreateJobInput) (*types.JobItem, error)
+	UpdateJob(ctx context.Context, id int64, in UpdateJobInput) (*types.JobItem, error)
+	DeleteJob(ctx context.Context, id int64) error // 同时把绑定该职位的成员 position_id 置空
+	ListJobs(ctx context.Context, companyID int64, keyword string, enabledOnly bool, page, pageSize int64) ([]types.JobItem, int64, error)
+	BindPosition(ctx context.Context, companyID, userID int64, jobID *int64, extra *string) error
+	ListBindings(ctx context.Context, companyID int64, page, pageSize int64) ([]types.BindingItem, int64, error)
+}
+
+// CreateJobInput 新建职位。
+type CreateJobInput struct {
+	CompanyID   int64
+	Name        string
+	Description *string
+	SortOrder   int64
+}
+
+// UpdateJobInput 更新职位（nil 不动）。
+type UpdateJobInput struct {
+	Name        *string
+	Description *string
+	Enabled     *bool
+	SortOrder   *int64
 }
 
 // CreateAssetInput 新建资产。
