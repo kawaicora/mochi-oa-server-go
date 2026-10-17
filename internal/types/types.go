@@ -429,7 +429,10 @@ type ReportRow struct {
 	Content    string `db:"content" gorm:"type:text;not null"`
 	TemplateID int64  `db:"template_id" gorm:"type:bigint unsigned;not null;default:0"`
 	// RecipientIDs 接收人 user_id 数组，落库为 JSON 字符串（如 "[1,2]"）；"[]"=未发送给任何人。
-	RecipientIDs string     `db:"recipient_ids" gorm:"type:json;not null;default:'[]'"`
+	// 注意：MySQL 8 的 JSON 列不允许带字面 DEFAULT（Error 1101），也不能 not null 无 default
+	// （老表 ALTER 补列会失败）；故只声明 type:json 可空。写入侧永远落 encodeRecipients 的结果
+	// （空数组写 "[]" 而非 NULL），读取侧 decodeRecipients 对 NULL/空串/损坏兜底返回 []。
+	RecipientIDs string     `db:"recipient_ids" gorm:"type:json"`
 	Submitted    bool       `db:"submitted" gorm:"type:tinyint(1);not null;default:0"`
 	SubmittedAt  *time.Time `db:"submitted_at" gorm:"type:datetime(3);index"` // 可空：未提交
 	CreatedAt    time.Time  `db:"created_at" gorm:"type:datetime;not null"`
