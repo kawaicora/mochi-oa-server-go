@@ -583,6 +583,9 @@ type Store interface {
 	ListReports(ctx context.Context, in ListReportsInput) ([]types.ReportItem, int64, error)
 	// ListReportsByPeriod 统计用：一次取 [periodStart,periodEnd] 内全部报告；userIDs 为空=全公司。
 	ListReportsByPeriod(ctx context.Context, companyID int64, typ, periodStart, periodEnd string, userIDs []int64) ([]types.ReportItem, error)
+	// ListInboxReports 收件箱：查「别人发给我的」（JSON_CONTAINS recipient_ids 含本人），
+	// createdAt 倒序分页，返回（当前页行, 总数）。
+	ListInboxReports(ctx context.Context, companyID, userID int64, page, pageSize int64) ([]types.ReportItem, int64, error)
 }
 
 // MemberProfileInput 是 upsertMemberProfile 的可更新字段（nil 字段沿用旧值）。
@@ -618,7 +621,8 @@ type CreateReportInput struct {
 	PeriodDate string // YYYY-MM-DD：日报=当天，周报=本周周一
 	Title      string
 	Content    string
-	TemplateID int64 // 0=不关联模板
+	TemplateID int64   // 0=不关联模板
+	Recipients []int64 // 接收人 user_id 数组（已由 handler 校验为本公司成员）；nil/空=不发送
 }
 
 // UpdateReportInput 更新报告（nil 字段不更新；已提交也可改内容，submitted 状态不变）。
@@ -626,6 +630,7 @@ type UpdateReportInput struct {
 	Title      *string
 	Content    *string
 	TemplateID *int64
+	Recipients []int64 // 非 nil 时整体替换接收人（传空切片=清空接收人）
 }
 
 // ListReportsInput 报告列表筛选 + 分页（periodStart/periodEnd 含两端）。
