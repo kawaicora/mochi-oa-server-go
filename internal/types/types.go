@@ -405,6 +405,35 @@ type AfdianOrderRow struct {
 	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
+// ReportTemplateRow 对应 report_templates 表（日报/周报模板，公司隔离；admin/owner 维护）。
+type ReportTemplateRow struct {
+	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Name        string    `db:"name" gorm:"type:varchar(100);not null"`
+	Description string    `db:"description" gorm:"type:varchar(500);not null;default:''"`
+	Sections    string    `db:"sections" gorm:"type:text;not null"` // JSON 字符串数组（如 "[\"今日完成\",\"明日计划\"]"）
+	CreatedBy   int64     `db:"created_by" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
+// ReportRow 对应 reports 表（日报/周报，公司+成员隔离）。
+// 联合唯一索引 idx_report_period(company_id,user_id,type,period_date) 保证一人一周期一条。
+type ReportRow struct {
+	ID          int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID   int64      `db:"company_id" gorm:"uniqueIndex:idx_report_period;index;type:bigint unsigned;not null"`
+	UserID      int64      `db:"user_id" gorm:"uniqueIndex:idx_report_period;index;type:bigint unsigned;not null"`
+	Type        string     `db:"type" gorm:"uniqueIndex:idx_report_period;index;type:varchar(16);not null"` // daily|weekly
+	PeriodDate  string     `db:"period_date" gorm:"uniqueIndex:idx_report_period;index;type:varchar(16);not null"` // YYYY-MM-DD：日报=当天，周报=本周周一
+	Title       string     `db:"title" gorm:"type:varchar(200);not null;default:''"`
+	Content     string     `db:"content" gorm:"type:text;not null"`
+	TemplateID  int64      `db:"template_id" gorm:"type:bigint unsigned;not null;default:0"`
+	Submitted   bool       `db:"submitted" gorm:"type:tinyint(1);not null;default:0"`
+	SubmittedAt *time.Time `db:"submitted_at" gorm:"type:datetime(3);index"` // 可空：未提交
+	CreatedAt   time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt   time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
 func (UserRow) TableName() string               { return "users" }
@@ -439,6 +468,8 @@ func (DocumentRow) TableName() string           { return "documents" }
 func (WikiPageRow) TableName() string           { return "wiki_pages" }
 func (RequirementLinkRow) TableName() string    { return "requirement_links" }
 func (AfdianOrderRow) TableName() string        { return "afdian_orders" }
+func (ReportTemplateRow) TableName() string      { return "report_templates" }
+func (ReportRow) TableName() string              { return "reports" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -985,4 +1016,44 @@ type Auth struct {
 	Nick          string `json:"nick"`
 	SessionID     int64  `json:"sessionId"`
 	SessionDevice string `json:"sessionDevice"`
+}
+
+// ReportItem 日报/周报条目（查询时 LEFT JOIN users 补 nick/username）。
+type ReportItem struct {
+	ID          int64    `json:"id"`
+	CompanyID   int64    `json:"companyId"`
+	UserID      int64    `json:"userId"`
+	Type        string   `json:"type"`        // daily|weekly
+	PeriodDate  string   `json:"periodDate"`  // YYYY-MM-DD
+	Title       string   `json:"title"`
+	Content     string   `json:"content"`
+	TemplateID  int64    `json:"templateId"`
+	Submitted   bool     `json:"submitted"`
+	SubmittedAt *string  `json:"submittedAt"` // null=未提交
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
+	Nick        string   `json:"nick"`
+	Username    string   `json:"username"`
+}
+
+// ReportTemplate 报告模板（sections 为分节标题数组）。
+type ReportTemplate struct {
+	ID          int64    `json:"id"`
+	CompanyID   int64    `json:"companyId"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Sections    []string `json:"sections"`
+	CreatedBy   int64    `json:"createdBy"`
+	CreatedAt   string   `json:"createdAt"`
+	UpdatedAt   string   `json:"updatedAt"`
+}
+
+// ReportMemberStat 报告统计中的单成员行（admin/owner 看全员提交情况用）。
+type ReportMemberStat struct {
+	UserID          int64   `json:"userId"`
+	Nick            string  `json:"nick"`
+	Username        string  `json:"username"`
+	SubmittedDays   int64   `json:"submittedDays"`
+	MissingDays     int64   `json:"missingDays"`
+	LastSubmittedAt *string `json:"lastSubmittedAt"` // null=从未提交
 }
