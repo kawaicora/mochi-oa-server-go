@@ -479,44 +479,71 @@ type ApprovalFlowRow struct {
 	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// CheckinRow 对应 checkins 表（打卡记录，公司隔离）。无唯一约束：一天可多次打卡，
+// 前端用当天 count>=2 判断「上下班正常」。
+type CheckinRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID    int64     `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	CheckDate string    `db:"check_date" gorm:"type:varchar(16);not null;index"` // YYYY-MM-DD（服务端本地今天）
+	CheckTime time.Time `db:"check_time" gorm:"type:datetime(3);not null"`       // 打卡时刻
+	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
+	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+}
+
+// CompanyCheckinSettingsRow 对应 company_checkin_settings 表（公司级打卡白名单，一公司一条）。
+// mac/ip_whitelist 为 JSON 字符串数组（如 ["AA:BB:CC:DD:EE:FF"]）；空数组=该类别不限制。
+// JSON 列一律可空、无 default（MySQL 8 禁止 JSON 列字面 DEFAULT，Error 1101）；写入侧空数组落 "[]"。
+type CompanyCheckinSettingsRow struct {
+	ID           int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID    int64     `db:"company_id" gorm:"uniqueIndex;type:bigint unsigned;not null"`
+	MacWhitelist string    `db:"mac_whitelist" gorm:"type:json"`
+	IpWhitelist  string    `db:"ip_whitelist" gorm:"type:json"`
+	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt    time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
-func (UserRow) TableName() string               { return "users" }
-func (CompanyRow) TableName() string            { return "companies" }
-func (CompanyMemberRow) TableName() string      { return "company_members" }
-func (DepartmentRow) TableName() string         { return "departments" }
-func (DepartmentMemberRow) TableName() string   { return "department_members" }
-func (GroupRow) TableName() string              { return "groups" }
-func (GroupMemberRow) TableName() string        { return "group_members" }
-func (ConversationRow) TableName() string       { return "conversations" }
-func (ConversationMemberRow) TableName() string { return "conversation_members" }
-func (MessageRow) TableName() string            { return "messages" }
-func (FileRow) TableName() string               { return "files" }
-func (FriendRow) TableName() string             { return "friends" }
-func (CompanyInvitationRow) TableName() string  { return "company_invitations" }
-func (MemberProfileRow) TableName() string      { return "member_profiles" }
-func (SessionRow) TableName() string            { return "sessions" }
-func (MailConfigRow) TableName() string         { return "mail_configs" }
-func (HolidayRow) TableName() string            { return "holidays" }
-func (ProjectRow) TableName() string            { return "projects" }
-func (ProjectMemberRow) TableName() string      { return "project_members" }
-func (TaskRow) TableName() string               { return "tasks" }
-func (TaskAssignmentRow) TableName() string     { return "task_assignments" }
-func (TaskCommentRow) TableName() string        { return "task_comments" }
-func (TaskIssueRow) TableName() string          { return "task_issues" }
-func (TaskStatusLogRow) TableName() string      { return "task_status_logs" }
-func (TaskExtensionRow) TableName() string      { return "task_extensions" }
-func (RequirementRow) TableName() string        { return "requirements" }
-func (BugRow) TableName() string                { return "bugs" }
-func (PlanRow) TableName() string               { return "plans" }
-func (DocumentRow) TableName() string           { return "documents" }
-func (WikiPageRow) TableName() string           { return "wiki_pages" }
-func (RequirementLinkRow) TableName() string    { return "requirement_links" }
-func (AfdianOrderRow) TableName() string        { return "afdian_orders" }
-func (ReportTemplateRow) TableName() string     { return "report_templates" }
-func (ReportRow) TableName() string             { return "reports" }
-func (AttendanceRequestRow) TableName() string  { return "attendance_requests" }
-func (ApprovalFlowRow) TableName() string       { return "approval_flows" }
+func (UserRow) TableName() string                   { return "users" }
+func (CompanyRow) TableName() string                { return "companies" }
+func (CompanyMemberRow) TableName() string          { return "company_members" }
+func (DepartmentRow) TableName() string             { return "departments" }
+func (DepartmentMemberRow) TableName() string       { return "department_members" }
+func (GroupRow) TableName() string                  { return "groups" }
+func (GroupMemberRow) TableName() string            { return "group_members" }
+func (ConversationRow) TableName() string           { return "conversations" }
+func (ConversationMemberRow) TableName() string     { return "conversation_members" }
+func (MessageRow) TableName() string                { return "messages" }
+func (FileRow) TableName() string                   { return "files" }
+func (FriendRow) TableName() string                 { return "friends" }
+func (CompanyInvitationRow) TableName() string      { return "company_invitations" }
+func (MemberProfileRow) TableName() string          { return "member_profiles" }
+func (SessionRow) TableName() string                { return "sessions" }
+func (MailConfigRow) TableName() string             { return "mail_configs" }
+func (HolidayRow) TableName() string                { return "holidays" }
+func (ProjectRow) TableName() string                { return "projects" }
+func (ProjectMemberRow) TableName() string          { return "project_members" }
+func (TaskRow) TableName() string                   { return "tasks" }
+func (TaskAssignmentRow) TableName() string         { return "task_assignments" }
+func (TaskCommentRow) TableName() string            { return "task_comments" }
+func (TaskIssueRow) TableName() string              { return "task_issues" }
+func (TaskStatusLogRow) TableName() string          { return "task_status_logs" }
+func (TaskExtensionRow) TableName() string          { return "task_extensions" }
+func (RequirementRow) TableName() string            { return "requirements" }
+func (BugRow) TableName() string                    { return "bugs" }
+func (PlanRow) TableName() string                   { return "plans" }
+func (DocumentRow) TableName() string               { return "documents" }
+func (WikiPageRow) TableName() string               { return "wiki_pages" }
+func (RequirementLinkRow) TableName() string        { return "requirement_links" }
+func (AfdianOrderRow) TableName() string            { return "afdian_orders" }
+func (ReportTemplateRow) TableName() string         { return "report_templates" }
+func (ReportRow) TableName() string                 { return "reports" }
+func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
+func (ApprovalFlowRow) TableName() string           { return "approval_flows" }
+func (CheckinRow) TableName() string                { return "checkins" }
+func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1141,4 +1168,37 @@ type ApprovalFlow struct {
 	CreatedBy   int64   `json:"createdBy"`
 	CreatedAt   string  `json:"createdAt"`
 	UpdatedAt   string  `json:"updatedAt"`
+}
+
+// CheckinItem 单条打卡记录（联表补发起人 nick/username）。
+type CheckinItem struct {
+	ID        int64   `json:"id"`
+	CompanyID int64   `json:"companyId"`
+	UserID    int64   `json:"userId"`
+	CheckDate string  `json:"checkDate"`
+	CheckTime string  `json:"checkTime"`
+	IP        *string `json:"ip"`
+	MAC       *string `json:"mac"`
+	CreatedAt string  `json:"createdAt"`
+	Nick      string  `json:"nick"`
+	Username  string  `json:"username"`
+}
+
+// CheckinDay 某用户某一天的打卡聚合：date 倒序、组内按 check_time 升序。
+type CheckinDay struct {
+	Date      string        `json:"date"`
+	Count     int64         `json:"count"`
+	FirstTime string        `json:"firstTime"`
+	LastTime  string        `json:"lastTime"`
+	Records   []CheckinItem `json:"records"`
+}
+
+// CheckinSettings 公司打卡白名单配置。
+type CheckinSettings struct {
+	ID           int64    `json:"id"`
+	CompanyID    int64    `json:"companyId"`
+	MacWhitelist []string `json:"macWhitelist"`
+	IpWhitelist  []string `json:"ipWhitelist"`
+	CreatedAt    string   `json:"createdAt"`
+	UpdatedAt    string   `json:"updatedAt"`
 }

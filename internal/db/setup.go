@@ -89,6 +89,8 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.ReportRow{},
 		&types.AttendanceRequestRow{},
 		&types.ApprovalFlowRow{},
+		&types.CheckinRow{},
+		&types.CompanyCheckinSettingsRow{},
 	}
 	if err := s.gorm.WithContext(ctx).AutoMigrate(models...); err != nil {
 		logger.Error("db", "自动建表失败", "error", err.Error())

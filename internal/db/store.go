@@ -594,7 +594,9 @@ type Store interface {
 	// GetAttendanceRequestByID 按 id 取（联表补 nick/username）。
 	GetAttendanceRequestByID(ctx context.Context, id int64) (*types.AttendanceRequest, error)
 	// ListAttendanceRequestsByUser 只看本人历史（createdAt 倒序分页），type 可筛选。
-	ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ string, page, pageSize int64) ([]types.AttendanceRequest, int64, error)
+	// dateStart/dateEnd（YYYY-MM-DD 含两端）为空串=不按区间过滤；
+	// 语义：start_time 落在 [dateStart,dateEnd] 内即命中（用于日历紫色点）。
+	ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ, dateStart, dateEnd string, page, pageSize int64) ([]types.AttendanceRequest, int64, error)
 	// ApproveAttendanceRequest 置 approved：approverID=审批人、approvedAt=now。
 	ApproveAttendanceRequest(ctx context.Context, id, approverID int64) (*types.AttendanceRequest, error)
 	// RejectAttendanceRequest 置 rejected：approvalNote=驳回理由。
@@ -607,6 +609,16 @@ type Store interface {
 	SaveApprovalFlow(ctx context.Context, companyID int64, typ string, approverIDs, ccIDs []int64, createdBy int64) (*types.ApprovalFlow, error)
 	// ListApprovalFlows 列公司全部审批流配置。
 	ListApprovalFlows(ctx context.Context, companyID int64) ([]types.ApprovalFlow, error)
+
+	// ─── 打卡 ───
+	// CreateCheckin 写入一条打卡记录。
+	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, error)
+	// ListCheckinsByMonth 本人某月全部记录（check_date=月份前缀），联表补昵称。
+	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
+	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
+	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
+	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。
+	SaveCheckinSettings(ctx context.Context, companyID int64, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error)
 }
 
 // MemberProfileInput 是 upsertMemberProfile 的可更新字段（nil 字段沿用旧值）。

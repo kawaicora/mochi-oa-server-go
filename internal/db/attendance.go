@@ -117,12 +117,20 @@ func (s *MySqlStore) GetAttendanceRequestByID(ctx context.Context, id int64) (*t
 }
 
 // ListAttendanceRequestsByUser 只看本人历史；type 空串=不限；createdAt 倒序分页。
-func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ string, page, pageSize int64) ([]types.AttendanceRequest, int64, error) {
+// dateStart/dateEnd（YYYY-MM-DD 含两端）非空时：DATE(start_time) 落在区间内才命中
+// （日历紫色点用；NULL start_time 的补卡等不参与区间过滤）。
+func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID, userID int64, typ, dateStart, dateEnd string, page, pageSize int64) ([]types.AttendanceRequest, int64, error) {
 	q := s.gorm.WithContext(ctx).Table("attendance_requests r").
 		Where("r.company_id = ?", companyID).
 		Where("r.user_id = ?", userID)
 	if typ != "" {
 		q = q.Where("r.type = ?", typ)
+	}
+	if dateStart != "" {
+		q = q.Where("DATE(r.start_time) >= ?", dateStart)
+	}
+	if dateEnd != "" {
+		q = q.Where("DATE(r.start_time) <= ?", dateEnd)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -144,6 +152,12 @@ func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID
 		Where("r.user_id = ?", userID)
 	if typ != "" {
 		listQ = listQ.Where("r.type = ?", typ)
+	}
+	if dateStart != "" {
+		listQ = listQ.Where("DATE(r.start_time) >= ?", dateStart)
+	}
+	if dateEnd != "" {
+		listQ = listQ.Where("DATE(r.start_time) <= ?", dateEnd)
 	}
 	if err := listQ.Order("r.created_at DESC, r.id DESC").
 		Limit(int(pageSize)).
