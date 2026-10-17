@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -224,6 +225,16 @@ func RegisterReportHandlers(srv socketapi.Server, store db.Store, cfg *config.Se
 				templateID = n
 			}
 		}
+		// recipients 可选：传了就逐个校验是本公司成员；空数组=不发送给任何人。
+		recipients := []int64{}
+		if _, present := d["recipients"]; present {
+			rs, ok := parseRecipients(d, cid, store)
+			if !ok {
+				ack(util.Fail("接收人不在该公司"))
+				return
+			}
+			recipients = rs
+		}
 		// 客户端会先调 report:current；这里再兜底查一次防并发重复。
 		if existing, _ := store.GetReportByPeriod(ctx, cid, a.ID, typ, pd); existing != nil {
 			ack(util.Fail("该周期的日报已存在"))
@@ -237,6 +248,7 @@ func RegisterReportHandlers(srv socketapi.Server, store db.Store, cfg *config.Se
 			Title:      title,
 			Content:    content,
 			TemplateID: templateID,
+			Recipients: recipients,
 		})
 		if err != nil {
 			if _, ok := asAlreadyExists(err); ok {
@@ -294,6 +306,16 @@ func RegisterReportHandlers(srv socketapi.Server, store db.Store, cfg *config.Se
 				patch.TemplateID = &n
 				changed = true
 			}
+		}
+		// recipients 可选：传了则全量替换接收人（空数组=清空）；逐个校验为本公司成员。
+		if v, present := d["recipients"]; present && v != nil {
+			rs, ok := parseRecipients(d, cid, store)
+			if !ok {
+				ack(util.Fail("接收人不在该公司"))
+				return
+			}
+			patch.Recipients = rs
+			changed = true
 		}
 		if !changed {
 			ack(util.OK(map[string]any{"report": report}))
@@ -429,6 +451,40 @@ func RegisterReportHandlers(srv socketapi.Server, store db.Store, cfg *config.Se
 		reports, total, err := store.ListReports(ctx, in)
 		if err != nil {
 			logger.Error(mod, "report:list 查询失败", "companyId", cid, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if reports == nil {
+			reports = []types.ReportItem{}
+		}
+		ack(util.OK(map[string]any{"reports": reports, "total": total}))
+	})
+
+	// ---- report:inbox：我收到的（别人发给我的），createdAt 倒序分页 ----
+	srv.On("report:inbox", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		page := int64(1)
+		if v, present := d["page"]; present && v != nil {
+			if n, ok := toInt64(v); ok && n > 0 {
+				page = n
+			}
+		}
+		pageSize := int64(10)
+		if v, present := d["pageSize"]; present && v != nil {
+			if n, ok := toInt64(v); ok && n > 0 {
+				pageSize = n
+			}
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		reports, total, err := store.ListInboxReports(ctx, cid, a.ID, page, pageSize)
+		if err != nil {
+			logger.Error(mod, "report:inbox 查询失败", "companyId", cid, "userId", a.ID, "error", err.Error())
 			ack(util.Fail("获取失败"))
 			return
 		}
@@ -636,6 +692,36 @@ func asAlreadyExists(err error) (*db.AlreadyExistsError, bool) {
 	var ae *db.AlreadyExistsError
 	ok := errors.As(err, &ae)
 	return ae, ok
+}
+
+// parseRecipients 解析 payload 的 recipients 数组并逐个校验为本公司成员。
+// 任一非法 id 或非本公司成员都打日志并返回 false（调用方 Fail("接收人不在该公司")）。
+// 空数组（传了 []）合法，表示不发送给任何人。
+func parseRecipients(m map[string]any, cid int64, st db.Store) ([]int64, bool) {
+	arr, ok := m["recipients"].([]any)
+	if !ok {
+		logger.Error(mod, "report recipients 不是数组", "companyId", cid)
+		return nil, false
+	}
+	out := []int64{}
+	for _, x := range arr {
+		uid, ok := toInt64(x)
+		if !ok || uid <= 0 {
+			logger.Error(mod, "report recipients 含非法 user id", "companyId", cid, "value", fmt.Sprintf("%v", x))
+			return nil, false
+		}
+		role, err := st.GetMemberRole(context.Background(), cid, uid)
+		if err != nil {
+			logger.Error(mod, "report recipients 校验成员失败", "companyId", cid, "userId", uid, "error", err.Error())
+			return nil, false
+		}
+		if role == "" {
+			logger.Error(mod, "report recipients 接收人不在该公司", "companyId", cid, "userId", uid)
+			return nil, false
+		}
+		out = append(out, uid)
+	}
+	return out, true
 }
 
 // ==================== 统计口径 ====================
