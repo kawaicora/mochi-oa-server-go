@@ -122,6 +122,10 @@ type ServerConfig struct {
 	ServerAdmins  []string
 	Mail          *ServerMailConfig // nil=未配置环境级主邮件
 	Afdian        *AfdianConfig     // nil=未启用
+	// ReportRemindDaily 日报未交提醒时刻（"HH:MM"，当地时间），默认 18:00。
+	ReportRemindDaily string
+	// ReportRemindWeekly 周报未交提醒时刻（"HH:MM"，当地时间；仅周五触发），默认 18:00。
+	ReportRemindWeekly string
 }
 
 var (
@@ -394,5 +398,8 @@ func build() *ServerConfig {
 		ServerAdmins: serverAdmins(),
 		Mail:         serverMail(),
 		Afdian:       afdianConfig(),
+		// 日报/周报未交提醒时刻（HH:MM，当地时间；周报仅周五触发）。
+		ReportRemindDaily:  strEnv("REPORT_REMIND_DAILY", "18:00"),
+		ReportRemindWeekly: strEnv("REPORT_REMIND_WEEKLY", "18:00"),
 	}
 }

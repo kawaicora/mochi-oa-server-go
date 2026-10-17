@@ -572,6 +572,7 @@ type Store interface {
 	UpdateReportTemplate(ctx context.Context, id int64, in UpdateReportTemplateInput) (*types.ReportTemplate, error)
 	DeleteReportTemplate(ctx context.Context, id int64) error
 	ListReportTemplates(ctx context.Context, companyID int64) ([]types.ReportTemplate, error)
+	GetReportTemplateByID(ctx context.Context, id int64) (*types.ReportTemplate, error)
 	CreateReport(ctx context.Context, in CreateReportInput) (*types.ReportItem, error)
 	GetReportByID(ctx context.Context, id int64) (*types.ReportItem, error)
 	GetReportByPeriod(ctx context.Context, companyID, userID int64, typ, periodDate string) (*types.ReportItem, error)
@@ -630,10 +631,10 @@ type UpdateReportInput struct {
 // ListReportsInput 报告列表筛选 + 分页（periodStart/periodEnd 含两端）。
 type ListReportsInput struct {
 	CompanyID   int64
-	Type        string  // 空串=不限
-	UserID      int64   // 0=不限
-	PeriodStart string  // 空串=不限
-	PeriodEnd   string  // 空串=不限
-	Page        int64   // 调用方兜底默认 1
-	PageSize    int64   // 调用方兜底默认 20、上限 100
+	Type        string // 空串=不限
+	UserID      int64  // 0=不限
+	PeriodStart string // 空串=不限
+	PeriodEnd   string // 空串=不限
+	Page        int64  // 调用方兜底默认 1
+	PageSize    int64  // 调用方兜底默认 20、上限 100
 }

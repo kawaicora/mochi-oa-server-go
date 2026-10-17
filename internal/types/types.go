@@ -423,7 +423,7 @@ type ReportRow struct {
 	ID          int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	CompanyID   int64      `db:"company_id" gorm:"uniqueIndex:idx_report_period;index;type:bigint unsigned;not null"`
 	UserID      int64      `db:"user_id" gorm:"uniqueIndex:idx_report_period;index;type:bigint unsigned;not null"`
-	Type        string     `db:"type" gorm:"uniqueIndex:idx_report_period;index;type:varchar(16);not null"` // daily|weekly
+	Type        string     `db:"type" gorm:"uniqueIndex:idx_report_period;index;type:varchar(16);not null"`        // daily|weekly
 	PeriodDate  string     `db:"period_date" gorm:"uniqueIndex:idx_report_period;index;type:varchar(16);not null"` // YYYY-MM-DD：日报=当天，周报=本周周一
 	Title       string     `db:"title" gorm:"type:varchar(200);not null;default:''"`
 	Content     string     `db:"content" gorm:"type:text;not null"`
@@ -468,8 +468,8 @@ func (DocumentRow) TableName() string           { return "documents" }
 func (WikiPageRow) TableName() string           { return "wiki_pages" }
 func (RequirementLinkRow) TableName() string    { return "requirement_links" }
 func (AfdianOrderRow) TableName() string        { return "afdian_orders" }
-func (ReportTemplateRow) TableName() string      { return "report_templates" }
-func (ReportRow) TableName() string              { return "reports" }
+func (ReportTemplateRow) TableName() string     { return "report_templates" }
+func (ReportRow) TableName() string             { return "reports" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1020,20 +1020,20 @@ type Auth struct {
 
 // ReportItem 日报/周报条目（查询时 LEFT JOIN users 补 nick/username）。
 type ReportItem struct {
-	ID          int64    `json:"id"`
-	CompanyID   int64    `json:"companyId"`
-	UserID      int64    `json:"userId"`
-	Type        string   `json:"type"`        // daily|weekly
-	PeriodDate  string   `json:"periodDate"`  // YYYY-MM-DD
-	Title       string   `json:"title"`
-	Content     string   `json:"content"`
-	TemplateID  int64    `json:"templateId"`
-	Submitted   bool     `json:"submitted"`
-	SubmittedAt *string  `json:"submittedAt"` // null=未提交
-	CreatedAt   string   `json:"createdAt"`
-	UpdatedAt   string   `json:"updatedAt"`
-	Nick        string   `json:"nick"`
-	Username    string   `json:"username"`
+	ID          int64   `json:"id"`
+	CompanyID   int64   `json:"companyId"`
+	UserID      int64   `json:"userId"`
+	Type        string  `json:"type"`       // daily|weekly
+	PeriodDate  string  `json:"periodDate"` // YYYY-MM-DD
+	Title       string  `json:"title"`
+	Content     string  `json:"content"`
+	TemplateID  int64   `json:"templateId"`
+	Submitted   bool    `json:"submitted"`
+	SubmittedAt *string `json:"submittedAt"` // null=未提交
+	CreatedAt   string  `json:"createdAt"`
+	UpdatedAt   string  `json:"updatedAt"`
+	Nick        string  `json:"nick"`
+	Username    string  `json:"username"`
 }
 
 // ReportTemplate 报告模板（sections 为分节标题数组）。
