@@ -619,6 +619,55 @@ type Store interface {
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。
 	SaveCheckinSettings(ctx context.Context, companyID int64, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error)
+
+	// ─── 出网代理 ───
+	// CreateProxyAccount 新建账号（username 唯一、冲突由实现重试；返回完整行含 secret，仅一次性）。
+	CreateProxyAccount(ctx context.Context, companyID, createdBy int64, expiresAt time.Time, note *string) (*types.ProxyAccountRow, error)
+	// ProxyAuthLookup 按 username+secret 鉴权；返回行供调用方校验 status/expires。
+	ProxyAuthLookup(ctx context.Context, username, secret string) (*types.ProxyAccountRow, error)
+	// ListProxyAccounts 公司账号分页（视图不含 secret）。
+	ListProxyAccounts(ctx context.Context, companyID int64, page, pageSize int64) ([]types.ProxyAccountItem, int64, error)
+	// DisableProxyAccount 置 disabled（立即失效）。
+	DisableProxyAccount(ctx context.Context, id int64) error
+	// DeleteProxyAccount 物理删除。
+	DeleteProxyAccount(ctx context.Context, id int64) error
+	// SweepExpiredProxyAccounts 把已过期的 active 账号批量置 disabled，返回处置条数。
+	SweepExpiredProxyAccounts(ctx context.Context) (int64, error)
+	// ReactivateProxyAccount 续期：status=active 且 expires_at=新时间。
+	ReactivateProxyAccount(ctx context.Context, id int64, expiresAt time.Time) error
+	// GetProxyAccountByID 取账号行（含 secret，仅服务端内部用）。
+	GetProxyAccountByID(ctx context.Context, id int64) (*types.ProxyAccountRow, error)
+
+	// ─── 上网申请 ───
+	// CreateProxyAccessRequest 新建上网申请。
+	CreateProxyAccessRequest(ctx context.Context, in CreateProxyAccessRequestInput) (*types.ProxyRequestItem, error)
+	// GetProxyAccessRequestByID 按 id 取（联表补昵称）。
+	GetProxyAccessRequestByID(ctx context.Context, id int64) (*types.ProxyRequestItem, error)
+	// ListProxyAccessRequests 公司申请列表；all=true 时忽略 userID 看全部（admin），否则只看本人。
+	ListProxyAccessRequests(ctx context.Context, companyID, userID int64, all bool, status string, page, pageSize int64) ([]types.ProxyRequestItem, int64, error)
+	// UpdateProxyAccessRequest 通用状态/字段更新（approve/reject/renew 复用）。
+	UpdateProxyAccessRequest(ctx context.Context, id int64, in UpdateProxyAccessRequestInput) (*types.ProxyRequestItem, error)
+}
+
+// CreateProxyAccessRequestInput 新建上网申请。
+type CreateProxyAccessRequestInput struct {
+	CompanyID   int64
+	UserID      int64
+	Note        *string
+	ApproverIDs []int64 // 审批流快照
+	CcIDs       []int64
+}
+
+// UpdateProxyAccessRequestInput 上网申请字段更新（nil 字段不动）。
+type UpdateProxyAccessRequestInput struct {
+	Status       *string
+	AccountID    *int64
+	ApproverID   *int64
+	ApprovalNote *string
+	ApprovedAt   *time.Time
+	ExpiresAt    *time.Time
+	ApproverIDs  []int64 // 非 nil 时覆盖快照（renew 用）
+	CcIDs        []int64
 }
 
 // MemberProfileInput 是 upsertMemberProfile 的可更新字段（nil 字段沿用旧值）。

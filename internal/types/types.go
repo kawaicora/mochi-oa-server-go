@@ -504,6 +504,40 @@ type CompanyCheckinSettingsRow struct {
 	UpdatedAt    time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// ProxyAccountRow 对应 proxy_accounts 表（出网代理账号，公司隔离）。
+// username 全局唯一；secret 仅批准/创建时返回一次，列表/详情视图绝不带出。
+type ProxyAccountRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	Username  string    `db:"username" gorm:"type:varchar(64);not null;uniqueIndex"`
+	Secret    string    `db:"secret" gorm:"type:varchar(64);not null"`
+	ExpiresAt time.Time `db:"expires_at" gorm:"type:datetime(3);not null"`            // 到期自动失效
+	Status    string    `db:"status" gorm:"type:varchar(16);not null;default:active"` // active|disabled
+	Note      *string   `db:"note" gorm:"type:varchar(200)"`
+	CreatedBy int64     `db:"created_by" gorm:"index;type:bigint unsigned;not null"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
+// ProxyAccessRequestRow 对应 proxy_access_requests 表（上网申请审批）。
+// JSON 列 approver_ids/cc_ids 为创建/续期时按公司 internet 审批流的快照（type:json 可空无 default）。
+type ProxyAccessRequestRow struct {
+	ID           int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID    int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID       int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Status       string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected|renew_pending
+	Note         *string    `db:"note" gorm:"type:varchar(200)"`
+	AccountID    *int64     `db:"account_id" gorm:"index;type:bigint unsigned"` // 批准时回填
+	ApproverIDs  string     `db:"approver_ids" gorm:"type:json"`
+	CcIDs        string     `db:"cc_ids" gorm:"type:json"`
+	ApproverID   *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
+	ApprovalNote *string    `db:"approval_note" gorm:"type:text"`
+	ApprovedAt   *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
+	ExpiresAt    *time.Time `db:"expires_at" gorm:"type:datetime(3)"` // 批准时 now+30 天
+	CreatedAt    time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt    time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // ---- 表名映射：GORM 的 AutoMigrate 依赖它，查询侧仍统一用 Table("...") 显式指定。 ----
 
 func (UserRow) TableName() string                   { return "users" }
@@ -544,6 +578,8 @@ func (AttendanceRequestRow) TableName() string      { return "attendance_request
 func (ApprovalFlowRow) TableName() string           { return "approval_flows" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
+func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
+func (ProxyAccessRequestRow) TableName() string     { return "proxy_access_requests" }
 
 // ==================== 负载 struct（序列化给客户端，对应 types.ts） ====================
 
@@ -1201,4 +1237,37 @@ type CheckinSettings struct {
 	IpWhitelist  []string `json:"ipWhitelist"`
 	CreatedAt    string   `json:"createdAt"`
 	UpdatedAt    string   `json:"updatedAt"`
+}
+
+// ProxyAccountItem 代理账号列表/视图项；绝不含 secret（secret 仅批准/创建时一次性返回）。
+type ProxyAccountItem struct {
+	ID        int64   `json:"id"`
+	CompanyID int64   `json:"companyId"`
+	Username  string  `json:"username"`
+	ExpiresAt string  `json:"expiresAt"`
+	Status    string  `json:"status"`
+	Note      *string `json:"note"`
+	CreatedBy int64   `json:"createdBy"`
+	CreatedAt string  `json:"createdAt"`
+	UpdatedAt string  `json:"updatedAt"`
+}
+
+// ProxyRequestItem 上网申请（联表补申请人 nick/username）。
+type ProxyRequestItem struct {
+	ID           int64   `json:"id"`
+	CompanyID    int64   `json:"companyId"`
+	UserID       int64   `json:"userId"`
+	Nick         string  `json:"nick"`
+	Username     string  `json:"username"`
+	Status       string  `json:"status"` // pending|approved|rejected|renew_pending
+	Note         *string `json:"note"`
+	AccountID    *int64  `json:"accountId"`
+	ApproverIDs  []int64 `json:"approverIds"`
+	CcIDs        []int64 `json:"ccIds"`
+	ApproverID   *int64  `json:"approverId"`
+	ApprovalNote *string `json:"approvalNote"`
+	ApprovedAt   *string `json:"approvedAt"`
+	ExpiresAt    *string `json:"expiresAt"`
+	CreatedAt    string  `json:"createdAt"`
+	UpdatedAt    string  `json:"updatedAt"`
 }

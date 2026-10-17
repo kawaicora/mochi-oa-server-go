@@ -133,9 +133,9 @@ type ServerConfig struct {
 // ProxyConfig 是无外网员工出网代理（HTTP 隧道 + SOCKS5）配置。
 // 默认全部关闭；PROXY_ENABLED=true 时 main.go 才起代理监听（失败降级打日志继续主服务）。
 type ProxyConfig struct {
-	Enabled        bool // PROXY_ENABLED，默认 false
-	HTTPPort       int  // PROXY_HTTP_PORT，默认 1081
-	SOCKS5Port     int  // PROXY_SOCKS5_PORT，默认 1082
+	Enabled    bool // PROXY_ENABLED，默认 false
+	HTTPPort   int  // PROXY_HTTP_PORT，默认 1081
+	SOCKS5Port int  // PROXY_SOCKS5_PORT，默认 1082
 }
 
 var (
@@ -411,5 +411,11 @@ func build() *ServerConfig {
 		// 日报/周报未交提醒时刻（HH:MM，当地时间；周报仅周五触发）。
 		ReportRemindDaily:  strEnv("REPORT_REMIND_DAILY", "18:00"),
 		ReportRemindWeekly: strEnv("REPORT_REMIND_WEEKLY", "18:00"),
+		// 出网代理：默认关闭，不影响现有服务。
+		Proxy: ProxyConfig{
+			Enabled:    boolEnv("PROXY_ENABLED", false),
+			HTTPPort:   intEnv("PROXY_HTTP_PORT", 1081),
+			SOCKS5Port: intEnv("PROXY_SOCKS5_PORT", 1082),
+		},
 	}
 }
