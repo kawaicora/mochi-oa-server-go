@@ -88,7 +88,6 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.ReportTemplateRow{},
 		&types.ReportRow{},
 		&types.AttendanceRequestRow{},
-		&types.ApprovalFlowRow{},
 		&types.CheckinRow{},
 		&types.CompanyCheckinSettingsRow{},
 		&types.ProxyAccountRow{},

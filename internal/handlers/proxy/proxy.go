@@ -2,7 +2,8 @@
 //
 // 账号管理（admin/owner）：proxy:account:create / list / revoke / delete。
 // 上网申请（成员发起，审批人=申请 approverIds 内或 admin/owner）：
-//   proxy:request:create / list / get / approve / reject / renew。
+//
+//	proxy:request:create / list / get / approve / reject / renew。
 //
 // 状态机：pending(申请中) → approved(已开通,计时) → 到期账号 disabled → renew_pending(续期审批) → approved(续期)。
 package proxy
@@ -23,9 +24,6 @@ import (
 )
 
 const mod = "handlers/proxy"
-
-// 上网审批流类型。
-const flowTypeInternet = "internet"
 
 // 续期/开通默认时长。
 const accessTTL = 30 * 24 * time.Hour
@@ -177,15 +175,15 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		// secret 仅在此响应返回一次；列表/视图永不带出。
 		ack(util.OK(map[string]any{
 			"account": map[string]any{
-				"id":         row.ID,
-				"companyId":  row.CompanyID,
-				"username":   row.Username,
-				"secret":     row.Secret,
-				"expiresAt":  toIso(row.ExpiresAt),
-				"status":     row.Status,
-				"note":       row.Note,
-				"createdBy":  row.CreatedBy,
-				"createdAt":  toIso(row.CreatedAt),
+				"id":        row.ID,
+				"companyId": row.CompanyID,
+				"username":  row.Username,
+				"secret":    row.Secret,
+				"expiresAt": toIso(row.ExpiresAt),
+				"status":    row.Status,
+				"note":      row.Note,
+				"createdBy": row.CreatedBy,
+				"createdAt": toIso(row.CreatedAt),
 			},
 		}))
 	})
@@ -272,15 +270,35 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 				return
 			}
 		}
-		// 快照该公司 internet 审批流 approverIds/ccIds。
-		approverIDs, ccIDs := []int64{}, []int64{}
-		if flow, ferr := store.GetApprovalFlow(ctx, cid, flowTypeInternet); ferr != nil {
-			logger.Error(mod, "proxy:request:create 读审批流失败", "companyId", cid, "error", ferr.Error())
-			ack(util.Fail("创建失败"))
+		// 审批人/抄送人由申请人动态选择（不再读公司级预设审批流）。
+		// 逐 id 校验本公司成员；不传则 []（此时由 admin/owner 兜底审批）。
+		approverIDs, ok := idList(d, "approverIds")
+		if !ok {
+			logger.Error(mod, "proxy:request:create 审批人 id 非法", "companyId", cid)
+			ack(util.Fail("审批人不在该公司"))
 			return
-		} else if flow != nil {
-			approverIDs = flow.ApproverIDs
-			ccIDs = flow.CcIDs
+		}
+		for _, uid := range approverIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "proxy:request:create 审批人不在该公司", "companyId", cid, "userId", uid, "error", errMsg(err))
+				ack(util.Fail("审批人不在该公司"))
+				return
+			}
+		}
+		ccIDs, ok := idList(d, "ccIds")
+		if !ok {
+			logger.Error(mod, "proxy:request:create 抄送人 id 非法", "companyId", cid)
+			ack(util.Fail("抄送人不在该公司"))
+			return
+		}
+		for _, uid := range ccIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "proxy:request:create 抄送人不在该公司", "companyId", cid, "userId", uid, "error", errMsg(err))
+				ack(util.Fail("抄送人不在该公司"))
+				return
+			}
 		}
 		req, err := store.CreateProxyAccessRequest(ctx, db.CreateProxyAccessRequestInput{
 			CompanyID:   cid,
@@ -537,11 +555,34 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("账号未到期，无需延期"))
 			return
 		}
-		// 覆盖快照为当前 internet 审批流。
-		approverIDs, ccIDs := []int64{}, []int64{}
-		if flow, ferr := store.GetApprovalFlow(ctx, cid, flowTypeInternet); ferr == nil && flow != nil {
-			approverIDs = flow.ApproverIDs
-			ccIDs = flow.CcIDs
+		// 续期时由申请人重新动态选择审批人/抄送人（不传则沿用空，admin 兜底）。
+		approverIDs, ok := idList(d, "approverIds")
+		if !ok {
+			logger.Error(mod, "proxy:request:renew 审批人 id 非法", "companyId", cid)
+			ack(util.Fail("审批人不在该公司"))
+			return
+		}
+		for _, uid := range approverIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "proxy:request:renew 审批人不在该公司", "companyId", cid, "userId", uid, "error", errMsg(err))
+				ack(util.Fail("审批人不在该公司"))
+				return
+			}
+		}
+		ccIDs, ok := idList(d, "ccIds")
+		if !ok {
+			logger.Error(mod, "proxy:request:renew 抄送人 id 非法", "companyId", cid)
+			ack(util.Fail("抄送人不在该公司"))
+			return
+		}
+		for _, uid := range ccIDs {
+			role, err := store.GetMemberRole(context.Background(), cid, uid)
+			if err != nil || role == "" {
+				logger.Error(mod, "proxy:request:renew 抄送人不在该公司", "companyId", cid, "userId", uid, "error", errMsg(err))
+				ack(util.Fail("抄送人不在该公司"))
+				return
+			}
 		}
 		st := "renew_pending"
 		updated, uerr := store.UpdateProxyAccessRequest(ctx, id, db.UpdateProxyAccessRequestInput{
@@ -592,3 +633,32 @@ func parseFlexTime(s string) (time.Time, error) {
 
 // toIso UTC → "2006-01-02T15:04:05.000Z"（与 db 包同口径）。
 func toIso(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
+
+// idList 从 payload 取 number[] 并转 []int64；缺失返回空切片（合法），元素非法返回 false。
+func idList(d map[string]any, key string) ([]int64, bool) {
+	v, present := d[key]
+	if !present || v == nil {
+		return []int64{}, true
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := []int64{}
+	for _, e := range arr {
+		n, ok := toInt64(e)
+		if !ok || n <= 0 {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+// errMsg 安全取错误文本（nil → ""）。
+func errMsg(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

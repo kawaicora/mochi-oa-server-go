@@ -466,19 +466,6 @@ type AttendanceRequestRow struct {
 	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
-// ApprovalFlowRow 对应 approval_flows 表（公司级审批流配置，按申请类型配置审批人/抄送人）。
-// 联合唯一 (company_id, type)：每公司每类型一条配置。
-type ApprovalFlowRow struct {
-	ID          int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
-	CompanyID   int64     `db:"company_id" gorm:"uniqueIndex:idx_approval_flow;index;type:bigint unsigned;not null"`
-	Type        string    `db:"type" gorm:"uniqueIndex:idx_approval_flow;type:varchar(32);not null"` // leave|make_up|comp_time|overtime|expense
-	ApproverIDs string    `db:"approver_ids" gorm:"type:json"`                                       // JSON 数组字符串，可空无 default
-	CcIDs       string    `db:"cc_ids" gorm:"type:json"`
-	CreatedBy   int64     `db:"created_by" gorm:"index;type:bigint unsigned;not null"`
-	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
-	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
-}
-
 // CheckinRow 对应 checkins 表（打卡记录，公司隔离）。无唯一约束：一天可多次打卡，
 // 前端用当天 count>=2 判断「上下班正常」。
 type CheckinRow struct {
@@ -601,7 +588,6 @@ func (AfdianOrderRow) TableName() string            { return "afdian_orders" }
 func (ReportTemplateRow) TableName() string         { return "report_templates" }
 func (ReportRow) TableName() string                 { return "reports" }
 func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
-func (ApprovalFlowRow) TableName() string           { return "approval_flows" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
@@ -1220,18 +1206,6 @@ type AttendanceRequest struct {
 	UpdatedAt     string   `json:"updatedAt"`
 	Nick          string   `json:"nick"`
 	Username      string   `json:"username"`
-}
-
-// ApprovalFlow 公司级审批流配置（按申请类型）。
-type ApprovalFlow struct {
-	ID          int64   `json:"id"`
-	CompanyID   int64   `json:"companyId"`
-	Type        string  `json:"type"`
-	ApproverIDs []int64 `json:"approverIds"`
-	CcIDs       []int64 `json:"ccIds"`
-	CreatedBy   int64   `json:"createdBy"`
-	CreatedAt   string  `json:"createdAt"`
-	UpdatedAt   string  `json:"updatedAt"`
 }
 
 // CheckinItem 单条打卡记录（联表补发起人 nick/username）。

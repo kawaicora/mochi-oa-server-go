@@ -602,14 +602,6 @@ type Store interface {
 	// RejectAttendanceRequest 置 rejected：approvalNote=驳回理由。
 	RejectAttendanceRequest(ctx context.Context, id int64, note string) (*types.AttendanceRequest, error)
 
-	// ─── 公司级审批流配置 ───
-	// GetApprovalFlow 取某公司某类型配置；未配置返回 (nil, nil)。
-	GetApprovalFlow(ctx context.Context, companyID int64, typ string) (*types.ApprovalFlow, error)
-	// SaveApprovalFlow 按 (companyID,type) upsert 审批人/抄送人。
-	SaveApprovalFlow(ctx context.Context, companyID int64, typ string, approverIDs, ccIDs []int64, createdBy int64) (*types.ApprovalFlow, error)
-	// ListApprovalFlows 列公司全部审批流配置。
-	ListApprovalFlows(ctx context.Context, companyID int64) ([]types.ApprovalFlow, error)
-
 	// ─── 打卡 ───
 	// CreateCheckin 写入一条打卡记录。
 	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, error)

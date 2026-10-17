@@ -35,4 +35,4 @@ curl --socks5 用户名:密钥@127.0.0.1:1082 https://example.com
 账号管理：`proxy:account:create / list / revoke / delete`。
 上网申请审批：`proxy:request:create / list / get / approve / reject / renew`。
 `secret` 仅在创建/批准/本人 get(approved) 时一次性返回，列表视图永不带出。
-审批流类型用 `internet`（与考勤的 leave/make_up/comp_time 同一套 `approval_flows` 配置）。
+审批人/抄送人由申请人发起上网申请时动态选择（approverIds/ccIds，须为本公司成员）；不传则由 admin/owner 兜底审批。
