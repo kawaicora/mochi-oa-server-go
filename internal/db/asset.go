@@ -32,7 +32,8 @@ func (s *MySqlStore) nextAssetCode(ctx context.Context, companyID int64) (string
 	err := s.gorm.WithContext(ctx).Table("assets").
 		Where("company_id = ?", companyID).
 		Where("code LIKE ?", prefix+"-%").
-		Select("COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0)", len(prefix)+1).
+		// MySQL SUBSTRING 1 起：code="AS20261017-001"，prefix 长 10，序号从第 12 位起（跳过 "-"）。
+		Select("COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0)", len(prefix)+2).
 		Scan(&maxSeq).Error
 	if err != nil {
 		return "", err

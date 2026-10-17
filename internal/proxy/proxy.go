@@ -69,9 +69,9 @@ func (s *Server) auth(username, secret string, clientAddr string) (bool, string)
 // Start 起 HTTP 代理、SOCKS5 监听与 sweep。任一监听失败打日志并继续（降级）。
 func (s *Server) Start() {
 	// ── HTTP 代理 ──
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.httpHandler)
-	s.httpSrv = &http.Server{Addr: ":" + strconv.Itoa(s.httpPort), Handler: mux}
+	// 直接挂自定义 Handler（不走 ServeMux）：Go 1.22+ ServeMux 对 CONNECT 的 path 是 "host:port"，
+	// "/" 模式匹配不到会 404。这里让所有请求（含 CONNECT）一律进 httpHandler，由它分流隧道/转发。
+	s.httpSrv = &http.Server{Addr: ":" + strconv.Itoa(s.httpPort), Handler: http.HandlerFunc(s.httpHandler)}
 	go func() {
 		logger.Info(mod, "HTTP 代理监听", "port", s.httpPort)
 		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

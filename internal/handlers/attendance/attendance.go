@@ -163,8 +163,14 @@ func parseTimePtr(m map[string]any, key string) (*time.Time, bool) {
 }
 
 // idList 从 payload 取 []int64（用于 approverIds/ccIds）；非法元素返回 false。
+// idList 取 number[]。key 缺失或为 null → 返回空切片（合法，默认 []）；
+// key 存在但类型非法或含非法元素 → 返回 false（由 handler 按字段报对应错误）。
 func idList(m map[string]any, key string) ([]int64, bool) {
-	arr, ok := m[key].([]any)
+	v, present := m[key]
+	if !present || v == nil {
+		return []int64{}, true
+	}
+	arr, ok := v.([]any)
 	if !ok {
 		return nil, false
 	}
