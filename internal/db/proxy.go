@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"mochi-oa-server-go/internal/types"
@@ -257,11 +258,13 @@ func (s *MySqlStore) GetProxyAccessRequestByID(ctx context.Context, id int64) (*
 	return &out, nil
 }
 
-// ListProxyAccessRequests 公司申请列表；all=true 看全部（admin），否则只看本人。
+// ListProxyAccessRequests 公司申请列表；all=true 看全部（admin），否则看本人提交 + 本人为审批人的待审。
 func (s *MySqlStore) ListProxyAccessRequests(ctx context.Context, companyID, userID int64, all bool, status string, page, pageSize int64) ([]types.ProxyRequestItem, int64, error) {
+	approverJSON := strconv.FormatInt(userID, 10)
 	q := s.gorm.WithContext(ctx).Table("proxy_access_requests r").Where("r.company_id = ?", companyID)
 	if !all {
-		q = q.Where("r.user_id = ?", userID)
+		// 本人提交的申请，或本人被选为审批人（含审批人=申请人本人的场景）。
+		q = q.Where("(r.user_id = ? OR JSON_CONTAINS(r.approver_ids, ?))", userID, approverJSON)
 	}
 	if status != "" {
 		q = q.Where("r.status = ?", status)
@@ -285,7 +288,7 @@ func (s *MySqlStore) ListProxyAccessRequests(ctx context.Context, companyID, use
 		Select(proxyReqSelect).
 		Where("r.company_id = ?", companyID)
 	if !all {
-		listQ = listQ.Where("r.user_id = ?", userID)
+		listQ = listQ.Where("(r.user_id = ? OR JSON_CONTAINS(r.approver_ids, ?))", userID, approverJSON)
 	}
 	if status != "" {
 		listQ = listQ.Where("r.status = ?", status)

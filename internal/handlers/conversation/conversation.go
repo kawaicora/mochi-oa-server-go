@@ -162,7 +162,8 @@ func decorateMsg(cfg *config.ServerConfig, msg *types.ChatMessage) {
 	if cfg.File.UseRelativeURL {
 		return
 	}
-	if msg.Kind != "text" && msg.Kind != "folder" && msg.Content != "" {
+	// proxy_card 等卡片类消息 content 为业务 JSON，原样透传，不做文件 URL 改写。
+	if msg.Kind != "text" && msg.Kind != "folder" && msg.Kind != "proxy_card" && msg.Content != "" {
 		msg.Content = pubUrl(cfg, msg.Content)
 	}
 	if msg.Avatar != "" {
@@ -178,7 +179,7 @@ func isText(v string) bool {
 // isKind 校验消息种类。
 func isKind(v string) bool {
 	switch v {
-	case "text", "image", "file", "video", "audio", "folder":
+	case "text", "image", "file", "video", "audio", "folder", "proxy_card":
 		return true
 	}
 	return false
@@ -280,6 +281,8 @@ func previewOf(kind string, content string) string {
 		return "[音频]"
 	case "folder":
 		return "[文件夹]"
+	case "proxy_card":
+		return "[上网申请]"
 	default:
 		return "[文件]"
 	}

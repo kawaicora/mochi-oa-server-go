@@ -336,6 +336,20 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("创建失败"))
 			return
 		}
+		// 推送通知：申请成功 → 审批人全量 + 抄送人（公司通知类，NotifKind=company）。
+		noteSum := ""
+		if req.Note != nil {
+			noteSum = *req.Note
+		}
+		notifyUsers := append([]int64{}, approverIDs...)
+		notifyUsers = append(notifyUsers, ccIDs...)
+		for _, uid := range notifyUsers {
+			_ = srv.EmitTo(util.UserRoom(uid), "proxy:request:notification", map[string]any{
+				"kind": "company", "type": "proxy_request_created", "companyId": cid,
+				"requestId": req.ID, "title": "上网申请", "body": "您有一条待审批的上网申请",
+				"byUserId": a.ID, "byNick": req.Nick, "note": noteSum,
+			})
+		}
 		ack(util.OK(map[string]any{"request": req}))
 	})
 
@@ -456,6 +470,12 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 				ack(util.Fail("审批失败"))
 				return
 			}
+			_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
+				"kind": "company", "type": "proxy_request_approved", "companyId": cid,
+				"requestId": id, "title": "上网申请已通过",
+				"body": "您的上网申请已通过，可在详情查看账号",
+				"account": map[string]any{"id": acc.ID, "username": acc.Username, "expiresAt": toIso(acc.ExpiresAt)},
+			})
 			ack(util.OK(map[string]any{
 				"request": updated,
 				"account": map[string]any{
@@ -488,6 +508,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("审批失败"))
 			return
 		}
+		_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
+			"kind": "company", "type": "proxy_request_approved", "companyId": cid,
+			"requestId": id, "title": "上网申请已通过",
+			"body": "您的上网申请已通过，可在详情查看账号",
+		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
 
@@ -535,6 +560,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
+			"kind": "company", "type": "proxy_request_rejected", "companyId": cid,
+			"requestId": id, "title": "上网申请被拒绝",
+			"body": "您的上网申请被拒绝", "note": note,
+		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
 
