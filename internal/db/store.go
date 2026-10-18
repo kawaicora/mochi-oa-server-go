@@ -603,8 +603,8 @@ type Store interface {
 	RejectAttendanceRequest(ctx context.Context, id int64, note string) (*types.AttendanceRequest, error)
 
 	// ─── 打卡 ───
-	// CreateCheckin 写入一条打卡记录。
-	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, error)
+	// CreateCheckin 写入/更新当天打卡：0条→INSERT(first)；1条→INSERT(second)；≥2条→UPDATE 当天最后一条 check_time(override，不新增行)。返回 item 与 kind(first/second/override)。
+	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error)
 	// ListCheckinsByMonth 本人某月全部记录（check_date=月份前缀），联表补昵称。
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。

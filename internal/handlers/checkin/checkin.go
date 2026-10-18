@@ -258,14 +258,14 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		if mac != "" {
 			macPtr = &mac
 		}
-		item, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr)
+		item, kind, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr)
 		if err != nil {
 			logger.Error(mod, "checkin:create 写入失败", "companyId", cid, "userId", a.ID, "error", err.Error())
 			ack(util.Fail("打卡失败"))
 			return
 		}
-		logger.Info(mod, "checkin:create 成功", "companyId", cid, "userId", a.ID, "date", checkDate, "ip", ip, "mac", mac)
-		ack(util.OK(map[string]any{"checkin": item}))
+		logger.Info(mod, "checkin:create 成功", "kind", kind, "companyId", cid, "userId", a.ID, "date", checkDate, "ip", ip, "mac", mac)
+		ack(util.OK(map[string]any{"checkin": item, "kind": kind}))
 	})
 
 	// ---- checkin:list：本人某月，按天分组（date 倒序、组内 check_time 升序） ----

@@ -72,9 +72,46 @@ func decodeStrings(s string) []string {
 	return out
 }
 
-// CreateCheckin 写入一条打卡记录。
-func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, error) {
+// CreateCheckin 一天打卡规则（事务内计数+写，打卡并发低不加悲观锁）：
+//   - 当天 0 条 → INSERT（第1次=上班时间），kind=first；
+//   - 当天 1 条 → INSERT（第2次=下班时间），kind=second；
+//   - 当天 ≥2 条 → UPDATE 当天 check_time 升序最后一条的 check_time=now（覆盖下班时间，不新增行），kind=override。
+func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error) {
 	now := time.Now().UTC()
+	tx := s.gorm.WithContext(ctx).Begin()
+
+	// 数当天已有记录条数。
+	var cnt int64
+	if err := tx.Table("checkins").Where("company_id = ? AND user_id = ? AND check_date = ?", companyID, userID, checkDate).Count(&cnt).Error; err != nil {
+		tx.Rollback()
+		return nil, "", err
+	}
+
+	// ≥2 条：覆盖当天最后一条（check_time 升序最后一条=最近一次下班时间）。
+	if cnt >= 2 {
+		var last types.CheckinRow
+		err := tx.Table("checkins").
+			Where("company_id = ? AND user_id = ? AND check_date = ?", companyID, userID, checkDate).
+			Order("check_time DESC").Order("id DESC").
+			Take(&last).Error
+		if err != nil {
+			tx.Rollback()
+			return nil, "", err
+		}
+		res := tx.Table("checkins").Where("id = ?", last.ID).
+			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac})
+		if res.Error != nil {
+			tx.Rollback()
+			return nil, "", res.Error
+		}
+		if err := tx.Commit().Error; err != nil {
+			return nil, "", err
+		}
+		item, err := s.getCheckinByID(ctx, last.ID)
+		return item, "override", err
+	}
+
+	// 0 或 1 条：INSERT 新记录。
 	row := types.CheckinRow{
 		CompanyID: companyID,
 		UserID:    userID,
@@ -84,10 +121,19 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		MAC:       mac,
 		CreatedAt: now,
 	}
-	if err := s.gorm.WithContext(ctx).Table("checkins").Create(&row).Error; err != nil {
-		return nil, err
+	if err := tx.Table("checkins").Create(&row).Error; err != nil {
+		tx.Rollback()
+		return nil, "", err
 	}
-	return s.getCheckinByID(ctx, row.ID)
+	if err := tx.Commit().Error; err != nil {
+		return nil, "", err
+	}
+	kind := "first"
+	if cnt == 1 {
+		kind = "second"
+	}
+	item, err := s.getCheckinByID(ctx, row.ID)
+	return item, kind, err
 }
 
 // getCheckinByID 按 id 取单条。
