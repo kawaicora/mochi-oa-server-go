@@ -53,9 +53,9 @@ type chatSendReq struct {
 }
 
 type chatHistoryReq struct {
-	GroupID  *int64  `json:"groupId"`
-	BeforeTs *int64  `json:"beforeTs"`
-	Limit    *int64  `json:"limit"`
+	GroupID  *int64 `json:"groupId"`
+	BeforeTs *int64 `json:"beforeTs"`
+	Limit    *int64 `json:"limit"`
 }
 
 type dmSendReq struct {
@@ -76,8 +76,8 @@ type conversationListReq struct {
 }
 
 type conversationPinReq struct {
-	ConversationID *int64  `json:"conversationId"`
-	Pinned         *bool   `json:"pinned"`
+	ConversationID *int64 `json:"conversationId"`
+	Pinned         *bool  `json:"pinned"`
 }
 
 type conversationReadReq struct {
@@ -1011,4 +1011,3 @@ func Register(c Ctx) {
 		return nil
 	})
 }
-

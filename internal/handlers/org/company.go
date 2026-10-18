@@ -1072,7 +1072,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 					}
 					t = t2
 				}
-				s := t.UTC().Format(time.RFC3339)
+				s := util.LocalTimeFormat(t)
 				expiresAt = &s
 			}
 		}

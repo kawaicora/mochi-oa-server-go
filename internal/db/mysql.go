@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -91,12 +92,28 @@ func (s *MySqlStore) Close(_ context.Context) error {
 
 // ---- 转换辅助 ----
 
-// toIso 把 time.Time 转 UTC ISO 字符串（对齐 JS d.toISOString()）。零值返回空串。
+// localTZ 对外返回时间的业务本地时区：统一输出 +偏移格式（无 Z 后缀），避免客户端按 UTC 显示。
+// 可用 TIMEZONE 环境变量覆盖，缺省 Asia/Shanghai。存储层仍为 UTC，此处仅展示层转换。
+var localTZ = mustLocalTZ()
+
+func mustLocalTZ() *time.Location {
+	name := os.Getenv("TIMEZONE")
+	if name == "" {
+		name = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		loc = time.Local
+	}
+	return loc
+}
+
+// toIso 把 time.Time 转业务本地时区可解析字符串（带 +08:00 偏移、无 Z 后缀）。零值返回空串。
 func toIso(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+	return t.In(localTZ).Format("2006-01-02T15:04:05.000+08:00")
 }
 
 // isoPtr 把可空时间转可空 ISO 字符串。

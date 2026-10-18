@@ -3,9 +3,35 @@
 package util
 
 import (
-	"math/rand"
 	"fmt"
+	"math/rand"
+	"os"
+	"time"
 )
+
+// LocalTZ 对外返回时间的业务本地时区：统一输出带偏移格式、无 Z 后缀，避免客户端按 UTC 显示。
+// 可用 TIMEZONE 环境变量覆盖，缺省 Asia/Shanghai。存储层仍为 UTC，此处仅展示层转换。
+var LocalTZ = mustLocalTZ()
+
+func mustLocalTZ() *time.Location {
+	name := os.Getenv("TIMEZONE")
+	if name == "" {
+		name = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		loc = time.Local
+	}
+	return loc
+}
+
+// LocalTimeFormat 把 time.Time 转为本地可解析字符串（+08:00 偏移、无 Z）。
+func LocalTimeFormat(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(LocalTZ).Format("2006-01-02T15:04:05.000+08:00")
+}
 
 // joinCodeChars 是加入码字符集（去掉易混淆的 I/O/0/1，对齐源码）。
 const joinCodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

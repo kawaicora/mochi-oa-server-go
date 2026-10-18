@@ -458,7 +458,7 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 		}
 		var mutedUntil *string
 		if seconds > 0 {
-			t := time.Now().Add(time.Duration(seconds * float64(time.Second))).UTC().Format(time.RFC3339Nano)
+			t := util.LocalTimeFormat(time.Now().Add(time.Duration(seconds * float64(time.Second))))
 			mutedUntil = &t
 		}
 		_ = store.SetGroupMemberMuted(ctx, gid, uid, mutedUntil)

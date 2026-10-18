@@ -30,13 +30,13 @@ func isPassword(v any) bool {
 
 // csvRow 是解析后的一行 CSV 数据。
 type csvRow struct {
-	company      string
-	companyCode  string
-	department   string
-	username     string
-	password     string
-	nick         string
-	role         string
+	company     string
+	companyCode string
+	department  string
+	username    string
+	password    string
+	nick        string
+	role        string
 }
 
 // parseCsv 简易 CSV 解析：支持引号包裹、逗号内逗号、BOM、CRLF。
@@ -109,8 +109,8 @@ func parseCsv(text string) []csvRow {
 	}
 
 	type aliasPair struct {
-		key    string
-		names  []string
+		key   string
+		names []string
 	}
 	aliases := []aliasPair{
 		{"company", []string{"company", "company_name", "公司", "组织", "组织名"}},
@@ -222,7 +222,7 @@ func RegisterOrgHandlers(srv socketapi.Server) {
 		result := importResult{Ok: true, Errors: []string{}}
 
 		companyCache := map[string]int64{} // code → companyId
-		deptCache := map[string]int64{}   // "companyId:deptName" → deptId
+		deptCache := map[string]int64{}    // "companyId:deptName" → deptId
 
 		for idx, r := range rows {
 			companyName := strings.TrimSpace(r.company)

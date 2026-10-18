@@ -51,10 +51,10 @@ const logMod = "handlers/auth"
 
 // 连接态约定键（见文件头）。
 const (
-	keyAuth            = "auth"
+	keyAuth             = "auth"
 	keyHandshakeHeaders = "handshakeHeaders"
-	keyRemoteAddr      = "remoteAddr"
-	keyHandshakeDevice = "handshakeDevice"
+	keyRemoteAddr       = "remoteAddr"
+	keyHandshakeDevice  = "handshakeDevice"
 )
 
 // RegisterAuth 注册全部认证事件。ctx 参数对应 TS 的 {io, store, config, mailer}。
@@ -185,9 +185,9 @@ func numField(m map[string]any, k string) (float64, bool) {
 var reUsername = regexp.MustCompile(`^[A-Za-z0-9_\-.]{3,32}$`)
 
 func isUsername(v string) bool { return reUsername.MatchString(v) }
-func isPassword(v string) bool  { return len(v) >= 6 && len(v) <= 128 }
-func isNick(v string) bool      { return len(v) <= 32 }
-func isEmail(v string) bool     { return len(v) <= 128 }
+func isPassword(v string) bool { return len(v) >= 6 && len(v) <= 128 }
+func isNick(v string) bool     { return len(v) <= 32 }
+func isEmail(v string) bool    { return len(v) <= 128 }
 
 var reEmailStrict = regexp.MustCompile(`.+@.+\..+`)
 
@@ -310,9 +310,9 @@ var reDuration = regexp.MustCompile(`^(\d+)([smhdw])$`)
 func (h *handler) sessionExpiry(ctx context.Context, userID int64) string {
 	days, err := h.store.GetSessionDays(ctx, userID)
 	if err == nil && days != nil && *days > 0 {
-		return time.Now().AddDate(0, 0, int(*days)).UTC().Format("2006-01-02T15:04:05.000Z")
+		return util.LocalTimeFormat(time.Now().AddDate(0, 0, int(*days)))
 	}
-	return time.Now().Add(time.Duration(parseDurationMs(h.cfg.JWTExpiresIn)) * time.Millisecond).UTC().Format("2006-01-02T15:04:05.000Z")
+	return util.LocalTimeFormat(time.Now().Add(time.Duration(parseDurationMs(h.cfg.JWTExpiresIn)) * time.Millisecond))
 }
 
 // deviceLabel 设备标识：登录参数 → 握手 auth.device → 兜底「未知设备」。
@@ -500,7 +500,7 @@ func (h *handler) notifyOtherSessions(ctx context.Context, userID int64, newSess
 		logger.Warn(logMod, "拉取会话列表失败，跳过新设备通知", "userID", userID, "error", err.Error())
 		return
 	}
-	at := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	at := util.LocalTimeFormat(time.Now())
 	for i := range others {
 		o := &others[i]
 		if o.ID == newSessionID {
@@ -537,7 +537,7 @@ func (h *handler) revokeSession(ctx context.Context, sessionID int64, device, re
 	if err := h.store.DeleteSession(ctx, sessionID); err != nil {
 		logger.Warn(logMod, "删除会话失败", "sessionID", sessionID, "error", err.Error())
 	}
-	at := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	at := util.LocalTimeFormat(time.Now())
 	_ = h.s.EmitTo(util.SessionRoom(sessionID), "auth:sessionRevoked", map[string]any{
 		"sessionId": sessionID,
 		"reason":    reason,
@@ -953,9 +953,9 @@ func (h *handler) onMe(c socketapi.Conn, _ json.RawMessage, ack socketapi.Ack) {
 		sessionOut = nil
 	}
 	ack(util.OK(map[string]any{
-		"user":       userView(user),
-		"companies":  companies,
-		"session":    sessionOut,
+		"user":        userView(user),
+		"companies":   companies,
+		"session":     sessionOut,
 		"serverAdmin": isServerAdmin(a, h.cfg),
 	}))
 }

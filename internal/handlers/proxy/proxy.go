@@ -655,8 +655,8 @@ func parseFlexTime(s string) (time.Time, error) {
 	return t.UTC(), err
 }
 
-// toIso UTC → "2006-01-02T15:04:05.000Z"（与 db 包同口径）。
-func toIso(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
+// toIso 转业务本地时区可解析字符串（+08:00 偏移、无 Z，与 db/util 同口径）。
+func toIso(t time.Time) string { return util.LocalTimeFormat(t) }
 
 // idList 从 payload 取 number[] 并转 []int64；缺失返回空切片（合法），元素非法返回 false。
 func idList(d map[string]any, key string) ([]int64, bool) {
