@@ -197,6 +197,7 @@ type proxyReqScanRow struct {
 	UpdatedAt    time.Time  `gorm:"column:updated_at"`
 	Username     string     `gorm:"column:username"`
 	Nick         string     `gorm:"column:nick"`
+	NotifyStopped bool     `gorm:"column:notify_stopped"`
 }
 
 func scanRowToProxyReq(r proxyReqScanRow) types.ProxyRequestItem {
@@ -217,10 +218,11 @@ func scanRowToProxyReq(r proxyReqScanRow) types.ProxyRequestItem {
 		ExpiresAt:    isoPtr(r.ExpiresAt),
 		CreatedAt:    toIso(r.CreatedAt),
 		UpdatedAt:    toIso(r.UpdatedAt),
+		NotifyStopped: r.NotifyStopped,
 	}
 }
 
-const proxyReqSelect = "r.id, r.company_id, r.user_id, r.status, r.note, r.account_id, r.approver_ids, r.cc_ids, r.approver_id, r.approval_note, r.approved_at, r.expires_at, r.created_at, r.updated_at, u.username, u.nick"
+const proxyReqSelect = "r.id, r.company_id, r.user_id, r.status, r.note, r.account_id, r.approver_ids, r.cc_ids, r.approver_id, r.approval_note, r.approved_at, r.expires_at, r.created_at, r.updated_at, r.notify_stopped, u.username, u.nick"
 
 // CreateProxyAccessRequest 新建上网申请。
 func (s *MySqlStore) CreateProxyAccessRequest(ctx context.Context, in CreateProxyAccessRequestInput) (*types.ProxyRequestItem, error) {
@@ -340,4 +342,12 @@ func (s *MySqlStore) UpdateProxyAccessRequest(ctx context.Context, id int64, in 
 		return nil, &NotFoundError{Msg: "proxy access request not found"}
 	}
 	return s.GetProxyAccessRequestByID(ctx, id)
+}
+
+// StopProxyNotification 幂等置 notify_stopped=1（申请人或审批人主动停止循环提醒）。
+func (s *MySqlStore) StopProxyNotification(ctx context.Context, id int64, companyID int64) error {
+	return s.gorm.WithContext(ctx).
+		Table("proxy_access_requests").
+		Where("id = ? AND company_id = ?", id, companyID).
+		Update("notify_stopped", 1).Error
 }

@@ -1238,6 +1238,7 @@ type AttendanceRequest struct {
 	UpdatedAt     string   `json:"updatedAt"`
 	Nick          string   `json:"nick"`
 	Username      string   `json:"username"`
+	NotifyStopped bool     `json:"notifyStopped"` // 业务通知循环提醒已停止
 }
 
 // CheckinItem 单条打卡记录（联表补发起人 nick/username）。
@@ -1306,6 +1307,8 @@ type ProxyRequestItem struct {
 	UpdatedAt    string  `json:"updatedAt"`
 	// Account 嵌套账号连接信息（approved 且有账号时；否则 null）。list 不带 password；get(本人)才带。
 	Account *ProxyAccountView `json:"account"`
+	// NotifyStopped 业务通知循环提醒已停止（处理或用户主动停止后 true）。
+	NotifyStopped bool `json:"notifyStopped"`
 }
 
 // ProxyAccountView 出网账号连接视图（供客户端 SetProxy）。

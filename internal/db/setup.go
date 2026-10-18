@@ -115,5 +115,12 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 	if err := s.gorm.WithContext(ctx).Exec(addColSQL).Error; err != nil {
 		logger.Info("db", "补 attendance_requests.cc_viewed_ids 跳过（可能已存在）", "error", err.Error())
 	}
+	// notify_stopped：业务通知循环提醒停止标记（审批/申请处理或用户主动停止后 true，不再每小时重弹）。
+	for _, tbl := range []string{"attendance_requests", "proxy_access_requests"} {
+		sql := "ALTER TABLE " + tbl + " ADD COLUMN notify_stopped TINYINT NOT NULL DEFAULT 0"
+		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {
+			logger.Info("db", "补 "+tbl+".notify_stopped 跳过（可能已存在）", "error", err.Error())
+		}
+	}
 	return nil
 }

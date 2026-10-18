@@ -455,6 +455,44 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		ack(util.OK(map[string]any{"ok": true}))
 	})
 
+	// ---- attendance:request:notification:stop：申请人或审批人主动停止循环提醒（幂等）----
+	srv.On("attendance:request:notification:stop", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		id, ok := toInt64(d["requestId"])
+		if !ok || id <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		req, err := store.GetAttendanceRequestByID(ctx, id)
+		if err != nil || req == nil || req.CompanyID != cid {
+			logger.Warn(mod, "attendance:request:notification:stop 申请不存在", "id", id, "error", err)
+			ack(util.Fail("申请不存在"))
+			return
+		}
+		isSelf := req.UserID == a.ID
+		isApprover := false
+		for _, v := range req.ApproverIDs {
+			if v == a.ID {
+				isApprover = true
+				break
+			}
+		}
+		if !isSelf && !isApprover {
+			ack(util.Fail("无权操作该申请"))
+			return
+		}
+		if err := store.StopAttendanceNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "attendance:request:notification:stop 失败", "id", id, "error", err.Error())
+			ack(util.Fail("停止提醒失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"ok": true, "notifyStopped": true}))
+	})
+
 	// ---- attendance:approve ----
 	srv.On("attendance:approve", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		d := parseData(data)

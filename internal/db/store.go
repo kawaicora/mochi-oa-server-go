@@ -607,6 +607,8 @@ type Store interface {
 	ListReceivedCC(ctx context.Context, companyID, userID int64) ([]types.AttendanceRequest, error)
 	// MarkCCViewed 把 userID 加入 cc_viewed_ids（幂等）。
 	MarkCCViewed(ctx context.Context, requestID, userID int64) error
+	// StopAttendanceNotification 置 notify_stopped=1（循环提醒停止，幂等）。
+	StopAttendanceNotification(ctx context.Context, requestID, companyID int64) error
 
 	// ─── 打卡 ───
 	// CreateCheckin 写入/更新当天打卡：0条→INSERT(first)；1条→INSERT(second)；≥2条→UPDATE 当天最后一条 check_time(override，不新增行)。返回 item 与 kind(first/second/override)。
@@ -650,6 +652,8 @@ type Store interface {
 	ListProxyAccessRequests(ctx context.Context, companyID, userID int64, all bool, status string, page, pageSize int64) ([]types.ProxyRequestItem, int64, error)
 	// UpdateProxyAccessRequest 通用状态/字段更新（approve/reject/renew 复用）。
 	UpdateProxyAccessRequest(ctx context.Context, id int64, in UpdateProxyAccessRequestInput) (*types.ProxyRequestItem, error)
+	// StopProxyNotification 置 notify_stopped=1（循环提醒停止，幂等）。
+	StopProxyNotification(ctx context.Context, id, companyID int64) error
 
 	// ─── 资产管理 ───
 	CreateAsset(ctx context.Context, in CreateAssetInput) (*types.AssetItem, error)

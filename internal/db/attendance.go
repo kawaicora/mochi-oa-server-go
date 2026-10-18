@@ -38,6 +38,7 @@ type attendanceScanRow struct {
 	UpdatedAt     time.Time  `gorm:"column:updated_at"`
 	Username      string     `gorm:"column:username"`
 	Nick          string     `gorm:"column:nick"`
+	NotifyStopped bool       `gorm:"column:notify_stopped"`
 }
 
 // attendanceBaseQuery 带 LEFT JOIN users 的基础查询。
@@ -71,11 +72,12 @@ func scanRowToAttendance(r attendanceScanRow) types.AttendanceRequest {
 		UpdatedAt:     toIso(r.UpdatedAt),
 		Nick:          r.Nick,
 		Username:      r.Username,
+		NotifyStopped: r.NotifyStopped,
 	}
 }
 
 // attendanceSelect 联表查询统一列清单（含 approver_ids/cc_ids）。
-const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.cc_viewed_ids, r.created_at, r.updated_at, u.username, u.nick"
+const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.cc_viewed_ids, r.notify_stopped, r.created_at, r.updated_at, u.username, u.nick"
 
 // CreateAttendanceRequest 发起考勤申请；审批人/抄送人由调用方按流程快照传入。
 func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
@@ -280,4 +282,12 @@ func (s *MySqlStore) MarkCCViewed(ctx context.Context, requestID, userID int64) 
 			"cc_viewed_ids": encodeRecipients(existing),
 			"updated_at":    time.Now().UTC(),
 		}).Error
+}
+
+// StopAttendanceNotification 幂等置 notify_stopped=1（申请人或审批人主动停止循环提醒）。
+func (s *MySqlStore) StopAttendanceNotification(ctx context.Context, requestID int64, companyID int64) error {
+	return s.gorm.WithContext(ctx).
+		Table("attendance_requests").
+		Where("id = ? AND company_id = ?", requestID, companyID).
+		Update("notify_stopped", 1).Error
 }

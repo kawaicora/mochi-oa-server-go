@@ -29,7 +29,9 @@ const mod = "handlers/proxy"
 // 续期/开通默认时长。
 const accessTTL = 30 * 24 * time.Hour
 
-// proxyHostPort 取服务端代理监听地址（host 默认 127.0.0.1，port 默认 PROXY_HTTP_PORT=1081）。
+// proxyHostPort 取服务端代理监听地址下发给客户端。
+// host 读 PROXY_HOST env；客户端与服务器不同机时必须设为服务器可达地址（内网 IP/域名），
+// 缺省才回退 127.0.0.1（仅同机测试可用）。port 读 PROXY_HTTP_PORT，缺省 1081。
 func proxyHostPort() (string, int) {
 	host := strings.TrimSpace(os.Getenv("PROXY_HOST"))
 	if host == "" {
@@ -457,6 +459,37 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			}
 		}
 		ack(util.OK(out))
+	})
+
+	// ---- proxy:request:notification:stop：申请人或审批人主动停止循环提醒（幂等）----
+	srv.On("proxy:request:notification:stop", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, role, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		id, ok := toInt64(d["id"])
+		if !ok || id <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		req, err := store.GetProxyAccessRequestByID(ctx, id)
+		if err != nil || req == nil || req.CompanyID != cid {
+			logger.Warn(mod, "proxy:request:notification:stop 申请不存在", "id", id, "error", err)
+			ack(util.Fail("申请不存在"))
+			return
+		}
+		isSelf := req.UserID == a.ID
+		if !isSelf && !canApproveRequest(req, role, a.ID) {
+			ack(util.Fail("无权操作该申请"))
+			return
+		}
+		if err := store.StopProxyNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "proxy:request:notification:stop 失败", "id", id, "error", err.Error())
+			ack(util.Fail("停止提醒失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"ok": true, "notifyStopped": true}))
 	})
 
 	// ---- proxy:request:approve ----
