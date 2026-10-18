@@ -252,8 +252,8 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			}
 		}
 
-		// check_date = 服务端本地今天。
-		checkDate := time.Now().Format("2006-01-02")
+		// check_date = 业务本地今天（避免 UTC 日期错位，本地早于 8 点落到前一天）。
+		checkDate := time.Now().In(localTZ).Format("2006-01-02")
 		var macPtr *string
 		if mac != "" {
 			macPtr = &mac

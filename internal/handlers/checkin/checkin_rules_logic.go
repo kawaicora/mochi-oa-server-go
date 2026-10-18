@@ -5,6 +5,7 @@ package checkin
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"time"
 
@@ -13,6 +14,22 @@ import (
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var hhmmRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
+// localTZ 业务本地时区：打卡日期/上下班时间一律按本地口径，避免 UTC 与规则时间错位。
+// 可用 TIMEZONE 环境变量覆盖，缺省 Asia/Shanghai。
+var localTZ = mustLocalTZ()
+
+func mustLocalTZ() *time.Location {
+	name := os.Getenv("TIMEZONE")
+	if name == "" {
+		name = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		loc = time.Local
+	}
+	return loc
+}
 
 func hhmm(s string) bool { return hhmmRe.MatchString(s) }
 
@@ -126,6 +143,8 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 		if err != nil {
 			continue
 		}
+		// 转业务本地时区再取时分，与本地口径规则时间比较。
+		t = t.In(localTZ)
 		if !has || t.Before(first) {
 			first = t
 		}
