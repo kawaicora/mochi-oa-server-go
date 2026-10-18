@@ -8,6 +8,7 @@ package checkin
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -279,4 +280,40 @@ func emptyOrNil(s string) string {
 
 func weekdayCN(w int) string {
 	return []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}[w]
+}
+
+// RegisterStatHandlers 注册考勤统计相关 socket 事件。
+func RegisterStatHandlers(srv socketapi.Server, store db.Store, cfg *config.ServerConfig) {
+	// ---- attendance:stat:list：admin/owner 查某公司某月已生成的考勤统计 CSV（含下载 URL）----
+	srv.On("attendance:stat:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, role, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		if role != "owner" && role != "admin" {
+			ack(util.Fail("仅管理员可查看考勤统计"))
+			return
+		}
+		month := strField(d, "month")
+		if month == "" {
+			month = time.Now().In(localTZ).Format("2006-01")
+		}
+		dir := filepath.Join(cfg.File.Dir, "attendance_stats", fmt.Sprintf("%d", cid), month)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			ack(util.OK(map[string]any{"files": []any{}, "month": month}))
+			return
+		}
+		files := []map[string]any{}
+		for _, e := range entries {
+			if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".csv" {
+				continue
+			}
+			rel := "attendance_stats/" + fmt.Sprintf("%d", cid) + "/" + month + "/" + e.Name()
+			files = append(files, map[string]any{"name": e.Name(), "url": "/files/" + rel})
+		}
+		logger.Info(mod, "attendance:stat:list", "companyId", cid, "userId", a.ID, "month", month, "files", len(files))
+		ack(util.OK(map[string]any{"files": files, "month": month}))
+	})
 }

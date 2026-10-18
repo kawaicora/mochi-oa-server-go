@@ -159,6 +159,7 @@ func main() {
 	report.RegisterReportHandlers(srv, store, cfg)
 	attendance.RegisterAttendanceHandlers(srv, store)
 	checkin.RegisterCheckinHandlers(srv, store)
+	checkin.RegisterStatHandlers(srv, store, cfg)
 	checkin.StartMonthlyStatScheduler(srv, store, cfg)
 	proxyh.RegisterProxyHandlers(srv, store)
 	asset.RegisterAssetHandlers(srv, store)
