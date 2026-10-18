@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
@@ -32,6 +33,7 @@ type attendanceScanRow struct {
 	ApprovedAt    *time.Time `gorm:"column:approved_at"`
 	ApproverIDs   string     `gorm:"column:approver_ids"`
 	CcIDs         string     `gorm:"column:cc_ids"`
+	CcViewedIDs   string     `gorm:"column:cc_viewed_ids"`
 	CreatedAt     time.Time  `gorm:"column:created_at"`
 	UpdatedAt     time.Time  `gorm:"column:updated_at"`
 	Username      string     `gorm:"column:username"`
@@ -64,6 +66,7 @@ func scanRowToAttendance(r attendanceScanRow) types.AttendanceRequest {
 		ApprovedAt:    isoPtr(r.ApprovedAt),
 		ApproverIDs:   decodeRecipients(r.ApproverIDs),
 		CcIDs:         decodeRecipients(r.CcIDs),
+		CcViewedIds:   decodeRecipients(r.CcViewedIDs),
 		CreatedAt:     toIso(r.CreatedAt),
 		UpdatedAt:     toIso(r.UpdatedAt),
 		Nick:          r.Nick,
@@ -72,7 +75,7 @@ func scanRowToAttendance(r attendanceScanRow) types.AttendanceRequest {
 }
 
 // attendanceSelect 联表查询统一列清单（含 approver_ids/cc_ids）。
-const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.created_at, r.updated_at, u.username, u.nick"
+const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.cc_viewed_ids, r.created_at, r.updated_at, u.username, u.nick"
 
 // CreateAttendanceRequest 发起考勤申请；审批人/抄送人由调用方按流程快照传入。
 func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
@@ -209,4 +212,72 @@ func (s *MySqlStore) RejectAttendanceRequest(ctx context.Context, id int64, note
 		return nil, &NotFoundError{Msg: "attendance request not found"}
 	}
 	return s.GetAttendanceRequestByID(ctx, id)
+}
+
+// ListReceivedAttendance 收到审批：本公司内 本人提交 OR 本人被列为审批人 的全部申请。
+// 口径含自审批（本人提交且自己审批）。handler 按 status 拆 pending/processed。
+func (s *MySqlStore) ListReceivedAttendance(ctx context.Context, companyID, userID int64) ([]types.AttendanceRequest, error) {
+	approverJSON := strconv.FormatInt(userID, 10)
+	rows := []attendanceScanRow{}
+	err := s.attendanceBaseQuery(ctx).Select(attendanceSelect).
+		Where("r.company_id = ?", companyID).
+		Where("(r.user_id = ? OR JSON_CONTAINS(r.approver_ids, ?))", userID, approverJSON).
+		Order("r.created_at DESC, r.id DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := []types.AttendanceRequest{}
+	for _, r := range rows {
+		out = append(out, scanRowToAttendance(r))
+	}
+	return out, nil
+}
+
+// ListReceivedCC 收到抄送：本公司内 本人提交 OR 本人被列为抄送人 的全部申请。
+// 每条已带 cc_viewed_ids，handler 据此计算 viewed。
+func (s *MySqlStore) ListReceivedCC(ctx context.Context, companyID, userID int64) ([]types.AttendanceRequest, error) {
+	ccJSON := strconv.FormatInt(userID, 10)
+	rows := []attendanceScanRow{}
+	err := s.attendanceBaseQuery(ctx).Select(attendanceSelect).
+		Where("r.company_id = ?", companyID).
+		Where("(r.user_id = ? OR JSON_CONTAINS(r.cc_ids, ?))", userID, ccJSON).
+		Order("r.created_at DESC, r.id DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := []types.AttendanceRequest{}
+	for _, r := range rows {
+		out = append(out, scanRowToAttendance(r))
+	}
+	return out, nil
+}
+
+// MarkCCViewed 把 userID 加入该申请的 cc_viewed_ids（幂等，已存在则不重复追加）。
+func (s *MySqlStore) MarkCCViewed(ctx context.Context, requestID, userID int64) error {
+	// 先读当前已查看数组（用显式结构接收，避免 Scan 到裸 string 被 GORM 丢弃）。
+	var row struct {
+		CcViewedIDs string `gorm:"column:cc_viewed_ids"`
+	}
+	err := s.gorm.WithContext(ctx).Table("attendance_requests").
+		Where("id = ?", requestID).
+		Select("IFNULL(cc_viewed_ids,'[]') AS cc_viewed_ids").
+		Take(&row).Error
+	if err != nil {
+		return err
+	}
+	existing := decodeRecipients(row.CcViewedIDs)
+	for _, v := range existing {
+		if v == userID {
+			return nil // 幂等：已查看过
+		}
+	}
+	existing = append(existing, userID)
+	return s.gorm.WithContext(ctx).Table("attendance_requests").
+		Where("id = ?", requestID).
+		Updates(map[string]any{
+			"cc_viewed_ids": encodeRecipients(existing),
+			"updated_at":    time.Now().UTC(),
+		}).Error
 }

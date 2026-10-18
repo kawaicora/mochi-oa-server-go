@@ -601,6 +601,12 @@ type Store interface {
 	ApproveAttendanceRequest(ctx context.Context, id, approverID int64) (*types.AttendanceRequest, error)
 	// RejectAttendanceRequest 置 rejected：approvalNote=驳回理由。
 	RejectAttendanceRequest(ctx context.Context, id int64, note string) (*types.AttendanceRequest, error)
+	// ListReceivedAttendance 收到审批：本人提交 OR 本人为审批人（含自审批）。
+	ListReceivedAttendance(ctx context.Context, companyID, userID int64) ([]types.AttendanceRequest, error)
+	// ListReceivedCC 收到抄送：本人提交 OR 本人为抄送人（含自抄送）。
+	ListReceivedCC(ctx context.Context, companyID, userID int64) ([]types.AttendanceRequest, error)
+	// MarkCCViewed 把 userID 加入 cc_viewed_ids（幂等）。
+	MarkCCViewed(ctx context.Context, requestID, userID int64) error
 
 	// ─── 打卡 ───
 	// CreateCheckin 写入/更新当天打卡：0条→INSERT(first)；1条→INSERT(second)；≥2条→UPDATE 当天最后一条 check_time(override，不新增行)。返回 item 与 kind(first/second/override)。

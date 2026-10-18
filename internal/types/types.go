@@ -1233,6 +1233,7 @@ type AttendanceRequest struct {
 	ApprovedAt    *string  `json:"approvedAt"`
 	ApproverIDs   []int64  `json:"approverIds"` // 创建时按审批流配置的快照
 	CcIDs         []int64  `json:"ccIds"`
+	CcViewedIds   []int64  `json:"ccViewedIds,omitempty"` // 已查看该抄送的用户 id 快照
 	CreatedAt     string   `json:"createdAt"`
 	UpdatedAt     string   `json:"updatedAt"`
 	Nick          string   `json:"nick"`

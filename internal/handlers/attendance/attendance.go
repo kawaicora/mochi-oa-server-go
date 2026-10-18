@@ -331,6 +331,104 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		ack(util.OK(map[string]any{"requests": rows, "total": total}))
 	})
 
+	// ---- attendance:received:list：收到审批（本人提交 OR 本人为审批人，含自审批）----
+	srv.On("attendance:received:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		rows, err := store.ListReceivedAttendance(ctx, cid, a.ID)
+		if err != nil {
+			logger.Error(mod, "attendance:received:list 失败", "companyId", cid, "userId", a.ID, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		pending := []types.AttendanceRequest{}
+		processed := []types.AttendanceRequest{}
+		for _, r := range rows {
+			if r.Status == "pending" {
+				pending = append(pending, r)
+			} else {
+				processed = append(processed, r)
+			}
+		}
+		ack(util.OK(map[string]any{"pending": pending, "processed": processed}))
+	})
+
+	// ---- attendance:cc:list：收到抄送（本人提交 OR 本人为抄送人，含自抄送）----
+	srv.On("attendance:cc:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		rows, err := store.ListReceivedCC(ctx, cid, a.ID)
+		if err != nil {
+			logger.Error(mod, "attendance:cc:list 失败", "companyId", cid, "userId", a.ID, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		type ccItem struct {
+			types.AttendanceRequest
+			Viewed bool `json:"viewed"`
+		}
+		out := []ccItem{}
+		for _, r := range rows {
+			viewed := false
+			for _, v := range r.CcViewedIds {
+				if v == a.ID {
+					viewed = true
+					break
+				}
+			}
+			out = append(out, ccItem{AttendanceRequest: r, Viewed: viewed})
+		}
+		ack(util.OK(map[string]any{"items": out}))
+	})
+
+	// ---- attendance:cc:view：把当前用户标记为已查看该抄送（幂等）----
+	srv.On("attendance:cc:view", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		id, ok := toInt64(d["requestId"])
+		if !ok || id <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		req, err := store.GetAttendanceRequestByID(ctx, id)
+		if err != nil {
+			logger.Error(mod, "attendance:cc:view 查申请失败", "id", id, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if req == nil || req.CompanyID != cid {
+			ack(util.Fail("申请不存在"))
+			return
+		}
+		// 仅抄送人（含本人提交即自抄送）可标记；非抄送人拒绝。
+		isCC := false
+		for _, v := range req.CcIDs {
+			if v == a.ID {
+				isCC = true
+				break
+			}
+		}
+		if !isCC {
+			ack(util.Fail("您不是该申请的抄送人"))
+			return
+		}
+		if err := store.MarkCCViewed(ctx, id, a.ID); err != nil {
+			logger.Error(mod, "attendance:cc:view 失败", "id", id, "userId", a.ID, "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"ok": true}))
+	})
+
 	// ---- attendance:approve ----
 	srv.On("attendance:approve", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		d := parseData(data)

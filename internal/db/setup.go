@@ -109,5 +109,11 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		// 不阻断启动（旧库可能结构差异），仅记录。
 	}
 	logger.Info("db", "自动建表完成", "tables", len(models))
+	// attendance_requests.cc_viewed_ids：抄送人已查看标记（JSON 数组，可空无默认）。
+	// MySQL 不支持 ADD COLUMN IF NOT EXISTS（MariaDB 语法），重复加列会报 1060，忽略即可。
+	addColSQL := "ALTER TABLE attendance_requests ADD COLUMN cc_viewed_ids JSON NULL"
+	if err := s.gorm.WithContext(ctx).Exec(addColSQL).Error; err != nil {
+		logger.Info("db", "补 attendance_requests.cc_viewed_ids 跳过（可能已存在）", "error", err.Error())
+	}
 	return nil
 }
