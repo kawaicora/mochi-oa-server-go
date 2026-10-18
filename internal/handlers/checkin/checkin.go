@@ -365,6 +365,155 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		}
 		ack(util.OK(map[string]any{"settings": s}))
 	})
+
+	// ---- checkin:rules:get（成员；无配置返回默认规则并懒播种） ----
+	srv.On("checkin:rules:get", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		_, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		r, err := store.GetCheckinRules(ctx, cid)
+		if err != nil {
+			logger.Error(mod, "checkin:rules:get 查询失败", "companyId", cid, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		if r == nil {
+			// 懒播种默认规则：standard 双休，周一~五 09:30-18:30，周六日休息。
+			def := defaultStandardRules()
+			if err := store.SaveCheckinRules(ctx, cid, def["mode"].(string),
+				int64(def["grace_late_min"].(float64)), int64(def["grace_early_min"].(float64)),
+				def["week_rules"].(string), nil); err != nil {
+				logger.Error(mod, "checkin:rules:get 懒播种失败", "companyId", cid, "error", err.Error())
+				ack(util.Fail("获取失败"))
+				return
+			}
+			ack(util.OK(map[string]any{"rules": def}))
+			return
+		}
+		ack(util.OK(map[string]any{"rules": rulesRowToMap(r)}))
+	})
+
+	// ---- checkin:rules:save（admin/owner，校验后保存） ----
+	srv.On("checkin:rules:save", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		_, cid, ok := requireAdmin(c, d, store, ack)
+		if !ok {
+			return
+		}
+		mode := strings.TrimSpace(strField(d, "mode"))
+		if !validRuleMode(mode) {
+			logger.Warn(mod, "checkin:rules:save mode 非法", "companyId", cid, "mode", mode)
+			ack(util.Fail("排班模式不合法"))
+			return
+		}
+		graceLate := int64(0)
+		if v, has := d["grace_late_min"]; has {
+			if n, ok := toInt64(v); ok {
+				graceLate = n
+			}
+		}
+		graceEarly := int64(0)
+		if v, has := d["grace_early_min"]; has {
+			if n, ok := toInt64(v); ok {
+				graceEarly = n
+			}
+		}
+		// week_rules 校验：7 项完整、HH:MM 格式、start<end。
+		wr, has := d["week_rules"].([]any)
+		if !has || len(wr) != 7 {
+			ack(util.Fail("周规则需为 7 项"))
+			return
+		}
+		weekOut := make([]map[string]any, 0, 7)
+		seenDow := map[int]bool{}
+		for _, item := range wr {
+			m, ok := item.(map[string]any)
+			if !ok {
+				ack(util.Fail("周规则项格式不合法"))
+				return
+			}
+			dow, ok := toInt64(m["dow"])
+			if !ok || dow < 0 || dow > 6 {
+				ack(util.Fail("周规则 dow 不合法"))
+				return
+			}
+			if seenDow[int(dow)] {
+				ack(util.Fail("周规则 dow 重复"))
+				return
+			}
+			seenDow[int(dow)] = true
+			start := strings.TrimSpace(toString(m["start"]))
+			end := strings.TrimSpace(toString(m["end"]))
+			rest, _ := m["rest"].(bool)
+			if !rest {
+				if !hhmm(start) || !hhmm(end) || start >= end {
+					ack(util.Fail("工作时间格式不合法（需 HH:MM 且 start<end）"))
+					return
+				}
+			}
+			weekOut = append(weekOut, map[string]any{"dow": dow, "start": start, "end": end, "rest": rest})
+		}
+		weekBytes, _ := json.Marshal(weekOut)
+		// alt_rule 校验（可选）。
+		var altJSON *string
+		if altRaw, has := d["alt_rule"]; has && altRaw != nil {
+			am, ok := altRaw.(map[string]any)
+			if !ok {
+				ack(util.Fail("交替规则格式不合法"))
+				return
+			}
+			dow, ok := toInt64(am["dow"])
+			if !ok || dow < 0 || dow > 6 {
+				ack(util.Fail("交替规则 dow 不合法"))
+				return
+			}
+			as := strings.TrimSpace(toString(am["altStart"]))
+			ae := strings.TrimSpace(toString(am["altEnd"]))
+			if !hhmm(as) || !hhmm(ae) || as >= ae {
+				ack(util.Fail("交替工作时间格式不合法（需 HH:MM 且 altStart<altEnd）"))
+				return
+			}
+			b, _ := json.Marshal(map[string]any{"dow": dow, "altStart": as, "altEnd": ae})
+			s := string(b)
+			altJSON = &s
+		}
+		if err := store.SaveCheckinRules(ctx, cid, mode, graceLate, graceEarly, string(weekBytes), altJSON); err != nil {
+			logger.Error(mod, "checkin:rules:save 失败", "companyId", cid, "error", err.Error())
+			ack(util.Fail("保存失败"))
+			return
+		}
+		r, _ := store.GetCheckinRules(ctx, cid)
+		ack(util.OK(map[string]any{"rules": rulesRowToMap(r)}))
+	})
+
+	// ---- checkin:status:get（成员；按规则+打卡记录判断当天状态） ----
+	srv.On("checkin:status:get", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		d := parseData(data)
+		a, cid, _, ok := requireMember(c, d, store, ack)
+		if !ok {
+			return
+		}
+		dateStr := strings.TrimSpace(strField(d, "date"))
+		if !dateRe.MatchString(dateStr) {
+			ack(util.Fail("日期格式不合法（YYYY-MM-DD）"))
+			return
+		}
+		// 取公司规则（无则用默认）。
+		r, err := store.GetCheckinRules(ctx, cid)
+		if err != nil {
+			logger.Error(mod, "checkin:status:get 查询规则失败", "companyId", cid, "error", err.Error())
+			ack(util.Fail("获取失败"))
+			return
+		}
+		mode, graceLate, graceEarly, weekRules, altRule := loadRules(r)
+		// 当天打卡记录（复用 list 同源查询，按月取后过滤当天）。
+		punches, _ := store.ListCheckinsByMonth(ctx, cid, a.ID, dateStr[:7])
+		in, out := punchInOut(punches, dateStr)
+		resp := computeDayStatus(dateStr, mode, graceLate, graceEarly, weekRules, altRule, in, out)
+		ack(util.OK(map[string]any{"status": resp}))
+	})
 }
 
 // dedupMac 逐条 trim、大小写不敏感去重。

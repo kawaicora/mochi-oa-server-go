@@ -612,6 +612,11 @@ type Store interface {
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。
 	SaveCheckinSettings(ctx context.Context, companyID int64, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error)
 
+	// GetCheckinRules 公司打卡排班规则；未配置返回 (nil, nil)。
+	GetCheckinRules(ctx context.Context, companyID int64) (*types.CompanyCheckinRulesRow, error)
+	// SaveCheckinRules upsert 排班规则（weekRulesJSON/altRuleJSON 为已校验后的 JSON 字符串，可空）。
+	SaveCheckinRules(ctx context.Context, companyID int64, mode string, graceLate, graceEarly int64, weekRulesJSON string, altRuleJSON *string) error
+
 	// ─── 出网代理 ───
 	// CreateProxyAccount 新建账号（username 唯一、冲突由实现重试；返回完整行含 secret，仅一次性）。
 	CreateProxyAccount(ctx context.Context, companyID, createdBy int64, expiresAt time.Time, note *string) (*types.ProxyAccountRow, error)

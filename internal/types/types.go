@@ -493,6 +493,21 @@ type CompanyCheckinSettingsRow struct {
 	UpdatedAt    time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// CompanyCheckinRulesRow 对应 company_checkin_rules 表（公司打卡排班规则，一公司一行）。
+// week_rules/alt_rule 为 TEXT(JSON 字符串)，写入侧由 db 层 marshal，读取侧反序列化。
+type CompanyCheckinRulesRow struct {
+	ID            int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64     `db:"company_id" gorm:"uniqueIndex;type:bigint unsigned;not null"`
+	Mode          string    `db:"mode" gorm:"type:varchar(16);not null;default:standard"` // standard|sixday|nosleep|bigsmall
+	GraceLateMin  int64     `db:"grace_late_min" gorm:"type:int;not null;default:0"`
+	GraceEarlyMin int64     `db:"grace_early_min" gorm:"type:int;not null;default:0"`
+	WeekRules     string    `db:"week_rules" gorm:"type:text"` // JSON：7 项 {dow,start,end,rest}
+	AltRule       *string   `db:"alt_rule" gorm:"type:text"`   // JSON：大小周交替日 {dow,altStart,altEnd}，可空
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
+// username 全局唯一；secret 仅批准/创建时返回一次，列表/详情视图绝不带出。
 // ProxyAccountRow 对应 proxy_accounts 表（出网代理账号，公司隔离）。
 // username 全局唯一；secret 仅批准/创建时返回一次，列表/详情视图绝不带出。
 type ProxyAccountRow struct {
@@ -604,6 +619,7 @@ func (ReportRow) TableName() string                 { return "reports" }
 func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
+func (CompanyCheckinRulesRow) TableName() string    { return "company_checkin_rules" }
 func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
 func (ProxyAccessRequestRow) TableName() string     { return "proxy_access_requests" }
 func (AssetRow) TableName() string                  { return "assets" }

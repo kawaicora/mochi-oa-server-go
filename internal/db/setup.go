@@ -90,6 +90,7 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.AttendanceRequestRow{},
 		&types.CheckinRow{},
 		&types.CompanyCheckinSettingsRow{},
+		&types.CompanyCheckinRulesRow{},
 		&types.ProxyAccountRow{},
 		&types.ProxyAccessRequestRow{},
 		&types.AssetRow{},
