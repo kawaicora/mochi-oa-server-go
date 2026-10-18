@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"mochi-oa-server-go/internal/types"
@@ -186,7 +187,7 @@ func (s *MySqlStore) DeleteAsset(ctx context.Context, id int64) error {
 	return tx.Commit().Error
 }
 
-// assetFlowScanRow 联表行：流转 + 资产 code/name + 经办人昵称。
+// assetFlowScanRow 联表行：流转 + 资产 code/name + 经办人昵称 + 相关人昵称。
 type assetFlowScanRow struct {
 	ID           int64     `gorm:"column:id"`
 	CompanyID    int64     `gorm:"column:company_id"`
@@ -200,10 +201,11 @@ type assetFlowScanRow struct {
 	AssetCode    string    `gorm:"column:asset_code"`
 	AssetName    string    `gorm:"column:asset_name"`
 	OperatorNick string    `gorm:"column:operator_nick"`
+	RelatedNick  *string   `gorm:"column:related_nick"`
 }
 
 func scanFlow(r assetFlowScanRow) types.FlowItem {
-	return types.FlowItem{
+	it := types.FlowItem{
 		ID:           r.ID,
 		CompanyID:    r.CompanyID,
 		AssetID:      r.AssetID,
@@ -213,13 +215,20 @@ func scanFlow(r assetFlowScanRow) types.FlowItem {
 		Direction:    r.Direction,
 		OperatorID:   r.OperatorID,
 		OperatorNick: r.OperatorNick,
-		RelatedTo:    r.RelatedTo,
 		Note:         r.Note,
 		CreatedAt:    toIso(r.CreatedAt),
 	}
+	// related_to 存的是用户 ID 字符串；解析为 int64 并补昵称。
+	if r.RelatedTo != nil && *r.RelatedTo != "" {
+		if rid, err := strconv.ParseInt(*r.RelatedTo, 10, 64); err == nil {
+			it.RelatedID = &rid
+			it.RelatedNick = r.RelatedNick
+		}
+	}
+	return it
 }
 
-const flowSelect = "f.id, f.company_id, f.asset_id, f.flow_type, f.direction, f.operator_id, f.related_to, f.note, f.created_at, a.code AS asset_code, a.name AS asset_name, COALESCE(u.nick, u.username) AS operator_nick"
+const flowSelect = "f.id, f.company_id, f.asset_id, f.flow_type, f.direction, f.operator_id, f.related_to, f.note, f.created_at, a.code AS asset_code, a.name AS asset_name, COALESCE(u.nick, u.username) AS operator_nick, COALESCE(ru.nick, ru.username) AS related_nick"
 
 // CreateAssetFlow 建流转记录，并按最新方向更新资产 status。
 func (s *MySqlStore) CreateAssetFlow(ctx context.Context, in CreateAssetFlowInput) (*types.FlowItem, *types.AssetItem, error) {
@@ -251,6 +260,7 @@ func (s *MySqlStore) CreateAssetFlow(ctx context.Context, in CreateAssetFlowInpu
 	err := s.gorm.WithContext(ctx).Table("asset_flows f").
 		Joins("LEFT JOIN assets a ON a.id = f.asset_id").
 		Joins("LEFT JOIN users u ON u.id = f.operator_id").
+		Joins("LEFT JOIN users ru ON ru.id = CAST(f.related_to AS UNSIGNED)").
 		Select(flowSelect).Where("f.id = ?", row.ID).Take(&r).Error
 	if err != nil {
 		return nil, nil, err
@@ -283,6 +293,7 @@ func (s *MySqlStore) ListAssetFlows(ctx context.Context, companyID, assetID int6
 	listQ := s.gorm.WithContext(ctx).Table("asset_flows f").
 		Joins("LEFT JOIN assets a ON a.id = f.asset_id").
 		Joins("LEFT JOIN users u ON u.id = f.operator_id").
+		Joins("LEFT JOIN users ru ON ru.id = CAST(f.related_to AS UNSIGNED)").
 		Select(flowSelect).Where("f.company_id = ?", companyID)
 	if assetID > 0 {
 		listQ = listQ.Where("f.asset_id = ?", assetID)

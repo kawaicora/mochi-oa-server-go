@@ -1334,7 +1334,7 @@ type AssetItem struct {
 	UpdatedAt string  `json:"updatedAt"`
 }
 
-// FlowItem 流转记录视图（联表补资产 code/name 与经办人昵称）。
+// FlowItem 流转记录视图（联表补资产 code/name、经办人昵称、相关人昵称）。
 type FlowItem struct {
 	ID           int64   `json:"id"`
 	CompanyID    int64   `json:"companyId"`
@@ -1345,7 +1345,8 @@ type FlowItem struct {
 	Direction    string  `json:"direction"`
 	OperatorID   int64   `json:"operatorId"`
 	OperatorNick string  `json:"operatorNick"`
-	RelatedTo    *string `json:"relatedTo"`
+	RelatedID    *int64  `json:"relatedId"`
+	RelatedNick  *string `json:"relatedNick"`
 	Note         *string `json:"note"`
 	CreatedAt    string  `json:"createdAt"`
 }

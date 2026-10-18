@@ -25,11 +25,18 @@ const mod = "handlers/asset"
 
 // 流转枚举与方向映射（可扩展：新流转在此登记）。
 //
-//	in 方向（入库/增加持有）：in_purchase 购买 / in_rent 租赁 / in_borrow 借入 / in_return 退回 / in_reclaim 回收
-//	out 方向（出库/减少持有）：out_sell 售卖 / out_gift 赠与 / out_lend 借出 / out_carry 外带 / out_scrap 报废 / out_lost 丢失
+//	入库（in/增加持有）：购买、租聘、借用、调拨、归还、自购、受赠、其他
+//	出库（out/减少持有）：售卖、赠与、借出、外带、领用、调拨、丢失、报废、退还、其他
 var flowDirection = map[string]string{
-	"in_purchase": "in", "in_rent": "in", "in_borrow": "in", "in_return": "in", "in_reclaim": "in",
-	"out_sell": "out", "out_gift": "out", "out_lend": "out", "out_carry": "out", "out_scrap": "out", "out_lost": "out",
+	// 入库
+	"in_purchase": "in", "in_rent": "in", "in_borrow": "in",
+	"in_transfer": "in", "in_return": "in", "in_self_purchase": "in",
+	"in_donation": "in", "in_other": "in",
+	// 出库
+	"out_sell": "out", "out_gift": "out", "out_lend": "out",
+	"out_carry": "out", "out_usage": "out", "out_transfer": "out",
+	"out_lost": "out", "out_scrap": "out", "out_refund": "out",
+	"out_other": "out",
 }
 
 // RegisterAssetHandlers 注册资产管理全部 socket 事件。
@@ -221,9 +228,12 @@ func RegisterAssetHandlers(srv socketapi.Server, store db.Store) {
 			CompanyID: cid, AssetID: assetID, FlowType: flowType, Direction: dir,
 			OperatorID: a.ID,
 		}
+		// relatedTo 为用户 ID（数字），存为字符串；联表时转 int 取昵称。
 		if v, has := d["relatedTo"]; has && v != nil {
-			s := strings.TrimSpace(toString(v))
-			in.RelatedTo = &s
+			if rid, ok := toInt64(v); ok && rid > 0 {
+				s := strconv.FormatInt(rid, 10)
+				in.RelatedTo = &s
+			}
 		}
 		if v, has := d["note"]; has && v != nil {
 			s := toString(v)
@@ -235,6 +245,11 @@ func RegisterAssetHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("资产流转失败"))
 			return
 		}
+		// socket 广播：公司内全体成员收到新流转事件。
+		_ = srv.EmitTo(util.CompanyRoom(cid), "asset:flow:created", map[string]any{
+			"kind": "company", "companyId": cid,
+			"flow": flow, "asset": asset,
+		})
 		ack(util.OK(map[string]any{"flow": flow, "asset": asset}))
 	})
 
