@@ -12,3 +12,4 @@ dist/
 node_modules/
 internal/http/files_escape_test.go
 __debug_bin**.exe
+v*srv.exe
