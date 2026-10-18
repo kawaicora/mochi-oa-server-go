@@ -219,6 +219,7 @@ func main() {
 type handshakeHolder interface {
 	HandshakeAuth() json.RawMessage
 	Headers() http.Header
+	Host() string
 	Query() url.Values
 }
 
@@ -260,6 +261,10 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 			// auth.go headerGet 支持 string / []string，http.Header 直接传 []string 值。
 			for k, v := range hh.Headers() {
 				headers[k] = v
+			}
+			// req.Host 不在 r.Header 里，单独补一份供业务侧推断服务器对外地址。
+			if hh.Host() != "" {
+				headers["Host"] = []string{hh.Host()}
 			}
 		}
 		c.Set("handshakeHeaders", headers)

@@ -51,7 +51,7 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, r *http.Request, sid str
 
 	if sid == "" {
 		// 直连 websocket（不经 polling）：新建会话，先回 OPEN。
-		c := newConn(newSID(), s, r.Header, r.URL.Query())
+		c := newConn(newSID(), s, r.Header, r.URL.Query(), r.Host)
 		s.addSession(c)
 		c.markWebsocketUp(conn)
 		upgrades := []string{}

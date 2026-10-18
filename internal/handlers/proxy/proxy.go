@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,27 +30,63 @@ const mod = "handlers/proxy"
 // 续期/开通默认时长。
 const accessTTL = 30 * 24 * time.Hour
 
-// proxyHostPort 取服务端代理监听地址下发给客户端。
-// host 读 PROXY_HOST env；客户端与服务器不同机时必须设为服务器可达地址（内网 IP/域名），
-// 缺省才回退 127.0.0.1（仅同机测试可用）。port 读 PROXY_HTTP_PORT，缺省 1081。
-func proxyHostPort() (string, int) {
-	host := strings.TrimSpace(os.Getenv("PROXY_HOST"))
-	if host == "" {
-		host = "127.0.0.1"
+// resolveProxyHost 取下发给客户端的代理服务器 host。
+// 取值链：PROXY_HOST env 显式配置 → 否则取客户端握手 Host 头的 host 部分（即客户端连服务器用的地址，
+// 正式环境自动为 oa.kawaimoe.org，无需手工配置）→ 最后回退 127.0.0.1。
+func resolveProxyHost(c socketapi.Conn) string {
+	if h := strings.TrimSpace(os.Getenv("PROXY_HOST")); h != "" {
+		return h
 	}
+	if c != nil {
+		if headers, _ := c.Get("handshakeHeaders").(map[string]any); headers != nil {
+			if v := headerGetLower(headers, "host"); v != "" {
+				if h, _, err := net.SplitHostPort(v); err == nil && h != "" {
+					v = h
+				}
+				// 去掉可能的 [v6] 包裹
+				v = strings.TrimPrefix(strings.TrimSuffix(v, "]"), "[")
+				if v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return "127.0.0.1"
+}
+
+// proxyPort 读 PROXY_HTTP_PORT，缺省 1081。
+func proxyPort() int {
 	port := 1081
 	if p, err := strconv.Atoi(os.Getenv("PROXY_HTTP_PORT")); err == nil && p > 0 {
 		port = p
 	}
-	return host, port
+	return port
+}
+
+// headerGetLower 从握手 headers map（key 已可能小写）取值，大小写不敏感。
+func headerGetLower(headers map[string]any, key string) string {
+	for k, v := range headers {
+		if strings.EqualFold(k, key) {
+			switch t := v.(type) {
+			case string:
+				return t
+			case []string:
+				if len(t) > 0 {
+					return t[0]
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // buildAccountView 把 DB 账号转成连接视图；withPassword=true 时带 secret（仅 get 本人）。
-func buildAccountView(acc *types.ProxyAccountRow, withPassword bool) *types.ProxyAccountView {
+func buildAccountView(c socketapi.Conn, acc *types.ProxyAccountRow, withPassword bool) *types.ProxyAccountView {
 	if acc == nil {
 		return nil
 	}
-	host, port := proxyHostPort()
+	host := resolveProxyHost(c)
+	port := proxyPort()
 	exp := util.LocalTimeFormat(acc.ExpiresAt)
 	v := &types.ProxyAccountView{
 		ID:       acc.ID,
@@ -413,7 +450,7 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		for i := range rows {
 			if rows[i].Status == "approved" && rows[i].AccountID != nil {
 				if acc, gerr := store.GetProxyAccountByID(ctx, *rows[i].AccountID); gerr == nil && acc != nil {
-					rows[i].Account = buildAccountView(acc, false)
+					rows[i].Account = buildAccountView(c, acc, false)
 				}
 			}
 		}
@@ -451,7 +488,7 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		// approved 且有账号时嵌套账号视图；本人 approved 才带 password(secret)。
 		if req.Status == "approved" && req.AccountID != nil {
 			if acc, gerr := store.GetProxyAccountByID(ctx, *req.AccountID); gerr == nil && acc != nil {
-				req.Account = buildAccountView(acc, isSelf)
+				req.Account = buildAccountView(c, acc, isSelf)
 				// 兼容：顶层 secret 仍保留（本人 approved）。
 				if isSelf {
 					out["secret"] = acc.Secret
