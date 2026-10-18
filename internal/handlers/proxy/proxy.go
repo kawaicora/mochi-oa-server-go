@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,40 @@ const mod = "handlers/proxy"
 
 // 续期/开通默认时长。
 const accessTTL = 30 * 24 * time.Hour
+
+// proxyHostPort 取服务端代理监听地址（host 默认 127.0.0.1，port 默认 PROXY_HTTP_PORT=1081）。
+func proxyHostPort() (string, int) {
+	host := strings.TrimSpace(os.Getenv("PROXY_HOST"))
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := 1081
+	if p, err := strconv.Atoi(os.Getenv("PROXY_HTTP_PORT")); err == nil && p > 0 {
+		port = p
+	}
+	return host, port
+}
+
+// buildAccountView 把 DB 账号转成连接视图；withPassword=true 时带 secret（仅 get 本人）。
+func buildAccountView(acc *types.ProxyAccountRow, withPassword bool) *types.ProxyAccountView {
+	if acc == nil {
+		return nil
+	}
+	host, port := proxyHostPort()
+	exp := util.LocalTimeFormat(acc.ExpiresAt)
+	v := &types.ProxyAccountView{
+		ID:       acc.ID,
+		Host:     host,
+		Port:     port,
+		Username: acc.Username,
+		ExpiresAt: &exp,
+	}
+	if withPassword {
+		pw := acc.Secret
+		v.Password = &pw
+	}
+	return v
+}
 
 // ─── 私有工具 ───
 
@@ -372,6 +407,14 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		if rows == nil {
 			rows = []types.ProxyRequestItem{}
 		}
+		// approved 且有账号时，为每条请求嵌套账号连接信息（list 不带 password）。
+		for i := range rows {
+			if rows[i].Status == "approved" && rows[i].AccountID != nil {
+				if acc, gerr := store.GetProxyAccountByID(ctx, *rows[i].AccountID); gerr == nil && acc != nil {
+					rows[i].Account = buildAccountView(acc, false)
+				}
+			}
+		}
 		ack(util.OK(map[string]any{"requests": rows, "total": total}))
 	})
 
@@ -403,10 +446,14 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			return
 		}
 		out := map[string]any{"request": req}
-		// 仅本人且已开通时把 secret 带出一次。
-		if isSelf && req.Status == "approved" && req.AccountID != nil {
+		// approved 且有账号时嵌套账号视图；本人 approved 才带 password(secret)。
+		if req.Status == "approved" && req.AccountID != nil {
 			if acc, gerr := store.GetProxyAccountByID(ctx, *req.AccountID); gerr == nil && acc != nil {
-				out["secret"] = acc.Secret
+				req.Account = buildAccountView(acc, isSelf)
+				// 兼容：顶层 secret 仍保留（本人 approved）。
+				if isSelf {
+					out["secret"] = acc.Secret
+				}
 			}
 		}
 		ack(util.OK(out))

@@ -1304,6 +1304,18 @@ type ProxyRequestItem struct {
 	ExpiresAt    *string `json:"expiresAt"`
 	CreatedAt    string  `json:"createdAt"`
 	UpdatedAt    string  `json:"updatedAt"`
+	// Account 嵌套账号连接信息（approved 且有账号时；否则 null）。list 不带 password；get(本人)才带。
+	Account *ProxyAccountView `json:"account"`
+}
+
+// ProxyAccountView 出网账号连接视图（供客户端 SetProxy）。
+type ProxyAccountView struct {
+	ID        int64   `json:"id"`
+	Host      string  `json:"host"`
+	Port      int     `json:"port"`
+	Username  string  `json:"username"`
+	ExpiresAt *string `json:"expiresAt"`
+	Password  *string `json:"password,omitempty"` // 仅 get 本人 approved 时带
 }
 
 // AssetItem 资产视图。
