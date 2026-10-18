@@ -11,4 +11,4 @@ dist/
 # Node 残留（本仓库为 Go 移植，不保留 node 产物）
 node_modules/
 internal/http/files_escape_test.go
-__debug_bin*
+__debug_bin**.exe
