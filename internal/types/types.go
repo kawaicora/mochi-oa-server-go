@@ -35,6 +35,7 @@ type CompanyRow struct {
 	Name      string    `db:"name" gorm:"type:varchar(128);not null"`
 	Code      string    `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
 	OwnerID   int64     `db:"owner_id" gorm:"index;type:bigint unsigned;not null"`
+	Avatar    string    `db:"avatar" gorm:"type:varchar(255);not null;default:''"` // 公司 logo（图片 URL，可空=默认）
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
@@ -468,6 +469,29 @@ type AttendanceRequestRow struct {
 	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// ExpenseRequestRow 对应 expenses 表（报销申请，公司隔离）。
+// category 报销类型；amount 金额（decimal(12,2)）；evidence 凭证图片 URL JSON 数组。
+// 无唯一约束：同一人可多次发起。审批流 pending → approved/rejected。
+type ExpenseRequestRow struct {
+	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Category      string     `db:"category" gorm:"type:varchar(32);not null"`  // 报销类型
+	Amount        float64    `db:"amount" gorm:"type:decimal(12,2);not null"`  // 金额
+	Reason        string     `db:"reason" gorm:"type:text;not null"`           // HTML 富文本事由
+	Evidence      string     `db:"evidence" gorm:"type:json"`                  // 凭证图片 URL JSON 数组
+	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"`
+	ApproverID    *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
+	ApprovalNote  *string    `db:"approval_note" gorm:"type:text"`
+	ApprovedAt    *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
+	ApproverIDs   string     `db:"approver_ids" gorm:"type:json"`
+	CcIDs         string     `db:"cc_ids" gorm:"type:json"`
+	CcViewedIDs   string     `db:"cc_viewed_ids" gorm:"type:json"`
+	NotifyStopped bool       `db:"notify_stopped" gorm:"type:tinyint(1);not null;default:0"`
+	CreatedAt     time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // CheckinRow 对应 checkins 表（打卡记录，公司隔离）。无唯一约束：一天可多次打卡，
 // 前端用当天 count>=2 判断「上下班正常」。
 type CheckinRow struct {
@@ -617,6 +641,7 @@ func (AfdianOrderRow) TableName() string            { return "afdian_orders" }
 func (ReportTemplateRow) TableName() string         { return "report_templates" }
 func (ReportRow) TableName() string                 { return "reports" }
 func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
+func (ExpenseRequestRow) TableName() string         { return "expenses" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 func (CompanyCheckinRulesRow) TableName() string    { return "company_checkin_rules" }
@@ -659,6 +684,7 @@ type Company struct {
 	Name      string `json:"name"`
 	Code      string `json:"code"`
 	OwnerID   int64  `json:"ownerId"`
+	Avatar    string `json:"avatar"` // 公司 logo（图片 URL，可空=默认）
 	CreatedAt string `json:"createdAt"`
 }
 
@@ -1239,6 +1265,29 @@ type AttendanceRequest struct {
 	Nick          string   `json:"nick"`
 	Username      string   `json:"username"`
 	NotifyStopped bool     `json:"notifyStopped"` // 业务通知循环提醒已停止
+}
+
+// ExpenseRequest 报销申请 JSON 视图（联表补发起人 nick/username）。
+type ExpenseRequest struct {
+	ID            int64    `json:"id"`
+	CompanyID     int64    `json:"companyId"`
+	UserID        int64    `json:"userId"`
+	Category      string   `json:"category"` // 报销类型
+	Amount        float64  `json:"amount"`   // 金额
+	Reason        string   `json:"reason"`   // HTML 富文本事由
+	Evidence      []string `json:"evidence"` // 凭证图片 URL
+	Status        string   `json:"status"`   // pending|approved|rejected
+	ApproverID    *int64   `json:"approverId"`
+	ApprovalNote  *string  `json:"approvalNote"`
+	ApprovedAt    *string  `json:"approvedAt"`
+	ApproverIDs   []int64  `json:"approverIds"`
+	CcIDs         []int64  `json:"ccIds"`
+	CcViewedIds   []int64  `json:"ccViewedIds,omitempty"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	Nick          string   `json:"nick"`
+	Username      string   `json:"username"`
+	NotifyStopped bool     `json:"notifyStopped"`
 }
 
 // CheckinItem 单条打卡记录（联表补发起人 nick/username）。

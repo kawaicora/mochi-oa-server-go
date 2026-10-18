@@ -156,7 +156,7 @@ func derefInt64(p *int64) int64 {
 
 // rowToCompany Row → Company。
 func rowToCompany(r *types.CompanyRow) types.Company {
-	return types.Company{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, CreatedAt: toIso(r.CreatedAt)}
+	return types.Company{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, Avatar: r.Avatar, CreatedAt: toIso(r.CreatedAt)}
 }
 
 // rowToDepartment Row → Department。

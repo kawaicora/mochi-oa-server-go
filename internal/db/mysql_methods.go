@@ -306,6 +306,7 @@ type membershipRow struct {
 	Name      string    `gorm:"column:name"`
 	Code      string    `gorm:"column:code"`
 	OwnerID   int64     `gorm:"column:owner_id"`
+	Avatar    string    `gorm:"column:avatar"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	Role      string    `gorm:"column:role"`
 }
@@ -314,7 +315,7 @@ type membershipRow struct {
 func (s *MySqlStore) GetUserCompanies(ctx context.Context, userID int64) ([]types.Membership, error) {
 	rows := []membershipRow{}
 	if err := s.gorm.WithContext(ctx).Table("company_members m").
-		Select("c.id, c.name, c.code, c.owner_id, c.created_at, m.role").
+		Select("c.id, c.name, c.code, c.owner_id, c.avatar, c.created_at, m.role").
 		Joins("JOIN companies c ON c.id = m.company_id").
 		Where("m.user_id = ?", userID).
 		Order("m.company_id ASC").
@@ -323,7 +324,7 @@ func (s *MySqlStore) GetUserCompanies(ctx context.Context, userID int64) ([]type
 	}
 	out := []types.Membership{}
 	for _, r := range rows {
-		cr := types.CompanyRow{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, CreatedAt: r.CreatedAt}
+		cr := types.CompanyRow{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, Avatar: r.Avatar, CreatedAt: r.CreatedAt}
 		out = append(out, types.Membership{Company: rowToCompany(&cr), Role: r.Role})
 	}
 	return out, nil
@@ -341,6 +342,13 @@ func (s *MySqlStore) RenameCompany(ctx context.Context, companyID int64, name st
 		return &NotFoundError{Msg: "company not found"}
 	}
 	return nil
+}
+
+// UpdateCompanyLogo 更新公司 logo（avatar URL）。
+func (s *MySqlStore) UpdateCompanyLogo(ctx context.Context, companyID int64, avatar string) error {
+	return s.gorm.WithContext(ctx).Table("companies").
+		Where("id = ?", companyID).
+		Updates(map[string]any{"avatar": avatar}).Error
 }
 
 // SetCompanyOwner 转让公司（更新 owner_id）。

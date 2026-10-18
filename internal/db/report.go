@@ -112,6 +112,28 @@ func decodeRecipients(raw string) []int64 {
 	return out
 }
 
+// encodeStringArray 字符串数组 → JSON 字符串（空数组落 "[]"）。
+func encodeStringArray(vals []string) string {
+	if len(vals) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(vals)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// decodeStringArray JSON 字符串 → 字符串数组（空串/损坏回退空数组，绝不 nil）。
+func decodeStringArray(raw string) []string {
+	out := []string{}
+	if raw == "" {
+		return out
+	}
+	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}
+
 // ==================== 报告模板 ====================
 
 // CreateReportTemplate 创建模板（admin/owner 在 handler 侧把关）。
