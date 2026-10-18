@@ -63,12 +63,14 @@ func (s *MySqlStore) EnsureDefaultJobs(ctx context.Context, companyID int64) (in
 		return 0, nil
 	}
 	now := time.Now().UTC()
-	rows := make([]types.JobRow, 0, len(defaultJobNames))
+	// 注意：JobRow.Enabled 是 bool，GORM 会把零值 false 当作未设置而走 DB DEFAULT=1，
+	// 导致默认职位被插成 enabled=1。这里用 map 显式写 enabled=false。
+	rows := make([]map[string]any, 0, len(defaultJobNames))
 	for i, name := range defaultJobNames {
 		desc := ""
-		rows = append(rows, types.JobRow{
-			CompanyID: companyID, Name: name, Description: &desc,
-			Enabled: true, SortOrder: int64(i), CreatedAt: now, UpdatedAt: now,
+		rows = append(rows, map[string]any{
+			"company_id": companyID, "name": name, "description": &desc,
+			"enabled": false, "sort_order": int64(i), "created_at": now, "updated_at": now,
 		})
 	}
 	if err := s.gorm.WithContext(ctx).Table("jobs").Create(&rows).Error; err != nil {

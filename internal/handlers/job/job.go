@@ -175,6 +175,11 @@ func RegisterJobHandlers(srv socketapi.Server, store db.Store) {
 				ack(util.Fail("职位不在该公司"))
 				return
 			}
+			// 职位必须已启用（默认禁用，管理员手动启用后才可绑定）。
+			if en, found := jobEnabled(ctx, store, cid, jid); !found || !en {
+				ack(util.Fail("该职位已禁用，无法绑定"))
+				return
+			}
 			jobID = &jid
 		}
 		var extra *string
@@ -215,7 +220,7 @@ func RegisterJobHandlers(srv socketapi.Server, store db.Store) {
 
 // jobBelongsCompany 校验职位属于该公司（通过 ListJobs 全量匹配；职位量小可接受）。
 func jobBelongsCompany(ctx context.Context, store db.Store, cid, jobID int64) bool {
-	jobs, _, err := store.ListJobs(ctx, cid, "", false, 1, 100)
+	jobs, _, err := store.ListJobs(ctx, cid, "", false, 1, 500)
 	if err != nil {
 		return false
 	}
@@ -225,6 +230,20 @@ func jobBelongsCompany(ctx context.Context, store db.Store, cid, jobID int64) bo
 		}
 	}
 	return false
+}
+
+// jobEnabled 查职位是否已启用（admin 启用后才可绑定）。
+func jobEnabled(ctx context.Context, store db.Store, cid, jobID int64) (bool, bool) {
+	jobs, _, err := store.ListJobs(ctx, cid, "", false, 1, 500)
+	if err != nil {
+		return false, false
+	}
+	for _, j := range jobs {
+		if j.ID == jobID {
+			return j.Enabled, true
+		}
+	}
+	return false, false
 }
 
 // ─── 私有工具（同构副本） ───
