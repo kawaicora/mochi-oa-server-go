@@ -526,6 +526,11 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		// 处理时自动停止循环提醒（幂等）。
+		if err := store.StopAttendanceNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "attendance:approve 置 notify_stopped 失败", "id", id, "error", err.Error())
+		}
+		updated.NotifyStopped = true
 		// 业务通知：审批通过 → 推给申请人本人。
 		typeLabel := attendanceTypeLabel(updated.Type)
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
@@ -571,6 +576,11 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		// 处理时自动停止循环提醒（幂等）。
+		if err := store.StopAttendanceNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "attendance:reject 置 notify_stopped 失败", "id", id, "error", err.Error())
+		}
+		updated.NotifyStopped = true
 		// 业务通知：审批拒绝 → 推给申请人本人（含拒绝原因摘要）。
 		typeLabel := attendanceTypeLabel(updated.Type)
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
