@@ -31,6 +31,20 @@ var attendanceTypes = map[string]struct{}{
 	"comp_time": {}, // 调休
 }
 
+// attendanceTypeLabel 申请类型中文显示名（业务通知标题/正文用）。
+func attendanceTypeLabel(typ string) string {
+	switch typ {
+	case "leave":
+		return "请假"
+	case "comp_time":
+		return "调休"
+	case "make_up":
+		return "补卡"
+	default:
+		return "考勤"
+	}
+}
+
 // ─── 共享小工具（本包私有副本，与 report/org/task 包同款语义） ───
 
 func getAuth(c socketapi.Conn) *types.Auth {
@@ -284,6 +298,18 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("创建失败"))
 			return
 		}
+		// 业务通知（kind=company）：申请成功 → 审批人全量 + 抄送人（含自审批/自抄送）。
+		typeLabel := attendanceTypeLabel(typ)
+		notifyUsers := append([]int64{}, approverIDs...)
+		notifyUsers = append(notifyUsers, ccIDs...)
+		for _, uid := range notifyUsers {
+			_ = srv.EmitTo(util.UserRoom(uid), "attendance:request:notification", map[string]any{
+				"kind": "company", "type": "attendance_request_created", "companyId": cid,
+				"requestId": req.ID, "title": "新的" + typeLabel + "申请",
+				"body":  req.Nick + " 提交了" + typeLabel + "申请，等待您审批",
+				"byUserId": a.ID, "byNick": req.Nick, "note": reason,
+			})
+		}
 		ack(util.OK(map[string]any{"request": req}))
 	})
 
@@ -462,6 +488,14 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		// 业务通知：审批通过 → 推给申请人本人。
+		typeLabel := attendanceTypeLabel(updated.Type)
+		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
+			"kind": "company", "type": "attendance_request_approved", "companyId": cid,
+			"requestId": updated.ID, "title": typeLabel + "申请已通过",
+			"body":  "您的" + typeLabel + "申请已被 " + a.Nick + " 通过",
+			"byUserId": a.ID, "byNick": a.Nick, "note": "",
+		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
 
@@ -499,6 +533,14 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		// 业务通知：审批拒绝 → 推给申请人本人（含拒绝原因摘要）。
+		typeLabel := attendanceTypeLabel(updated.Type)
+		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
+			"kind": "company", "type": "attendance_request_rejected", "companyId": cid,
+			"requestId": updated.ID, "title": typeLabel + "申请被拒绝",
+			"body":  "您的" + typeLabel + "申请被 " + a.Nick + " 拒绝",
+			"byUserId": a.ID, "byNick": a.Nick, "note": note,
+		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
 }
