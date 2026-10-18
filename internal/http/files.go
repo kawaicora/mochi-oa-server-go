@@ -256,10 +256,9 @@ func authedUserId(r *http.Request, store db.Store, cfg *config.ServerConfig) int
 	return 0
 }
 
-// sessionNotExpired 会话未过期（ExpiresAt 是 ISO 字符串 "2006-01-02T15:04:05.000Z"，
-// 与 auth.go sessionView 同一格式；解析失败视为已过期，与 TS new Date(...) 兜底一致）。
+// sessionNotExpired 会话未过期（ExpiresAt 为本地 +08:00 偏移 ISO，兼容旧 Z；RFC3339Nano 同时接受两种格式）。
 func sessionNotExpired(expiresAt string) bool {
-	t, err := time.Parse("2006-01-02T15:04:05.000Z", expiresAt)
+	t, err := time.Parse(time.RFC3339Nano, expiresAt)
 	if err != nil {
 		return false
 	}

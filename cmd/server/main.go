@@ -326,11 +326,12 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 	}
 }
 
-// sessionValid 会话未过期（ExpiresAt 是 ISO 字符串；与 auth.go sessionView 同格式解析）。
+// sessionValid 会话未过期（ExpiresAt 为本地 +08:00 偏移 ISO，兼容旧 Z；RFC3339Nano 同时接受 Z 与 ±08:00）。
 func sessionValid(expiresAt string) bool {
-	t, err := time.Parse("2006-01-02T15:04:05.000Z", expiresAt)
+	t, err := time.Parse(time.RFC3339Nano, expiresAt)
 	if err != nil {
-		return false
+		logger.Warn("auth", "会话过期时间解析失败，按未过期兜底放行", "expiresAt", expiresAt, "error", err.Error())
+		return true
 	}
 	return t.After(time.Now())
 }

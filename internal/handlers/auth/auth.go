@@ -423,7 +423,7 @@ func (h *handler) resolveSessionIp(c socketapi.Conn, clientIP string) string {
 // sessionView 会话对外视图（不含 tokenHash，逐字对齐 TS）。
 func sessionView(s *types.Session) map[string]any {
 	expired := false
-	if t, err := time.Parse("2006-01-02T15:04:05.000Z", s.ExpiresAt); err == nil {
+	if t, err := time.Parse(time.RFC3339Nano, s.ExpiresAt); err == nil {
 		expired = t.Before(time.Now())
 	}
 	return map[string]any{
@@ -506,7 +506,7 @@ func (h *handler) notifyOtherSessions(ctx context.Context, userID int64, newSess
 		if o.ID == newSessionID {
 			continue
 		}
-		if t, err := time.Parse("2006-01-02T15:04:05.000Z", o.ExpiresAt); err == nil && t.Before(time.Now()) {
+		if t, err := time.Parse(time.RFC3339Nano, o.ExpiresAt); err == nil && t.Before(time.Now()) {
 			continue
 		}
 		_ = h.s.EmitTo(util.SessionRoom(o.ID), "auth:newDeviceLogin", map[string]any{
