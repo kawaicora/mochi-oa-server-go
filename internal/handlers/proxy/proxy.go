@@ -587,6 +587,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 				ack(util.Fail("审批失败"))
 				return
 			}
+			// 处理时自动停止循环提醒（幂等）。
+			if err := store.StopProxyNotification(ctx, id, cid); err != nil {
+				logger.Error(mod, "proxy:request:approve 置 notify_stopped 失败", "id", id, "error", err.Error())
+			}
+			updated.NotifyStopped = true
 			_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
 				"kind": "company", "type": "proxy_request_approved", "companyId": cid,
 				"requestId": id, "title": "上网申请已通过",
@@ -625,6 +630,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("审批失败"))
 			return
 		}
+		// 处理时自动停止循环提醒（幂等）。
+		if err := store.StopProxyNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "proxy:request:approve(renew) 置 notify_stopped 失败", "id", id, "error", err.Error())
+		}
+		updated.NotifyStopped = true
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
 			"kind": "company", "type": "proxy_request_approved", "companyId": cid,
 			"requestId": id, "title": "上网申请已通过",
@@ -677,6 +687,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("操作失败"))
 			return
 		}
+		// 处理时自动停止循环提醒（幂等）。
+		if err := store.StopProxyNotification(ctx, id, cid); err != nil {
+			logger.Error(mod, "proxy:request:reject 置 notify_stopped 失败", "id", id, "error", err.Error())
+		}
+		updated.NotifyStopped = true
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
 			"kind": "company", "type": "proxy_request_rejected", "companyId": cid,
 			"requestId": id, "title": "上网申请被拒绝",

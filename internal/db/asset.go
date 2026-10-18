@@ -17,6 +17,7 @@ func assetToItem(r types.AssetRow) types.AssetItem {
 		ID:        r.ID,
 		CompanyID: r.CompanyID,
 		Code:      r.Code,
+		QRCode:    fmt.Sprintf("MOA-ASSET:%d:%d", r.CompanyID, r.ID),
 		Name:      r.Name,
 		Price:     r.Price,
 		AssetType: r.AssetType,

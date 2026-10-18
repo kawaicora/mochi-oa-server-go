@@ -81,19 +81,36 @@ func (s *MySqlStore) EnsureDefaultJobs(ctx context.Context, companyID int64) (in
 }
 
 // CreateJob 新建职位（先 ensure 默认清单，让管理员在其上增改）。
+// 默认 enabled=false（未启用），管理员在职位管理启用后成员才可被绑定。
+// 注意：JobRow.Enabled 是 bool，GORM 把零值 false 当未设置走 DB DEFAULT=1，
+// 所以必须用 map 显式写 enabled=false（与 EnsureDefaultJobs 同构）。
 func (s *MySqlStore) CreateJob(ctx context.Context, in CreateJobInput) (*types.JobItem, error) {
 	if _, err := s.EnsureDefaultJobs(ctx, in.CompanyID); err != nil {
 		logger.Error("db/job", "job:create 播种默认清单失败", "companyId", in.CompanyID, "error", err.Error())
 	}
 	now := time.Now().UTC()
-	row := types.JobRow{
-		CompanyID: in.CompanyID, Name: in.Name, Description: in.Description,
-		Enabled: true, SortOrder: in.SortOrder, CreatedAt: now, UpdatedAt: now,
+	row := map[string]any{
+		"company_id":  in.CompanyID,
+		"name":        in.Name,
+		"description": in.Description,
+		"enabled":     false, // 默认不启用
+		"sort_order":  in.SortOrder,
+		"created_at":  now,
+		"updated_at":  now,
 	}
 	if err := s.gorm.WithContext(ctx).Table("jobs").Create(&row).Error; err != nil {
+		logger.Error("db/job", "job:create 插入失败", "companyId", in.CompanyID, "name", in.Name, "error", err.Error())
 		return nil, err
 	}
-	it := jobToItem(row)
+	// 回查自增 ID（map insert 不回填 struct）。
+	var created types.JobRow
+	if err := s.gorm.WithContext(ctx).Table("jobs").
+		Where("company_id = ? AND name = ? AND created_at = ?", in.CompanyID, in.Name, now).
+		Order("id DESC").Take(&created).Error; err != nil {
+		logger.Error("db/job", "job:create 回查失败", "companyId", in.CompanyID, "name", in.Name, "error", err.Error())
+		return nil, err
+	}
+	it := jobToItem(created)
 	return &it, nil
 }
 

@@ -1326,6 +1326,7 @@ type AssetItem struct {
 	ID        int64   `json:"id"`
 	CompanyID int64   `json:"companyId"`
 	Code      string  `json:"code"`
+	QRCode    string  `json:"qrCode"` // 二维码载荷：MOA-ASSET:<companyId>:<id>，客户端扫码解析后调 asset:get
 	Name      string  `json:"name"`
 	Price     float64 `json:"price"`
 	AssetType string  `json:"assetType"`
