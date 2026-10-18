@@ -102,10 +102,10 @@ func (s *MySqlStore) CreateJob(ctx context.Context, in CreateJobInput) (*types.J
 		logger.Error("db/job", "job:create 插入失败", "companyId", in.CompanyID, "name", in.Name, "error", err.Error())
 		return nil, err
 	}
-	// 回查自增 ID（map insert 不回填 struct）。
+	// 回查自增 ID（map insert 不回填 struct）。按 company+name 取最新一条（避免 created_at 纳秒精度不匹配）。
 	var created types.JobRow
 	if err := s.gorm.WithContext(ctx).Table("jobs").
-		Where("company_id = ? AND name = ? AND created_at = ?", in.CompanyID, in.Name, now).
+		Where("company_id = ? AND name = ?", in.CompanyID, in.Name).
 		Order("id DESC").Take(&created).Error; err != nil {
 		logger.Error("db/job", "job:create 回查失败", "companyId", in.CompanyID, "name", in.Name, "error", err.Error())
 		return nil, err
