@@ -88,6 +88,8 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.ReportTemplateRow{},
 		&types.ReportRow{},
 		&types.AttendanceRequestRow{},
+		&types.ExpenseRequestRow{},
+		&types.AdvanceRequestRow{},
 		&types.CheckinRow{},
 		&types.CompanyCheckinSettingsRow{},
 		&types.CompanyCheckinRulesRow{},
@@ -102,8 +104,8 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		return err
 	}
 	// messages.kind 为 MySQL ENUM，AutoMigrate 不会扩展枚举值；
-	// 网络申请卡片 proxy_card 需加入枚举（重复执行幂等，不存在时才新增值）。
-	alterSQL := "ALTER TABLE messages MODIFY `kind` ENUM('text','image','file','video','audio','folder','proxy_card') NOT NULL DEFAULT 'text'"
+	// 网络申请卡片 proxy_card / 报销卡片 expense_card / 备用金卡片 advance_card 需加入枚举（重复执行幂等）。
+	alterSQL := "ALTER TABLE messages MODIFY `kind` ENUM('text','image','file','video','audio','folder','proxy_card','expense_card','advance_card') NOT NULL DEFAULT 'text'"
 	if err := s.gorm.WithContext(ctx).Exec(alterSQL).Error; err != nil {
 		logger.Error("db", "扩展 messages.kind 枚举失败", "error", err.Error())
 		// 不阻断启动（旧库可能结构差异），仅记录。

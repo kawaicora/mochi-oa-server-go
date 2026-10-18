@@ -29,10 +29,12 @@ import (
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/handlers/asset"
+	"mochi-oa-server-go/internal/handlers/advance"
 	"mochi-oa-server-go/internal/handlers/attendance"
 	"mochi-oa-server-go/internal/handlers/auth"
 	"mochi-oa-server-go/internal/handlers/checkin"
 	"mochi-oa-server-go/internal/handlers/conversation"
+	"mochi-oa-server-go/internal/handlers/expense"
 	"mochi-oa-server-go/internal/handlers/job"
 	"mochi-oa-server-go/internal/handlers/mailholiday"
 	"mochi-oa-server-go/internal/handlers/org"
@@ -158,6 +160,8 @@ func main() {
 	mailholiday.RegisterAdminUsers(srv, store, cfg)
 	report.RegisterReportHandlers(srv, store, cfg)
 	attendance.RegisterAttendanceHandlers(srv, store)
+	expense.RegisterExpenseHandlers(srv, store)
+	advance.RegisterAdvanceHandlers(srv, store)
 	checkin.RegisterCheckinHandlers(srv, store)
 	checkin.RegisterStatHandlers(srv, store, cfg)
 	checkin.StartMonthlyStatScheduler(srv, store, cfg)

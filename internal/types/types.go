@@ -492,6 +492,29 @@ type ExpenseRequestRow struct {
 	UpdatedAt     time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// AdvanceRequestRow 对应 advances 表（备用金申请，公司隔离）。
+// 字段与 ExpenseRequestRow 完全同构：category 备用金类型；amount 金额；reason 富文本 HTML；
+// evidence 凭证附件 URL JSON 数组。审批流 pending → approved/rejected。
+type AdvanceRequestRow struct {
+	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Category      string     `db:"category" gorm:"type:varchar(32);not null"`
+	Amount        float64    `db:"amount" gorm:"type:decimal(12,2);not null"`
+	Reason        string     `db:"reason" gorm:"type:text;not null"`
+	Evidence      string     `db:"evidence" gorm:"type:json"`
+	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"`
+	ApproverID    *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
+	ApprovalNote  *string    `db:"approval_note" gorm:"type:text"`
+	ApprovedAt    *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
+	ApproverIDs   string     `db:"approver_ids" gorm:"type:json"`
+	CcIDs         string     `db:"cc_ids" gorm:"type:json"`
+	CcViewedIDs   string     `db:"cc_viewed_ids" gorm:"type:json"`
+	NotifyStopped bool       `db:"notify_stopped" gorm:"type:tinyint(1);not null;default:0"`
+	CreatedAt     time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // CheckinRow 对应 checkins 表（打卡记录，公司隔离）。无唯一约束：一天可多次打卡，
 // 前端用当天 count>=2 判断「上下班正常」。
 type CheckinRow struct {
@@ -642,6 +665,7 @@ func (ReportTemplateRow) TableName() string         { return "report_templates" 
 func (ReportRow) TableName() string                 { return "reports" }
 func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
 func (ExpenseRequestRow) TableName() string         { return "expenses" }
+func (AdvanceRequestRow) TableName() string        { return "advances" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 func (CompanyCheckinRulesRow) TableName() string    { return "company_checkin_rules" }
@@ -1276,6 +1300,29 @@ type ExpenseRequest struct {
 	Amount        float64  `json:"amount"`   // 金额
 	Reason        string   `json:"reason"`   // HTML 富文本事由
 	Evidence      []string `json:"evidence"` // 凭证图片 URL
+	Status        string   `json:"status"`   // pending|approved|rejected
+	ApproverID    *int64   `json:"approverId"`
+	ApprovalNote  *string  `json:"approvalNote"`
+	ApprovedAt    *string  `json:"approvedAt"`
+	ApproverIDs   []int64  `json:"approverIds"`
+	CcIDs         []int64  `json:"ccIds"`
+	CcViewedIds   []int64  `json:"ccViewedIds,omitempty"`
+	CreatedAt     string   `json:"createdAt"`
+	UpdatedAt     string   `json:"updatedAt"`
+	Nick          string   `json:"nick"`
+	Username      string   `json:"username"`
+	NotifyStopped bool     `json:"notifyStopped"`
+}
+
+// AdvanceRequest 备用金申请 JSON 视图（联表补发起人 nick/username，同 ExpenseRequest 风格）。
+type AdvanceRequest struct {
+	ID            int64    `json:"id"`
+	CompanyID     int64    `json:"companyId"`
+	UserID        int64    `json:"userId"`
+	Category      string   `json:"category"` // 备用金类型
+	Amount        float64  `json:"amount"`  // 金额
+	Reason        string   `json:"reason"`  // HTML 富文本事由
+	Evidence      []string `json:"evidence"` // 凭证附件 URL
 	Status        string   `json:"status"`   // pending|approved|rejected
 	ApproverID    *int64   `json:"approverId"`
 	ApprovalNote  *string  `json:"approvalNote"`

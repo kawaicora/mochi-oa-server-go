@@ -611,6 +611,28 @@ type Store interface {
 	// StopAttendanceNotification 置 notify_stopped=1（循环提醒停止，幂等）。
 	StopAttendanceNotification(ctx context.Context, requestID, companyID int64) error
 
+	// ─── 报销申请 ───
+	CreateExpenseRequest(ctx context.Context, in CreateExpenseRequestInput) (*types.ExpenseRequest, error)
+	GetExpenseByID(ctx context.Context, id int64) (*types.ExpenseRequest, error)
+	ListExpenseRequestsByUser(ctx context.Context, companyID, userID int64, category string, page, pageSize int64) ([]types.ExpenseRequest, int64, error)
+	ApproveExpenseRequest(ctx context.Context, id, approverID int64) (*types.ExpenseRequest, error)
+	RejectExpenseRequest(ctx context.Context, id int64, note string) (*types.ExpenseRequest, error)
+	ListReceivedExpense(ctx context.Context, companyID, userID int64) ([]types.ExpenseRequest, error)
+	ListReceivedExpenseCC(ctx context.Context, companyID, userID int64) ([]types.ExpenseRequest, error)
+	MarkExpenseCCViewed(ctx context.Context, requestID, userID int64) error
+	StopExpenseNotification(ctx context.Context, requestID int64, companyID int64) error
+
+	// ─── 备用金申请 ───
+	CreateAdvanceRequest(ctx context.Context, in CreateAdvanceRequestInput) (*types.AdvanceRequest, error)
+	GetAdvanceByID(ctx context.Context, id int64) (*types.AdvanceRequest, error)
+	ListAdvanceRequestsByUser(ctx context.Context, companyID, userID int64, category string, page, pageSize int64) ([]types.AdvanceRequest, int64, error)
+	ApproveAdvanceRequest(ctx context.Context, id, approverID int64) (*types.AdvanceRequest, error)
+	RejectAdvanceRequest(ctx context.Context, id int64, note string) (*types.AdvanceRequest, error)
+	ListReceivedAdvance(ctx context.Context, companyID, userID int64) ([]types.AdvanceRequest, error)
+	ListReceivedAdvanceCC(ctx context.Context, companyID, userID int64) ([]types.AdvanceRequest, error)
+	MarkAdvanceCCViewed(ctx context.Context, requestID, userID int64) error
+	StopAdvanceNotification(ctx context.Context, requestID int64, companyID int64) error
+
 	// ─── 打卡 ───
 	// CreateCheckin 写入/更新当天打卡：0条→INSERT(first)；1条→INSERT(second)；≥2条→UPDATE 当天最后一条 check_time(override，不新增行)。返回 item 与 kind(first/second/override)。
 	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error)
