@@ -380,6 +380,16 @@ func (h *filesHandler) uploadOne(w http.ResponseWriter, r *http.Request) {
 	}
 	company := "default"
 	if cid, err := strconv.ParseInt(r.URL.Query().Get("company"), 10, 64); err == nil && cid > 0 {
+		// P2-1 修复：指定公司目录时校验登录用户为该公司成员，否则 403。
+		if role, err := h.store.GetMemberRole(r.Context(), cid, uid); err != nil {
+			logger.Error("http/files", "上传查询成员角色失败", "companyId", cid, "userId", uid, "error", err.Error())
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "校验失败"})
+			return
+		} else if role == "" {
+			logger.Warn("http/files", "上传非公司成员拒绝", "companyId", cid, "userId", uid)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "未加入该公司"})
+			return
+		}
 		company = strconv.FormatInt(cid, 10)
 	}
 	// multer .single('file') 语义：取字段 file；大小超 maxBytes 拒收。
@@ -436,7 +446,7 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "uuid": rec.UUID,
 		"filename": rec.Filename, "fileName": rec.Filename, // 两个 key 都给（契约风险4）
-		"mime":     rec.Mime, "size": rec.Size,
+		"mime": rec.Mime, "size": rec.Size,
 		"url": pubUrl(h.cfg, rec.URL),
 	})
 }
@@ -548,6 +558,16 @@ func (h *filesHandler) chunkComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	company := "default"
 	if cid, err := strconv.ParseInt(r.URL.Query().Get("company"), 10, 64); err == nil && cid > 0 {
+		// P2-1 修复：指定公司目录时校验登录用户为该公司成员，否则 403。
+		if role, err := h.store.GetMemberRole(r.Context(), cid, uid); err != nil {
+			logger.Error("http/files", "上传查询成员角色失败", "companyId", cid, "userId", uid, "error", err.Error())
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "校验失败"})
+			return
+		} else if role == "" {
+			logger.Warn("http/files", "上传非公司成员拒绝", "companyId", cid, "userId", uid)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "未加入该公司"})
+			return
+		}
 		company = strconv.FormatInt(cid, 10)
 	}
 	if d.UploadID == "" || d.TotalChunks <= 0 || d.TotalChunks > 10000 {

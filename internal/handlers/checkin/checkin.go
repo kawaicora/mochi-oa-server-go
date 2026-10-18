@@ -382,9 +382,10 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		if r == nil {
 			// 懒播种默认规则：standard 双休，周一~五 09:30-18:30，周六日休息。
 			def := defaultStandardRules()
+			graceLate, _ := toInt64(def["grace_late_min"])
+			graceEarly, _ := toInt64(def["grace_early_min"])
 			if err := store.SaveCheckinRules(ctx, cid, def["mode"].(string),
-				int64(def["grace_late_min"].(float64)), int64(def["grace_early_min"].(float64)),
-				def["week_rules"].(string), nil); err != nil {
+				graceLate, graceEarly, def["week_rules"].(string), nil); err != nil {
 				logger.Error(mod, "checkin:rules:get 懒播种失败", "companyId", cid, "error", err.Error())
 				ack(util.Fail("获取失败"))
 				return

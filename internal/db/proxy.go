@@ -120,10 +120,10 @@ func (s *MySqlStore) ListProxyAccounts(ctx context.Context, companyID int64, pag
 	return out, total, nil
 }
 
-// DisableProxyAccount 置 disabled。
-func (s *MySqlStore) DisableProxyAccount(ctx context.Context, id int64) error {
+// DisableProxyAccount 置 disabled；带 company_id 双保险，跨公司不可写。
+func (s *MySqlStore) DisableProxyAccount(ctx context.Context, companyID, id int64) error {
 	res := s.gorm.WithContext(ctx).Table("proxy_accounts").
-		Where("id = ?", id).
+		Where("id = ? AND company_id = ?", id, companyID).
 		Updates(map[string]any{"status": "disabled", "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		return res.Error
@@ -134,9 +134,9 @@ func (s *MySqlStore) DisableProxyAccount(ctx context.Context, id int64) error {
 	return nil
 }
 
-// DeleteProxyAccount 物理删除。
-func (s *MySqlStore) DeleteProxyAccount(ctx context.Context, id int64) error {
-	res := s.gorm.WithContext(ctx).Table("proxy_accounts").Where("id = ?", id).Delete(nil)
+// DeleteProxyAccount 物理删除；带 company_id 双保险，跨公司不可删。
+func (s *MySqlStore) DeleteProxyAccount(ctx context.Context, companyID, id int64) error {
+	res := s.gorm.WithContext(ctx).Table("proxy_accounts").Where("id = ? AND company_id = ?", id, companyID).Delete(nil)
 	if res.Error != nil {
 		return res.Error
 	}

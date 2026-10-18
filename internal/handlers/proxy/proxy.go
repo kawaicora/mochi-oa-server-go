@@ -208,10 +208,10 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		ack(util.OK(map[string]any{"accounts": rows, "total": total}))
 	})
 
-	// ---- proxy:account:revoke：立即停用 ----
+	// ---- proxy:account:revoke：立即停用（仅本公司账号） ----
 	srv.On("proxy:account:revoke", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		d := parseData(data)
-		_, _, ok := requireAdmin(c, d, store, ack)
+		_, cid, ok := requireAdmin(c, d, store, ack)
 		if !ok {
 			return
 		}
@@ -220,7 +220,19 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("参数不合法"))
 			return
 		}
-		if err := store.DisableProxyAccount(ctx, id); err != nil {
+		// 跨公司隔离：账号必须属于本公司，否则视为不存在。
+		acc, err := store.GetProxyAccountByID(ctx, id)
+		if err != nil {
+			logger.Error(mod, "proxy:account:revoke 查询失败", "id", id, "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		if acc == nil || acc.CompanyID != cid {
+			logger.Warn(mod, "proxy:account:revoke 越权访问", "id", id, "companyId", cid)
+			ack(util.Fail("账号不存在"))
+			return
+		}
+		if err := store.DisableProxyAccount(ctx, cid, id); err != nil {
 			logger.Error(mod, "proxy:account:revoke 失败", "id", id, "error", err.Error())
 			ack(util.Fail("操作失败"))
 			return
@@ -228,10 +240,10 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		ack(util.OK(map[string]any{}))
 	})
 
-	// ---- proxy:account:delete：物理删除 ----
+	// ---- proxy:account:delete：物理删除（仅本公司账号） ----
 	srv.On("proxy:account:delete", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		d := parseData(data)
-		_, _, ok := requireAdmin(c, d, store, ack)
+		_, cid, ok := requireAdmin(c, d, store, ack)
 		if !ok {
 			return
 		}
@@ -240,7 +252,19 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("参数不合法"))
 			return
 		}
-		if err := store.DeleteProxyAccount(ctx, id); err != nil {
+		// 跨公司隔离：账号必须属于本公司，否则视为不存在。
+		acc, err := store.GetProxyAccountByID(ctx, id)
+		if err != nil {
+			logger.Error(mod, "proxy:account:delete 查询失败", "id", id, "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		if acc == nil || acc.CompanyID != cid {
+			logger.Warn(mod, "proxy:account:delete 越权访问", "id", id, "companyId", cid)
+			ack(util.Fail("账号不存在"))
+			return
+		}
+		if err := store.DeleteProxyAccount(ctx, cid, id); err != nil {
 			logger.Error(mod, "proxy:account:delete 失败", "id", id, "error", err.Error())
 			ack(util.Fail("操作失败"))
 			return

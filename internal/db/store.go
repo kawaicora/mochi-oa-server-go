@@ -624,10 +624,10 @@ type Store interface {
 	ProxyAuthLookup(ctx context.Context, username, secret string) (*types.ProxyAccountRow, error)
 	// ListProxyAccounts 公司账号分页（视图不含 secret）。
 	ListProxyAccounts(ctx context.Context, companyID int64, page, pageSize int64) ([]types.ProxyAccountItem, int64, error)
-	// DisableProxyAccount 置 disabled（立即失效）。
-	DisableProxyAccount(ctx context.Context, id int64) error
-	// DeleteProxyAccount 物理删除。
-	DeleteProxyAccount(ctx context.Context, id int64) error
+	// DisableProxyAccount 置 disabled（立即失效）；带 company_id 双保险，跨公司不可写。
+	DisableProxyAccount(ctx context.Context, companyID, id int64) error
+	// DeleteProxyAccount 物理删除；带 company_id 双保险，跨公司不可删。
+	DeleteProxyAccount(ctx context.Context, companyID, id int64) error
 	// SweepExpiredProxyAccounts 把已过期的 active 账号批量置 disabled，返回处置条数。
 	SweepExpiredProxyAccounts(ctx context.Context) (int64, error)
 	// ReactivateProxyAccount 续期：status=active 且 expires_at=新时间。
