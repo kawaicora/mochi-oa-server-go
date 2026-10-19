@@ -66,8 +66,17 @@ services:
       CLOUDFLARE_TURN_TOKEN: ${CLOUDFLARE_TURN_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       ICE_SERVERS_TOKEN_SECOND: ${ICE_SERVERS_TOKEN_SECOND:-86400}
+
+      # 出网代理（HTTP+SOCKS5）监听与对外地址
+      PROXY_ENABLED: ${PROXY_ENABLED:-false}
+      PROXY_HTTP_PORT: ${PROXY_HTTP_PORT:-8080}
+      PROXY_SOCKS5_PORT: ${PROXY_SOCKS5_PORT:-1080}
+      PROXY_HOST: ${PROXY_HOST:-}
     ports:
       - "${SERVER_PORT:-3000}:${PORT:-80}"
+      # 出网代理映射到宿主机（默认 HTTP 8080 / SOCKS5 1080）
+      - "${PROXY_HTTP_PORT:-8080}:${PROXY_HTTP_PORT:-8080}"
+      - "${PROXY_SOCKS5_PORT:-1080}:${PROXY_SOCKS5_PORT:-1080}"
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
