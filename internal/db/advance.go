@@ -90,6 +90,7 @@ func (s *MySqlStore) CreateAdvanceRequest(ctx context.Context, in CreateAdvanceR
 		Evidence:    encodeStringArray(in.Evidence),
 		ApproverIDs: encodeRecipients(in.ApproverIDs),
 		CcIDs:       encodeRecipients(in.CcIDs),
+		CcViewedIDs: "[]",
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
