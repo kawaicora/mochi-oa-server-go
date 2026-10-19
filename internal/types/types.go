@@ -534,6 +534,7 @@ type CheckinRow struct {
 type CompanyCheckinSettingsRow struct {
 	ID           int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	CompanyID    int64     `db:"company_id" gorm:"uniqueIndex;type:bigint unsigned;not null"`
+	MacEnabled   bool      `db:"mac_enabled" gorm:"type:tinyint;not null;default:0"` // 只允许指定 MAC 打卡开关
 	MacWhitelist string    `db:"mac_whitelist" gorm:"type:json"`
 	IpWhitelist  string    `db:"ip_whitelist" gorm:"type:json"`
 	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
@@ -1364,6 +1365,7 @@ type CheckinDay struct {
 type CheckinSettings struct {
 	ID           int64    `json:"id"`
 	CompanyID    int64    `json:"companyId"`
+	MacEnabled   bool     `json:"macEnabled"` // 只允许指定 MAC 打卡开关
 	MacWhitelist []string `json:"macWhitelist"`
 	IpWhitelist  []string `json:"ipWhitelist"`
 	CreatedAt    string   `json:"createdAt"`

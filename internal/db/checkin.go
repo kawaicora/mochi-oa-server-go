@@ -183,6 +183,7 @@ func (s *MySqlStore) GetCheckinSettings(ctx context.Context, companyID int64) (*
 	return &types.CheckinSettings{
 		ID:           r.ID,
 		CompanyID:    r.CompanyID,
+		MacEnabled:   r.MacEnabled,
 		MacWhitelist: decodeStrings(r.MacWhitelist),
 		IpWhitelist:  decodeStrings(r.IpWhitelist),
 		CreatedAt:    toIso(r.CreatedAt),
@@ -190,8 +191,8 @@ func (s *MySqlStore) GetCheckinSettings(ctx context.Context, companyID int64) (*
 	}, nil
 }
 
-// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。
-func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error) {
+// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。
+func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, macEnabled bool, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error) {
 	now := time.Now().UTC()
 	var existing types.CompanyCheckinSettingsRow
 	err := s.gorm.WithContext(ctx).Table("company_checkin_settings").
@@ -203,6 +204,7 @@ func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, m
 		res := s.gorm.WithContext(ctx).Table("company_checkin_settings").
 			Where("id = ?", existing.ID).
 			Updates(map[string]any{
+				"mac_enabled":   macEnabled,
 				"mac_whitelist": encodeStrings(macWhitelist),
 				"ip_whitelist":  encodeStrings(ipWhitelist),
 				"updated_at":    now,
@@ -214,6 +216,7 @@ func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, m
 	}
 	row := types.CompanyCheckinSettingsRow{
 		CompanyID:    companyID,
+		MacEnabled:   macEnabled,
 		MacWhitelist: encodeStrings(macWhitelist),
 		IpWhitelist:  encodeStrings(ipWhitelist),
 		CreatedAt:    now,

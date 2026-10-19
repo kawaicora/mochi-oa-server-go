@@ -229,10 +229,16 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			return
 		}
 		if settings != nil {
-			if len(settings.MacWhitelist) > 0 {
+			// 仅当「只允许指定 MAC 打卡」开关开启时才启用 MAC 限制。
+			if settings.MacEnabled {
+				if len(settings.MacWhitelist) == 0 {
+					logger.Warn(mod, "checkin:create MAC 开关开启但未配置列表", "companyId", cid, "userId", a.ID, "mac", mac)
+					ack(util.Fail("已开启只允许指定MAC打卡，但尚未配置可打卡MAC列表"))
+					return
+				}
 				if !macInList(settings.MacWhitelist, mac) {
 					logger.Warn(mod, "checkin:create MAC 不在白名单", "companyId", cid, "userId", a.ID, "mac", mac)
-					ack(util.Fail("MAC 不在白名单"))
+					ack(util.Fail("MAC 不在可打卡白名单"))
 					return
 				}
 			}
@@ -333,6 +339,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ipList = s.IpWhitelist
 		}
 		ack(util.OK(map[string]any{"settings": map[string]any{
+			"macEnabled":   s != nil && s.MacEnabled,
 			"macWhitelist": macList,
 			"ipWhitelist":  ipList,
 		}}))
@@ -355,9 +362,20 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("IP 白名单格式不合法"))
 			return
 		}
+		macEnabled := false
+		if v, ok := d["macEnabled"]; ok {
+			switch t := v.(type) {
+			case bool:
+				macEnabled = t
+			case string:
+				macEnabled = t == "true" || t == "1"
+			case float64:
+				macEnabled = t != 0
+			}
+		}
 		macList := dedupMac(macRaw)
 		ipList := dedupPlain(ipRaw)
-		s, err := store.SaveCheckinSettings(ctx, cid, macList, ipList)
+		s, err := store.SaveCheckinSettings(ctx, cid, macEnabled, macList, ipList)
 		if err != nil {
 			logger.Error(mod, "checkin:settings:save 失败", "companyId", cid, "error", err.Error())
 			ack(util.Fail("保存失败"))

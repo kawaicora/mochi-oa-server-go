@@ -640,8 +640,8 @@ type Store interface {
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
-	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。
-	SaveCheckinSettings(ctx context.Context, companyID int64, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error)
+	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。
+	SaveCheckinSettings(ctx context.Context, companyID int64, macEnabled bool, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error)
 
 	// GetCheckinRules 公司打卡排班规则；未配置返回 (nil, nil)。
 	GetCheckinRules(ctx context.Context, companyID int64) (*types.CompanyCheckinRulesRow, error)
