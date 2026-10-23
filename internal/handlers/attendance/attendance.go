@@ -531,6 +531,12 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			logger.Error(mod, "attendance:approve 置 notify_stopped 失败", "id", id, "error", err.Error())
 		}
 		updated.NotifyStopped = true
+		// 补卡也算打卡：make_up 批准后把补卡时间写入 checkins（解析失败仅记日志，不影响审批）。
+		if updated.Type == "make_up" && updated.PunchTime != nil && *updated.PunchTime != "" {
+			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime); err != nil {
+				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", *updated.PunchTime, "error", err.Error())
+			}
+		}
 		// 业务通知：审批通过 → 推给申请人本人。
 		typeLabel := attendanceTypeLabel(updated.Type)
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{

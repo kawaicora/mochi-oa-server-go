@@ -638,6 +638,9 @@ type Store interface {
 	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error)
 	// ListCheckinsByMonth 本人某月全部记录（check_date=月份前缀），联表补昵称。
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
+	// InsertMakeupCheckin 补卡批准后把补卡时间写入 checkins（补卡算打卡）。
+	// punchTime 为本地时间字符串（如 "2026-10-17 09:00"）；解析失败或同时间点已存在时幂等跳过。
+	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime string) error
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。

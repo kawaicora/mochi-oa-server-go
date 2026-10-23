@@ -169,6 +169,39 @@ func (s *MySqlStore) ListCheckinsByMonth(ctx context.Context, companyID, userID 
 	return out, nil
 }
 
+// InsertMakeupCheckin 补卡批准后把补卡时间写入 checkins（补卡也算打卡）。
+//   - punchTime 为本地时间字符串，兼容 "2006-01-02 15:04" 与 "2006-01-02 15:04:05"；
+//   - 按本地时区解析出 check_date（本地日期）与 check_time（转 UTC 存储，与实时打卡一致）；
+//   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
+func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime string) error {
+	t, err := time.ParseInLocation("2006-01-02 15:04", punchTime, localTZ)
+	if err != nil {
+		t, err = time.ParseInLocation("2006-01-02 15:04:05", punchTime, localTZ)
+		if err != nil {
+			return err
+		}
+	}
+	checkDate := t.In(localTZ).Format("2006-01-02")
+	checkTime := t.UTC()
+	var cnt int64
+	if err := s.gorm.WithContext(ctx).Table("checkins").
+		Where("company_id = ? AND user_id = ? AND check_date = ? AND check_time = ?",
+			companyID, userID, checkDate, checkTime).Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return nil // 幂等：已存在同时间点补卡
+	}
+	row := types.CheckinRow{
+		CompanyID: companyID,
+		UserID:    userID,
+		CheckDate: checkDate,
+		CheckTime: checkTime,
+		CreatedAt: time.Now().UTC(),
+	}
+	return s.gorm.WithContext(ctx).Table("checkins").Create(&row).Error
+}
+
 // GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 func (s *MySqlStore) GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error) {
 	var r types.CompanyCheckinSettingsRow
