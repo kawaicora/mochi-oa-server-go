@@ -14,11 +14,15 @@ import (
 // JSON 列（mac/ip_whitelist）一律 gorm:"type:json" 可空无 default，写入侧空数组落 "[]"，
 // 读取侧 decodeStrings 对 NULL/空/损坏兜底 []。
 
-// state 位掩码常量（类 Linux 权限，一个数字可组合）：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。
+// state 位掩码（类 Linux 权限，一个数字可组合读）：0=无 1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
+// 例：9=上班+补卡(上班迟到补卡) 10=下班+补卡 3=上班+下班(正常) 16=请假 32=调休 4|16=缺卡+请假。
 const (
-	stateWork = 1
-	stateOff  = 2
-	stateMiss = 4
+	stateWork  = 1
+	stateOff   = 2
+	stateMiss  = 4
+	stateMakeup = 8
+	stateLeave = 16
+	stateComp  = 32
 )
 
 // checkinScanRow 联表行：打卡记录字段 + 发起人 nick/username。
@@ -225,6 +229,8 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 	if slot != stateWork && slot != stateOff {
 		slot = stateWork
 	}
+	// 补卡带 8 位：补上班卡=1|8=9，补下班卡=2|8=10，从数字即可看出是补卡。
+	makeupState := slot | stateMakeup
 	row := types.CheckinRow{
 		CompanyID:     companyID,
 		UserID:        userID,
@@ -234,7 +240,7 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 		WorkEnd:       workEnd,
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
-		State:         slot,
+		State:         makeupState,
 		CreatedAt:     time.Now().UTC(),
 	}
 	return s.gorm.WithContext(ctx).Table("checkins").Create(&row).Error
