@@ -376,6 +376,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("审批人不在该公司"))
 			return
 		}
+		if len(approverIDs) == 0 {
+			logger.Error(mod, "proxy:request:create 未选审批人", "companyId", cid)
+			ack(util.Fail("请选择审批人"))
+			return
+		}
 		for _, uid := range approverIDs {
 			role, err := store.GetMemberRole(context.Background(), cid, uid)
 			if err != nil || role == "" {
@@ -746,6 +751,11 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 		if !ok {
 			logger.Error(mod, "proxy:request:renew 审批人 id 非法", "companyId", cid)
 			ack(util.Fail("审批人不在该公司"))
+			return
+		}
+		if len(approverIDs) == 0 {
+			logger.Error(mod, "proxy:request:renew 未选审批人", "companyId", cid)
+			ack(util.Fail("请选择审批人"))
 			return
 		}
 		for _, uid := range approverIDs {

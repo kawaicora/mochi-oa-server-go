@@ -230,6 +230,16 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 	if slot != stateWork && slot != stateOff {
 		slot = stateWork
 	}
+	// 防重复补卡：同用户同日同槽位(上班/下班)已补过 → 跳过，一个迟到不能补无数张卡。
+	var slotCnt int64
+	if err := s.gorm.WithContext(ctx).Table("checkins").
+		Where("company_id = ? AND user_id = ? AND check_date = ? AND (state & 8) != 0 AND (state & ?) != 0",
+			companyID, userID, checkDate, slot).Count(&slotCnt).Error; err != nil {
+		return err
+	}
+	if slotCnt > 0 {
+		return nil // 该日期该槽位已补过卡
+	}
 	// 补卡带 8 位：补上班卡=1|8=9，补下班卡=2|8=10，从数字即可看出是补卡。
 	makeupState := slot | stateMakeup
 	row := types.CheckinRow{

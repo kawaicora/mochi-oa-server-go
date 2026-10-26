@@ -258,6 +258,11 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("审批人不在该公司"))
 			return
 		}
+		if len(approverIDs) == 0 {
+			logger.Error(mod, "attendance:create 未选审批人", "companyId", cid, "user", a.ID)
+			ack(util.Fail("请选择审批人"))
+			return
+		}
 		for _, uid := range approverIDs {
 			role, err := store.GetMemberRole(context.Background(), cid, uid)
 			if err != nil || role == "" {
