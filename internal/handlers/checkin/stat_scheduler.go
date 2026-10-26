@@ -200,10 +200,7 @@ func computeMonthlyStat(ctx context.Context, store db.Store, companyID, userID i
 			case "make_up":
 				ms.Makeup++
 			case "leave":
-				ms.LeaveDays++
-				if r.DurationHours != nil {
-					ms.OvertimeHours += *r.DurationHours
-				}
+				ms.LeaveDays++ // 请假天数；请假时长不属加班，不累加 OvertimeHours
 			case "comp_time":
 				ms.CompDays++
 			}
