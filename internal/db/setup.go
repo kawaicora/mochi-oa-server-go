@@ -131,5 +131,20 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败", "error", err.Error())
 		return err
 	}
+	// 时间字段类型规范化：varchar 存时刻 → TIME。先清理空串再 MODIFY，重复执行幂等，错误仅记录不阻断启动。
+	timeTypeMigrations := []string{
+		// checkins.std_start/std_end：空串置 NULL（TIME 列不接受 ''），再 varchar→TIME。
+		"UPDATE checkins SET std_start = NULL WHERE std_start = ''",
+		"UPDATE checkins SET std_end = NULL WHERE std_end = ''",
+		"ALTER TABLE checkins MODIFY `std_start` TIME NULL",
+		"ALTER TABLE checkins MODIFY `std_end` TIME NULL",
+		// company_checkin_settings.offwork_deadline：varchar→TIME。
+		"ALTER TABLE company_checkin_settings MODIFY `offwork_deadline` TIME NOT NULL DEFAULT '04:00'",
+	}
+	for _, sql := range timeTypeMigrations {
+		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {
+			logger.Error("db", "时间字段类型迁移失败", "sql", sql, "error", err.Error())
+		}
+	}
 	return nil
 }

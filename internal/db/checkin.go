@@ -53,6 +53,14 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 
 const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.std_start, r.std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
 
+// normHHMM 把 TIME 列读回的 "HH:MM:SS" 规范为 "HH:MM"（空串/短串原样返回）。
+func normHHMM(s string) string {
+	if len(s) >= 5 {
+		return s[:5]
+	}
+	return s
+}
+
 func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 	return types.CheckinItem{
 		ID:            r.ID,
@@ -62,8 +70,8 @@ func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 		CheckTime:     toIso(r.CheckTime),
 		IP:            r.IP,
 		MAC:           r.MAC,
-		StdStart:      r.StdStart,
-		StdEnd:        r.StdEnd,
+		StdStart:      normHHMM(r.StdStart),
+		StdEnd:        normHHMM(r.StdEnd),
 		GraceLateMin:  r.GraceLateMin,
 		GraceEarlyMin: r.GraceEarlyMin,
 		State:         r.State,

@@ -526,8 +526,8 @@ type CheckinRow struct {
 	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
 	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空
 	// 打卡时的排班规则快照：历史判定用打卡当时规则，管理员后续改规则不影响历史。
-	StdStart      string `db:"std_start" gorm:"type:varchar(8)"` // 该日标准(规定)上班时间
-	StdEnd        string `db:"std_end" gorm:"type:varchar(8)"`   // 该日标准(规定)下班时间
+	StdStart      string `db:"std_start" gorm:"type:time"`  // 该日标准(规定)上班时间（TIME 列，读回如 09:30:00）
+	StdEnd        string `db:"std_end" gorm:"type:time"`    // 该日标准(规定)下班时间
 	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
 	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
 	// state 位掩码（每条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休；单条只含一类型位，补卡=卡类型|8(补上班=9/补下班=10)。
@@ -558,7 +558,7 @@ type CompanyCheckinRulesRow struct {
 	GraceEarlyMin int64     `db:"grace_early_min" gorm:"type:int;not null;default:0"`
 	WeekRules     string    `db:"week_rules" gorm:"type:text"` // JSON：7 项 {dow,start,end,rest}
 	AltRule       *string   `db:"alt_rule" gorm:"type:text"`   // JSON：大小周交替日 {dow,altStart,altEnd}，可空
-	OffworkDeadline string  `db:"offwork_deadline" gorm:"type:varchar(8);not null;default:04:00"` // 下班卡次日截止时刻 HH:MM，超时不算当天/前天下班卡
+	OffworkDeadline string  `db:"offwork_deadline" gorm:"type:time;not null;default:04:00"` // 下班卡次日截止时刻 HH:MM，超时不算当天/前天下班卡
 	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }

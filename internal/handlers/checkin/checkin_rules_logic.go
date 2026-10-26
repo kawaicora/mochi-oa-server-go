@@ -97,6 +97,9 @@ func defaultDeadline(s string) string {
 	if s == "" {
 		return "04:00"
 	}
+	if len(s) >= 5 {
+		return s[:5] // TIME 列读回带秒（如 04:00:00）→ 规范为 HH:MM
+	}
 	return s
 }
 
