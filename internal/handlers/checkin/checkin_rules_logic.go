@@ -144,9 +144,11 @@ func parseWeekRules(s string) []dayRule {
 
 // punchInOut 从当月记录中取当天首末打卡（复用 list 同源数据）。
 // in/out 为当天"HH:MM"字符串；无记录则为空串。
+// 仅一条记录时只算上班卡（in），下班未打卡（out 空），不得把同一次显示成上班+下班。
 func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 	var first, last time.Time
 	has := false
+	count := 0
 	for _, it := range items {
 		if it.CheckDate != dateStr {
 			continue
@@ -157,6 +159,7 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 		}
 		// 转业务本地时区再取时分，与本地口径规则时间比较。
 		t = t.In(localTZ)
+		count++
 		if !has || t.Before(first) {
 			first = t
 		}
@@ -167,6 +170,10 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 	}
 	if !has {
 		return "", ""
+	}
+	if count == 1 {
+		// 只打一次卡 = 上班卡，下班未打卡。
+		return first.Format("15:04"), ""
 	}
 	return first.Format("15:04"), last.Format("15:04")
 }
