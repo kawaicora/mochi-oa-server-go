@@ -450,7 +450,7 @@ type AttendanceRequestRow struct {
 	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
 	Type          string     `db:"type" gorm:"type:varchar(16);not null"`                   // make_up|leave|comp_time
 	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected
-	PunchTime     *string    `db:"punch_time" gorm:"type:varchar(32)"`                      // 补卡时间，如 "2026-10-17 09:00"
+	PunchTime     *string    `db:"punch_time" gorm:"type:datetime"` // 补卡时间，如 "2026-10-17 09:00"
 	LeaveType     *string    `db:"leave_type" gorm:"type:varchar(32)"`                      // 请假类型
 	CompType      *string    `db:"comp_type" gorm:"type:varchar(32)"`                       // 调休类型
 	StartTime     *time.Time `db:"start_time" gorm:"type:datetime(3)"`                      // 可空：补卡无区间

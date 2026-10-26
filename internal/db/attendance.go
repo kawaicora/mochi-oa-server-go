@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -77,7 +78,16 @@ func scanRowToAttendance(r attendanceScanRow) types.AttendanceRequest {
 }
 
 // attendanceSelect 联表查询统一列清单（含 approver_ids/cc_ids）。
-const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, r.punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.cc_viewed_ids, r.notify_stopped, r.created_at, r.updated_at, u.username, u.nick"
+const attendanceSelect = "r.id, r.company_id, r.user_id, r.type, r.status, DATE_FORMAT(r.punch_time, '%Y-%m-%d %H:%i') AS punch_time, r.leave_type, r.comp_type, r.start_time, r.end_time, r.duration_hours, r.reason, r.approver_id, r.approval_note, r.approved_at, r.approver_ids, r.cc_ids, r.cc_viewed_ids, r.notify_stopped, r.created_at, r.updated_at, u.username, u.nick"
+
+// normPunchTime 规范补卡时间字符串：ISO "2026-10-25T21:00" → "2026-10-25 21:00"（DATETIME 列不接受 T 分隔）。
+func normPunchTime(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	s := strings.Replace(strings.TrimSpace(*p), "T", " ", 1)
+	return &s
+}
 
 // CreateAttendanceRequest 发起考勤申请；审批人/抄送人由调用方按流程快照传入。
 func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
@@ -86,7 +96,7 @@ func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAtten
 		CompanyID:     in.CompanyID,
 		UserID:        in.UserID,
 		Type:          in.Type,
-		PunchTime:     in.PunchTime,
+		PunchTime:     normPunchTime(in.PunchTime),
 		LeaveType:     in.LeaveType,
 		CompType:      in.CompType,
 		StartTime:     in.StartTime,

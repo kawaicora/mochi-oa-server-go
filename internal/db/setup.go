@@ -142,6 +142,10 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		"ALTER TABLE company_checkin_settings MODIFY `offwork_deadline` TIME NOT NULL DEFAULT '04:00'",
 		// checkins.check_date：varchar→DATE（存量均为合法 YYYY-MM-DD；查询侧已用 DATE_FORMAT 投影回字符串）。
 		"ALTER TABLE checkins MODIFY `check_date` DATE NOT NULL",
+		// attendance_requests.punch_time：历史 ISO→空格、空串→NULL，再 varchar→DATETIME。
+		"UPDATE attendance_requests SET punch_time = REPLACE(punch_time, 'T', ' ') WHERE punch_time LIKE '%T%'",
+		"UPDATE attendance_requests SET punch_time = NULL WHERE punch_time = ''",
+		"ALTER TABLE attendance_requests MODIFY `punch_time` DATETIME NULL",
 	}
 	for _, sql := range timeTypeMigrations {
 		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {
