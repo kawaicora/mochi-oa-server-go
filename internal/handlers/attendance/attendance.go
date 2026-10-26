@@ -671,9 +671,14 @@ func clockMinutes(hhmm string) int {
 	return t.Hour()*60 + t.Minute()
 }
 
-// punchMinutesOf 从 "YYYY-MM-DD HH:mm[:ss]" 提取分钟数；失败返回 -1。
+// punchMinutesOf 从 "YYYY-MM-DD HH:mm[:ss]"（兼容 ISO "YYYY-MM-DDTHH:mm"）提取分钟数；失败返回 -1。
 func punchMinutesOf(p string) int {
 	idx := strings.Index(p, " ")
+	if idx < 0 {
+		if ti := strings.Index(p, "T"); ti >= 0 {
+			idx = ti
+		}
+	}
 	if idx < 0 || idx+1 >= len(p) {
 		return -1
 	}
