@@ -521,7 +521,7 @@ type CheckinRow struct {
 	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
 	UserID    int64     `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
-	CheckDate string    `db:"check_date" gorm:"type:varchar(16);not null;index"` // YYYY-MM-DD（服务端本地今天）
+	CheckDate string    `db:"check_date" gorm:"type:date;not null;index"` // YYYY-MM-DD（服务端本地今天）
 	CheckTime time.Time `db:"check_time" gorm:"type:datetime(3);not null"`       // 打卡时刻
 	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
 	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空

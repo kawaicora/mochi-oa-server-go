@@ -140,6 +140,8 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		"ALTER TABLE checkins MODIFY `std_end` TIME NULL",
 		// company_checkin_settings.offwork_deadline：varchar→TIME。
 		"ALTER TABLE company_checkin_settings MODIFY `offwork_deadline` TIME NOT NULL DEFAULT '04:00'",
+		// checkins.check_date：varchar→DATE（存量均为合法 YYYY-MM-DD；查询侧已用 DATE_FORMAT 投影回字符串）。
+		"ALTER TABLE checkins MODIFY `check_date` DATE NOT NULL",
 	}
 	for _, sql := range timeTypeMigrations {
 		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {

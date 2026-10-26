@@ -51,7 +51,7 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 		Joins("LEFT JOIN users u ON u.id = r.user_id")
 }
 
-const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.std_start, r.std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
+const checkinSelect = "r.id, r.company_id, r.user_id, DATE_FORMAT(r.check_date, '%Y-%m-%d') AS check_date, r.check_time, r.ip, r.mac, r.std_start, r.std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
 
 // normHHMM 把 TIME 列读回的 "HH:MM:SS" 规范为 "HH:MM"（空串/短串原样返回）。
 func normHHMM(s string) string {
