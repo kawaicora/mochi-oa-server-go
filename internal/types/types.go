@@ -530,7 +530,9 @@ type CheckinRow struct {
 	WorkEnd       string `db:"work_end" gorm:"type:varchar(8)"`
 	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
 	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
-	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	// state 位掩码（类 Linux 权限）：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。可组合(如 3=上下班都打)。
+	State     int64     `db:"state" gorm:"type:int;not null;default:0"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyCheckinSettingsRow 对应 company_checkin_settings 表（公司级打卡白名单，一公司一条）。
@@ -1358,7 +1360,9 @@ type CheckinItem struct {
 	WorkEnd       string `json:"workEnd"`
 	GraceLateMin  int64  `json:"graceLateMin"`
 	GraceEarlyMin int64  `json:"graceEarlyMin"`
-	CreatedAt string  `json:"createdAt"`
+	// state 位掩码：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。
+	State     int64  `json:"state"`
+	CreatedAt string `json:"createdAt"`
 	Nick      string  `json:"nick"`
 	Username  string  `json:"username"`
 }

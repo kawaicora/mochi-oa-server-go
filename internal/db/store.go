@@ -641,8 +641,8 @@ type Store interface {
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
 	// InsertMakeupCheckin 补卡批准后把补卡时间写入 checkins（补卡算打卡）。
 	// punchTime 为本地时间字符串（如 "2026-10-17 09:00"）；解析失败或同时间点已存在时幂等跳过。
-	// workStart/workEnd/graceLate/graceEarly 为补卡时的排班规则快照。
-	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64) error
+	// workStart/workEnd/graceLate/graceEarly 为补卡时的排班规则快照；slot=补的卡类型(1上班/2下班)。
+	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly, slot int64) error
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。

@@ -61,11 +61,11 @@ Write-Host ("  ok: {0} ({1:N1} MB)" -f $bin, $fileSizeMB) -ForegroundColor Green
 Write-Host ''
 Write-Host '===== [2/4] stop current container =====' -ForegroundColor Cyan
 # 捕获返回码，失败直接退出，而不是[void]丢弃
-$ret = Invoke-Native 'docker compose stop'
+$ret = Invoke-Native 'docker-compose stop'
 if ($ret -ne 0) {
     Write-Host "[WARN] docker compose stop return $ret, continue clean" -ForegroundColor Yellow
 }
-$ret = Invoke-Native 'docker compose rm -f'
+$ret = Invoke-Native 'docker-compose rm -f'
 if ($ret -ne 0) {
     Write-Host "[WARN] docker compose rm -f return $ret, continue clean" -ForegroundColor Yellow
 }
@@ -77,7 +77,7 @@ $ret = Invoke-Native 'docker container rm -f $(docker compose ps -aq) 2>nul'
 
 Write-Host ''
 Write-Host '===== [3/4] docker compose up -d --build =====' -ForegroundColor Cyan
-docker compose up -d --build
+docker-compose up -d --build
 $code = $LASTEXITCODE
 if ($code -ne 0) {
     Write-Host '[ERR] docker compose up fail' -ForegroundColor Red
@@ -92,4 +92,4 @@ Invoke-Native 'docker compose ps' | Out-Null
 Write-Host ''
 Write-Host '===== [4/4] logs Ctrl+C exit =====' -ForegroundColor Cyan
 # 不需要套 cmd /c，powershell原生直接执行logs -f
-docker compose logs -f mochi-oa-server-go-app-c54f8e4
+docker-compose logs -f mochi-oa-server-go-app-c54f8e4

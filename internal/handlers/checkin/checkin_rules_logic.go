@@ -142,13 +142,22 @@ func parseWeekRules(s string) []dayRule {
 	return out
 }
 
+// state 位掩码（与 checkins.state 一致）：1=上班卡 2=下班卡 4=缺卡。
+const (
+	stateWork = 1
+	stateOff  = 2
+	stateMiss = 4
+)
+
 // punchInOut 从当月记录中取当天首末打卡（复用 list 同源数据）。
 // in/out 为当天"HH:MM"字符串；无记录则为空串。
-// 仅一条记录时只算上班卡（in），下班未打卡（out 空），不得把同一次显示成上班+下班。
+// 按 state 位区分上下班：in=所有上班卡(state&1)最早、out=所有下班卡(state&2)最晚；
+// 这样补上班卡+实时上班卡都算上班，不会把末次上班卡误判成下班(早退)。
+// 老数据(state=0)回退首末；仅一条(上班卡)时 out 为空(下班未打卡)。
 func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
-	var first, last time.Time
-	has := false
-	count := 0
+	var workMin, offMax time.Time
+	var fallback []time.Time
+	hasState := false
 	for _, it := range items {
 		if it.CheckDate != dateStr {
 			continue
@@ -157,25 +166,47 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 		if err != nil {
 			continue
 		}
-		// 转业务本地时区再取时分，与本地口径规则时间比较。
 		t = t.In(localTZ)
-		count++
-		if !has || t.Before(first) {
-			first = t
+		if it.State != 0 {
+			hasState = true
 		}
-		if !has || t.After(last) {
-			last = t
+		switch {
+		case it.State&stateWork != 0:
+			if workMin.IsZero() || t.Before(workMin) {
+				workMin = t
+			}
+		case it.State&stateOff != 0:
+			if offMax.IsZero() || t.After(offMax) {
+				offMax = t
+			}
+		default:
+			fallback = append(fallback, t) // 老数据无 state
 		}
-		has = true
 	}
-	if !has {
+	if hasState {
+		// 有 state：按位取上下班；无标记记录按序兜底空缺槽。
+		if workMin.IsZero() && len(fallback) > 0 {
+			workMin = fallback[0]
+		}
+		if offMax.IsZero() && len(fallback) > 0 {
+			offMax = fallback[len(fallback)-1]
+		}
+		if !workMin.IsZero() {
+			in = workMin.Format("15:04")
+		}
+		if !offMax.IsZero() {
+			out = offMax.Format("15:04")
+		}
+		return in, out
+	}
+	// 全为老数据(无 state)：回退首末。
+	if len(fallback) == 0 {
 		return "", ""
 	}
-	if count == 1 {
-		// 只打一次卡 = 上班卡，下班未打卡。
-		return first.Format("15:04"), ""
+	if len(fallback) == 1 {
+		return fallback[0].Format("15:04"), ""
 	}
-	return first.Format("15:04"), last.Format("15:04")
+	return fallback[0].Format("15:04"), fallback[len(fallback)-1].Format("15:04")
 }
 
 // computeDayStatus 内聚的当天状态判断。

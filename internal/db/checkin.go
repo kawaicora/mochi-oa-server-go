@@ -14,6 +14,13 @@ import (
 // JSON 列（mac/ip_whitelist）一律 gorm:"type:json" 可空无 default，写入侧空数组落 "[]"，
 // 读取侧 decodeStrings 对 NULL/空/损坏兜底 []。
 
+// state 位掩码常量（类 Linux 权限，一个数字可组合）：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。
+const (
+	stateWork = 1
+	stateOff  = 2
+	stateMiss = 4
+)
+
 // checkinScanRow 联表行：打卡记录字段 + 发起人 nick/username。
 type checkinScanRow struct {
 	ID        int64     `gorm:"column:id"`
@@ -27,6 +34,7 @@ type checkinScanRow struct {
 	WorkEnd       string `gorm:"column:work_end"`
 	GraceLateMin  int64  `gorm:"column:grace_late_min"`
 	GraceEarlyMin int64  `gorm:"column:grace_early_min"`
+	State         int64  `gorm:"column:state"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	Username  string    `gorm:"column:username"`
 	Nick      string    `gorm:"column:nick"`
@@ -37,7 +45,7 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 		Joins("LEFT JOIN users u ON u.id = r.user_id")
 }
 
-const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.work_start, r.work_end, r.grace_late_min, r.grace_early_min, r.created_at, u.username, u.nick"
+const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.work_start, r.work_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
 
 func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 	return types.CheckinItem{
@@ -52,6 +60,7 @@ func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 		WorkEnd:       r.WorkEnd,
 		GraceLateMin:  r.GraceLateMin,
 		GraceEarlyMin: r.GraceEarlyMin,
+		State:         r.State,
 		CreatedAt:     toIso(r.CreatedAt),
 		Nick:          r.Nick,
 		Username:      r.Username,
@@ -109,7 +118,8 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		}
 		res := tx.Table("checkins").Where("id = ?", last.ID).
 			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac,
-				"work_start": workStart, "work_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly})
+				"work_start": workStart, "work_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly,
+				"state": stateOff})
 		if res.Error != nil {
 			tx.Rollback()
 			return nil, "", res.Error
@@ -122,6 +132,10 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 	}
 
 	// 0 或 1 条：INSERT 新记录。
+	state := int64(stateWork)
+	if cnt == 1 {
+		state = int64(stateOff)
+	}
 	row := types.CheckinRow{
 		CompanyID:     companyID,
 		UserID:        userID,
@@ -133,6 +147,7 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		WorkEnd:       workEnd,
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
+		State:         state,
 		CreatedAt:     now,
 	}
 	if err := tx.Table("checkins").Create(&row).Error; err != nil {
@@ -187,7 +202,7 @@ func (s *MySqlStore) ListCheckinsByMonth(ctx context.Context, companyID, userID 
 //   - punchTime 为本地时间字符串，兼容 "2006-01-02 15:04" 与 "2006-01-02 15:04:05"；
 //   - 按本地时区解析出 check_date（本地日期）与 check_time（转 UTC 存储，与实时打卡一致）；
 //   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
-func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64) error {
+func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64, slot int64) error {
 	t, err := time.ParseInLocation("2006-01-02 15:04", punchTime, localTZ)
 	if err != nil {
 		t, err = time.ParseInLocation("2006-01-02 15:04:05", punchTime, localTZ)
@@ -206,6 +221,10 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 	if cnt > 0 {
 		return nil // 幂等：已存在同时间点补卡
 	}
+	// slot 为补的卡类型：stateWork=补上班卡 / stateOff=补下班卡。
+	if slot != stateWork && slot != stateOff {
+		slot = stateWork
+	}
 	row := types.CheckinRow{
 		CompanyID:     companyID,
 		UserID:        userID,
@@ -215,6 +234,7 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 		WorkEnd:       workEnd,
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
+		State:         slot,
 		CreatedAt:     time.Now().UTC(),
 	}
 	return s.gorm.WithContext(ctx).Table("checkins").Create(&row).Error

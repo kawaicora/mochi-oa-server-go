@@ -556,7 +556,17 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 					}
 				}
 			}
-			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime, workStart, workEnd, gl, ge); err != nil {
+			// 补卡槽位：PunchTime 距 workStart 近 → 补上班卡(1)；距 workEnd 近 → 补下班卡(2)。
+			slot := int64(1)
+			if workStart != "" && workEnd != "" {
+				wsMin := clockMinutes(workStart)
+				weMin := clockMinutes(workEnd)
+				pm := punchMinutesOf(*updated.PunchTime)
+				if wsMin >= 0 && weMin >= 0 && pm >= 0 && absInt(pm-weMin) < absInt(pm-wsMin) {
+					slot = 2
+				}
+			}
+			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime, workStart, workEnd, gl, ge, slot); err != nil {
 				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", *updated.PunchTime, "error", err.Error())
 			}
 		}
@@ -641,4 +651,34 @@ func errStr(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// clockMinutes 把 "HH:MM"（或 "HH:MM:SS"）转当天分钟数；失败返回 -1。
+func clockMinutes(hhmm string) int {
+	hm := hhmm
+	if len(hm) > 5 {
+		hm = hm[:5]
+	}
+	t, err := time.Parse("15:04", hm)
+	if err != nil {
+		return -1
+	}
+	return t.Hour()*60 + t.Minute()
+}
+
+// punchMinutesOf 从 "YYYY-MM-DD HH:mm[:ss]" 提取分钟数；失败返回 -1。
+func punchMinutesOf(p string) int {
+	idx := strings.Index(p, " ")
+	if idx < 0 || idx+1 >= len(p) {
+		return -1
+	}
+	return clockMinutes(p[idx+1:])
+}
+
+// absInt 绝对值。
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
