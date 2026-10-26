@@ -551,6 +551,7 @@ type CompanyCheckinRulesRow struct {
 	GraceEarlyMin int64     `db:"grace_early_min" gorm:"type:int;not null;default:0"`
 	WeekRules     string    `db:"week_rules" gorm:"type:text"` // JSON：7 项 {dow,start,end,rest}
 	AltRule       *string   `db:"alt_rule" gorm:"type:text"`   // JSON：大小周交替日 {dow,altStart,altEnd}，可空
+	OffworkDeadline string  `db:"offwork_deadline" gorm:"type:varchar(8);not null;default:04:00"` // 下班卡次日截止时刻 HH:MM，超时不算当天/前天下班卡
 	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }

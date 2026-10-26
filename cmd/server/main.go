@@ -165,6 +165,7 @@ func main() {
 	checkin.RegisterCheckinHandlers(srv, store)
 	checkin.RegisterStatHandlers(srv, store, cfg)
 	checkin.StartMonthlyStatScheduler(srv, store, cfg)
+	checkin.StartCheckinReminderScheduler(srv, store)
 	proxyh.RegisterProxyHandlers(srv, store)
 	asset.RegisterAssetHandlers(srv, store)
 	job.RegisterJobHandlers(srv, store)

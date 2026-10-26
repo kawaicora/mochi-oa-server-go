@@ -25,7 +25,7 @@ func (s *MySqlStore) GetCheckinRules(ctx context.Context, companyID int64) (*typ
 }
 
 // SaveCheckinRules upsert 公司排班规则。
-func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode string, graceLate, graceEarly int64, weekRulesJSON string, altRuleJSON *string) error {
+func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode string, graceLate, graceEarly int64, weekRulesJSON string, altRuleJSON *string, offworkDeadline string) error {
 	now := time.Now().UTC()
 	existing, err := s.GetCheckinRules(ctx, companyID)
 	if err != nil {
@@ -35,7 +35,8 @@ func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode
 		res := s.gorm.WithContext(ctx).Table("company_checkin_rules").Where("id = ?", existing.ID).
 			Updates(map[string]any{
 				"mode": mode, "grace_late_min": graceLate, "grace_early_min": graceEarly,
-				"week_rules": weekRulesJSON, "alt_rule": altRuleJSON, "updated_at": now,
+				"week_rules": weekRulesJSON, "alt_rule": altRuleJSON,
+				"offwork_deadline": offworkDeadline, "updated_at": now,
 			})
 		return res.Error
 	}
@@ -43,6 +44,7 @@ func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode
 		CompanyID: companyID, Mode: mode,
 		GraceLateMin: graceLate, GraceEarlyMin: graceEarly,
 		WeekRules: weekRulesJSON, AltRule: altRuleJSON,
+		OffworkDeadline: offworkDeadline,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	return s.gorm.WithContext(ctx).Table("company_checkin_rules").Create(&row).Error

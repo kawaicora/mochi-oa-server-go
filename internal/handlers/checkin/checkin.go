@@ -258,8 +258,13 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			}
 		}
 
-		// check_date = 业务本地今天（避免 UTC 日期错位，本地早于 8 点落到前一天）。
+		// check_date 归属：次日下班截止前（默认 04:00）打的卡归前一天（补前天下班卡），
+		// 其余时刻归当天。避免 UTC 日期错位，一律按业务本地口径。
 		checkDate := time.Now().In(localTZ).Format("2006-01-02")
+		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
+			_, _, _, offDeadline, _, _ := loadRules(r)
+			checkDate, _ = decidePunchKind(time.Now().In(localTZ), offDeadline)
+		}
 		var macPtr *string
 		if mac != "" {
 			macPtr = &mac
@@ -403,7 +408,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			graceLate, _ := toInt64(def["grace_late_min"])
 			graceEarly, _ := toInt64(def["grace_early_min"])
 			if err := store.SaveCheckinRules(ctx, cid, def["mode"].(string),
-				graceLate, graceEarly, def["week_rules"].(string), nil); err != nil {
+				graceLate, graceEarly, def["week_rules"].(string), nil, def["offwork_deadline"].(string)); err != nil {
 				logger.Error(mod, "checkin:rules:get 懒播种失败", "companyId", cid, "error", err.Error())
 				ack(util.Fail("获取失败"))
 				return
@@ -498,7 +503,16 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			s := string(b)
 			altJSON = &s
 		}
-		if err := store.SaveCheckinRules(ctx, cid, mode, graceLate, graceEarly, string(weekBytes), altJSON); err != nil {
+		// 下班卡次日截止（HH:MM，默认 04:00；管理员可调）。
+		offDeadline := strings.TrimSpace(strField(d, "offwork_deadline"))
+		if offDeadline == "" {
+			offDeadline = "04:00"
+		}
+		if !hhmm(offDeadline) {
+			ack(util.Fail("下班卡截止时间格式不合法（需 HH:MM）"))
+			return
+		}
+		if err := store.SaveCheckinRules(ctx, cid, mode, graceLate, graceEarly, string(weekBytes), altJSON, offDeadline); err != nil {
 			logger.Error(mod, "checkin:rules:save 失败", "companyId", cid, "error", err.Error())
 			ack(util.Fail("保存失败"))
 			return
@@ -526,11 +540,14 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("获取失败"))
 			return
 		}
-		mode, graceLate, graceEarly, weekRules, altRule := loadRules(r)
+		mode, graceLate, graceEarly, _, weekRules, altRule := loadRules(r)
 		// 当天打卡记录（复用 list 同源查询，按月取后过滤当天）。
 		punches, _ := store.ListCheckinsByMonth(ctx, cid, a.ID, dateStr[:7])
 		in, out := punchInOut(punches, dateStr)
 		resp := computeDayStatus(dateStr, mode, graceLate, graceEarly, weekRules, altRule, in, out)
+		// 缺卡细分：上班/下班未打卡（客户端用于「缺卡：上班未打卡、下班未打卡」提示）。
+		resp["missingWork"] = in == ""
+		resp["missingOff"] = out == ""
 		ack(util.OK(map[string]any{"status": resp}))
 	})
 }

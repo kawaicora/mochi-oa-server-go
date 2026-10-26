@@ -87,7 +87,7 @@ func genCompanyMonthlyStats(ctx context.Context, srv socketapi.Server, store db.
 		logger.Error(mod, "月度统计：取排班规则失败", "companyId", companyID, "error", err.Error())
 		return
 	}
-	mode, graceLate, graceEarly, week, alt := loadRules(rules)
+	mode, graceLate, graceEarly, _, week, alt := loadRules(rules)
 
 	outDir := filepath.Join(cfg.File.Dir, "attendance_stats", fmt.Sprintf("%d", companyID), ym)
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
