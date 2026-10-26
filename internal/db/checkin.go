@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -208,9 +209,11 @@ func (s *MySqlStore) ListCheckinsByMonth(ctx context.Context, companyID, userID 
 //   - 按本地时区解析出 check_date（本地日期）与 check_time（转 UTC 存储，与实时打卡一致）；
 //   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
 func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64, slot int64) error {
-	t, err := time.ParseInLocation("2006-01-02 15:04", punchTime, localTZ)
+	// 兼容 ISO("2026-10-25T21:00") 与空格分隔("2026-10-25 21:00")两种 punchTime 格式。
+	norm := strings.Replace(punchTime, "T", " ", 1)
+	t, err := time.ParseInLocation("2006-01-02 15:04", norm, localTZ)
 	if err != nil {
-		t, err = time.ParseInLocation("2006-01-02 15:04:05", punchTime, localTZ)
+		t, err = time.ParseInLocation("2006-01-02 15:04:05", norm, localTZ)
 		if err != nil {
 			return err
 		}
