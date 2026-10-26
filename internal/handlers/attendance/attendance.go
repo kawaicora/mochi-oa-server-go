@@ -544,8 +544,8 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			if pDate != "" {
 				if existing, e := store.ListCheckinsByMonth(ctx, cid, req.UserID, pDate[:7]); e == nil {
 					for _, it := range existing {
-						if it.CheckDate == pDate && it.WorkStart != "" && it.WorkEnd != "" {
-							workStart, workEnd, gl, ge = it.WorkStart, it.WorkEnd, it.GraceLateMin, it.GraceEarlyMin
+						if it.CheckDate == pDate && it.StdStart != "" && it.StdEnd != "" {
+							workStart, workEnd, gl, ge = it.StdStart, it.StdEnd, it.GraceLateMin, it.GraceEarlyMin
 							break
 						}
 					}

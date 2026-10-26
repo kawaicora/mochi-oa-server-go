@@ -124,5 +124,12 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 			logger.Info("db", "补 "+tbl+".notify_stopped 跳过（可能已存在）", "error", err.Error())
 		}
 	}
+	// 列改名 work_start/work_end → std_start/std_end：AutoMigrate 已建新列，把旧快照数据拷过去保住历史判定。
+	if err := s.gorm.WithContext(ctx).Exec(
+		"UPDATE checkins SET std_start = work_start, std_end = work_end WHERE (std_start IS NULL OR std_start = '') AND work_start IS NOT NULL",
+	).Error; err != nil {
+		logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败", "error", err.Error())
+		return err
+	}
 	return nil
 }

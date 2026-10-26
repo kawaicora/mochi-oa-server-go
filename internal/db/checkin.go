@@ -35,8 +35,8 @@ type checkinScanRow struct {
 	CheckTime time.Time `gorm:"column:check_time"`
 	IP        *string   `gorm:"column:ip"`
 	MAC       *string   `gorm:"column:mac"`
-	WorkStart     string `gorm:"column:work_start"`
-	WorkEnd       string `gorm:"column:work_end"`
+	StdStart      string `gorm:"column:std_start"`
+	StdEnd        string `gorm:"column:std_end"`
 	GraceLateMin  int64  `gorm:"column:grace_late_min"`
 	GraceEarlyMin int64  `gorm:"column:grace_early_min"`
 	State         int64  `gorm:"column:state"`
@@ -50,7 +50,7 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 		Joins("LEFT JOIN users u ON u.id = r.user_id")
 }
 
-const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.work_start, r.work_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
+const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.std_start, r.std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
 
 func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 	return types.CheckinItem{
@@ -61,8 +61,8 @@ func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 		CheckTime:     toIso(r.CheckTime),
 		IP:            r.IP,
 		MAC:           r.MAC,
-		WorkStart:     r.WorkStart,
-		WorkEnd:       r.WorkEnd,
+		StdStart:      r.StdStart,
+		StdEnd:        r.StdEnd,
 		GraceLateMin:  r.GraceLateMin,
 		GraceEarlyMin: r.GraceEarlyMin,
 		State:         r.State,
@@ -123,7 +123,7 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		}
 		res := tx.Table("checkins").Where("id = ?", last.ID).
 			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac,
-				"work_start": workStart, "work_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly,
+				"std_start": workStart, "std_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly,
 				"state": stateOff})
 		if res.Error != nil {
 			tx.Rollback()
@@ -148,8 +148,8 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		CheckTime:     now,
 		IP:            &ip,
 		MAC:           mac,
-		WorkStart:     workStart,
-		WorkEnd:       workEnd,
+		StdStart:      workStart,
+		StdEnd:        workEnd,
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
 		State:         state,
@@ -237,8 +237,8 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 		UserID:        userID,
 		CheckDate:     checkDate,
 		CheckTime:     checkTime,
-		WorkStart:     workStart,
-		WorkEnd:       workEnd,
+		StdStart:      workStart,
+		StdEnd:        workEnd,
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
 		State:         makeupState,

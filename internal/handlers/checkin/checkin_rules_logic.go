@@ -241,8 +241,8 @@ func computeDayStatus(dateStr, mode string, graceLate, graceEarly int64, week []
 		}
 	}
 	resp["rest"] = dr.rest
-	resp["workStart"] = workStart
-	resp["workEnd"] = workEnd
+	resp["stdStart"] = workStart
+	resp["stdEnd"] = workEnd
 
 	if dr.rest {
 		resp["status"] = "rest"

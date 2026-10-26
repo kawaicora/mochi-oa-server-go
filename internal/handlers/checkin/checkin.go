@@ -594,10 +594,10 @@ func snapshotFor(items []types.CheckinItem, dateStr string) *snapshot {
 		if it.CheckDate != dateStr {
 			continue
 		}
-		if it.WorkStart == "" || it.WorkEnd == "" {
+		if it.StdStart == "" || it.StdEnd == "" {
 			return nil
 		}
-		return &snapshot{workStart: it.WorkStart, workEnd: it.WorkEnd, graceLate: it.GraceLateMin, graceEarly: it.GraceEarlyMin}
+		return &snapshot{workStart: it.StdStart, workEnd: it.StdEnd, graceLate: it.GraceLateMin, graceEarly: it.GraceEarlyMin}
 	}
 	return nil
 }
