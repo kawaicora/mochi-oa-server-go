@@ -530,7 +530,7 @@ type CheckinRow struct {
 	WorkEnd       string `db:"work_end" gorm:"type:varchar(8)"`
 	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
 	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
-	// state 位掩码（类 Linux 权限）：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。可组合(如 3=上下班都打)。
+	// state 位掩码（每条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休；单条只含一类型位，补卡=卡类型|8(补上班=9/补下班=10)。
 	State     int64     `db:"state" gorm:"type:int;not null;default:0"`
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
@@ -1360,7 +1360,7 @@ type CheckinItem struct {
 	WorkEnd       string `json:"workEnd"`
 	GraceLateMin  int64  `json:"graceLateMin"`
 	GraceEarlyMin int64  `json:"graceEarlyMin"`
-	// state 位掩码：1=上班卡 2=下班卡 4=缺卡；0=请假/无记录。
+	// state 位掩码（单条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
 	State     int64  `json:"state"`
 	CreatedAt string `json:"createdAt"`
 	Nick      string  `json:"nick"`

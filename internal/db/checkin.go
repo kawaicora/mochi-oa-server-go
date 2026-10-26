@@ -14,15 +14,16 @@ import (
 // JSON 列（mac/ip_whitelist）一律 gorm:"type:json" 可空无 default，写入侧空数组落 "[]"，
 // 读取侧 decodeStrings 对 NULL/空/损坏兜底 []。
 
-// state 位掩码（类 Linux 权限，一个数字可组合读）：0=无 1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
-// 例：9=上班+补卡(上班迟到补卡) 10=下班+补卡 3=上班+下班(正常) 16=请假 32=调休 4|16=缺卡+请假。
+// state 位掩码（每条 checkins 记录的类型，单值非组合）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
+// 单条记录只含一个类型位（上班或下班），不存在 =3 的组合；补卡=卡类型|8 → 补上班=9、补下班=10。
+// 请假(16)/调休(32)为申请状态：当天无打卡记录时由考勤申请表达，不落 checkins 行。
 const (
-	stateWork  = 1
-	stateOff   = 2
-	stateMiss  = 4
+	stateWork   = 1
+	stateOff    = 2
+	stateMiss   = 4
 	stateMakeup = 8
-	stateLeave = 16
-	stateComp  = 32
+	stateLeave  = 16
+	stateComp   = 32
 )
 
 // checkinScanRow 联表行：打卡记录字段 + 发起人 nick/username。
