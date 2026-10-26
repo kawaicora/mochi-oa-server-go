@@ -635,12 +635,14 @@ type Store interface {
 
 	// ─── 打卡 ───
 	// CreateCheckin 写入/更新当天打卡：0条→INSERT(first)；1条→INSERT(second)；≥2条→UPDATE 当天最后一条 check_time(override，不新增行)。返回 item 与 kind(first/second/override)。
-	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error)
+	// workStart/workEnd/graceLate/graceEarly 为打卡时的排班规则快照，随记录落库供历史判定。
+	CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string, workStart, workEnd string, graceLate, graceEarly int64) (*types.CheckinItem, string, error)
 	// ListCheckinsByMonth 本人某月全部记录（check_date=月份前缀），联表补昵称。
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
 	// InsertMakeupCheckin 补卡批准后把补卡时间写入 checkins（补卡算打卡）。
 	// punchTime 为本地时间字符串（如 "2026-10-17 09:00"）；解析失败或同时间点已存在时幂等跳过。
-	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime string) error
+	// workStart/workEnd/graceLate/graceEarly 为补卡时的排班规则快照。
+	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64) error
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。

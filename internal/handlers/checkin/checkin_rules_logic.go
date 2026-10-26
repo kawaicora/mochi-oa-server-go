@@ -248,6 +248,46 @@ func computeDayStatus(dateStr, mode string, graceLate, graceEarly int64, week []
 	return resp
 }
 
+// computeDayStatusFromTimes 用打卡时固化的排班快照判定当天状态（改规则不影响历史）。
+// workStart/workEnd 为该打卡日排班上下班时间；快照为空（老数据）返回 none，由调用方回退当前规则。
+// 迟到：punchIn 晚于 workStart+豁免；早退：punchOut 早于 workEnd-豁免。
+func computeDayStatusFromTimes(dateStr string, graceLate, graceEarly int64, workStart, workEnd, in, out string) map[string]any {
+	resp := map[string]any{
+		"date": dateStr, "mode": "snapshot", "punchIn": emptyNil(in), "punchOut": emptyNil(out),
+		"rest": false,
+	}
+	if workStart == "" || workEnd == "" {
+		resp["status"] = "none"
+		return resp
+	}
+	if in == "" && out == "" {
+		resp["status"] = "none"
+		return resp
+	}
+	late, early := false, false
+	if in != "" {
+		if minutesSinceMidnight(in) > minutesSinceMidnight(workStart)+int(graceLate) {
+			late = true
+		}
+	}
+	if out != "" {
+		if minutesSinceMidnight(out) < minutesSinceMidnight(workEnd)-int(graceEarly) {
+			early = true
+		}
+	}
+	switch {
+	case late && early:
+		resp["status"] = "late_early"
+	case late:
+		resp["status"] = "late"
+	case early:
+		resp["status"] = "early"
+	default:
+		resp["status"] = "normal"
+	}
+	return resp
+}
+
 func emptyNil(s string) any {
 	if s == "" {
 		return nil
@@ -260,6 +300,24 @@ func minutesSinceMidnight(hhmm string) int {
 	var h, m int
 	fmt.Sscanf(hhmm, "%d:%d", &h, &m)
 	return h*60 + m
+}
+
+// RuleSnapshotForDay 计算某日期在公司当前规则下的排班快照（供补卡等写入 checkins 用）。
+// 返回该日 workStart/workEnd/graceLate/graceEarly；休息日或无规则 → workStart/WorkEnd 为空。
+func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (workStart, workEnd string, graceLate, graceEarly int64) {
+	if rule == nil {
+		return "", "", 0, 0
+	}
+	mode, gl, ge, _, week, alt := loadRules(rule)
+	dt, err := time.ParseInLocation("2006-01-02", dateStr, localTZ)
+	if err != nil {
+		return "", "", 0, 0
+	}
+	rest, ws, we := dayScheduleFor(dt, mode, week, alt)
+	if rest {
+		return "", "", gl, ge
+	}
+	return ws, we, gl, ge
 }
 
 // decidePunchKind 按当前业务本地时刻判定本次打卡的归属日期与类型。

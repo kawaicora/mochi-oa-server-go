@@ -525,7 +525,12 @@ type CheckinRow struct {
 	CheckTime time.Time `db:"check_time" gorm:"type:datetime(3);not null"`       // 打卡时刻
 	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
 	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空
-	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	// 打卡时的排班规则快照：历史判定用打卡当时规则，管理员后续改规则不影响历史。
+	WorkStart     string `db:"work_start" gorm:"type:varchar(8)"`
+	WorkEnd       string `db:"work_end" gorm:"type:varchar(8)"`
+	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
+	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyCheckinSettingsRow 对应 company_checkin_settings 表（公司级打卡白名单，一公司一条）。
@@ -1348,6 +1353,11 @@ type CheckinItem struct {
 	CheckTime string  `json:"checkTime"`
 	IP        *string `json:"ip"`
 	MAC       *string `json:"mac"`
+	// 打卡时的排班规则快照（历史判定用，不受后续改规则影响）。
+	WorkStart     string `json:"workStart"`
+	WorkEnd       string `json:"workEnd"`
+	GraceLateMin  int64  `json:"graceLateMin"`
+	GraceEarlyMin int64  `json:"graceEarlyMin"`
 	CreatedAt string  `json:"createdAt"`
 	Nick      string  `json:"nick"`
 	Username  string  `json:"username"`

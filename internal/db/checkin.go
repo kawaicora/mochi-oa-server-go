@@ -23,6 +23,10 @@ type checkinScanRow struct {
 	CheckTime time.Time `gorm:"column:check_time"`
 	IP        *string   `gorm:"column:ip"`
 	MAC       *string   `gorm:"column:mac"`
+	WorkStart     string `gorm:"column:work_start"`
+	WorkEnd       string `gorm:"column:work_end"`
+	GraceLateMin  int64  `gorm:"column:grace_late_min"`
+	GraceEarlyMin int64  `gorm:"column:grace_early_min"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	Username  string    `gorm:"column:username"`
 	Nick      string    `gorm:"column:nick"`
@@ -33,20 +37,24 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 		Joins("LEFT JOIN users u ON u.id = r.user_id")
 }
 
-const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.created_at, u.username, u.nick"
+const checkinSelect = "r.id, r.company_id, r.user_id, r.check_date, r.check_time, r.ip, r.mac, r.work_start, r.work_end, r.grace_late_min, r.grace_early_min, r.created_at, u.username, u.nick"
 
 func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
 	return types.CheckinItem{
-		ID:        r.ID,
-		CompanyID: r.CompanyID,
-		UserID:    r.UserID,
-		CheckDate: r.CheckDate,
-		CheckTime: toIso(r.CheckTime),
-		IP:        r.IP,
-		MAC:       r.MAC,
-		CreatedAt: toIso(r.CreatedAt),
-		Nick:      r.Nick,
-		Username:  r.Username,
+		ID:            r.ID,
+		CompanyID:     r.CompanyID,
+		UserID:        r.UserID,
+		CheckDate:     r.CheckDate,
+		CheckTime:     toIso(r.CheckTime),
+		IP:            r.IP,
+		MAC:           r.MAC,
+		WorkStart:     r.WorkStart,
+		WorkEnd:       r.WorkEnd,
+		GraceLateMin:  r.GraceLateMin,
+		GraceEarlyMin: r.GraceEarlyMin,
+		CreatedAt:     toIso(r.CreatedAt),
+		Nick:          r.Nick,
+		Username:      r.Username,
 	}
 }
 
@@ -76,7 +84,8 @@ func decodeStrings(s string) []string {
 //   - 当天 0 条 → INSERT（第1次=上班时间），kind=first；
 //   - 当天 1 条 → INSERT（第2次=下班时间），kind=second；
 //   - 当天 ≥2 条 → UPDATE 当天 check_time 升序最后一条的 check_time=now（覆盖下班时间，不新增行），kind=override。
-func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string) (*types.CheckinItem, string, error) {
+// workStart/workEnd/graceLate/graceEarly 为打卡时的排班规则快照，随记录落库供历史判定（改规则不影响历史）。
+func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string, workStart, workEnd string, graceLate, graceEarly int64) (*types.CheckinItem, string, error) {
 	now := time.Now().UTC()
 	tx := s.gorm.WithContext(ctx).Begin()
 
@@ -99,7 +108,8 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 			return nil, "", err
 		}
 		res := tx.Table("checkins").Where("id = ?", last.ID).
-			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac})
+			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac,
+				"work_start": workStart, "work_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly})
 		if res.Error != nil {
 			tx.Rollback()
 			return nil, "", res.Error
@@ -113,13 +123,17 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 
 	// 0 或 1 条：INSERT 新记录。
 	row := types.CheckinRow{
-		CompanyID: companyID,
-		UserID:    userID,
-		CheckDate: checkDate,
-		CheckTime: now,
-		IP:        &ip,
-		MAC:       mac,
-		CreatedAt: now,
+		CompanyID:     companyID,
+		UserID:        userID,
+		CheckDate:     checkDate,
+		CheckTime:     now,
+		IP:            &ip,
+		MAC:           mac,
+		WorkStart:     workStart,
+		WorkEnd:       workEnd,
+		GraceLateMin:  graceLate,
+		GraceEarlyMin: graceEarly,
+		CreatedAt:     now,
 	}
 	if err := tx.Table("checkins").Create(&row).Error; err != nil {
 		tx.Rollback()
@@ -173,7 +187,7 @@ func (s *MySqlStore) ListCheckinsByMonth(ctx context.Context, companyID, userID 
 //   - punchTime 为本地时间字符串，兼容 "2006-01-02 15:04" 与 "2006-01-02 15:04:05"；
 //   - 按本地时区解析出 check_date（本地日期）与 check_time（转 UTC 存储，与实时打卡一致）；
 //   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
-func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime string) error {
+func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64) error {
 	t, err := time.ParseInLocation("2006-01-02 15:04", punchTime, localTZ)
 	if err != nil {
 		t, err = time.ParseInLocation("2006-01-02 15:04:05", punchTime, localTZ)
@@ -193,11 +207,15 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 		return nil // 幂等：已存在同时间点补卡
 	}
 	row := types.CheckinRow{
-		CompanyID: companyID,
-		UserID:    userID,
-		CheckDate: checkDate,
-		CheckTime: checkTime,
-		CreatedAt: time.Now().UTC(),
+		CompanyID:     companyID,
+		UserID:        userID,
+		CheckDate:     checkDate,
+		CheckTime:     checkTime,
+		WorkStart:     workStart,
+		WorkEnd:       workEnd,
+		GraceLateMin:  graceLate,
+		GraceEarlyMin: graceEarly,
+		CreatedAt:     time.Now().UTC(),
 	}
 	return s.gorm.WithContext(ctx).Table("checkins").Create(&row).Error
 }

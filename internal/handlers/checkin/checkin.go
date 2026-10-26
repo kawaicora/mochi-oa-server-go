@@ -260,16 +260,23 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 
 		// check_date 归属：次日下班截止前（默认 04:00）打的卡归前一天（补前天下班卡），
 		// 其余时刻归当天。避免 UTC 日期错位，一律按业务本地口径。
+		// 同时固化打卡时的排班规则快照（workStart/workEnd/grace），历史判定用快照，改规则不影响历史。
 		checkDate := time.Now().In(localTZ).Format("2006-01-02")
+		workStart, workEnd, graceLate, graceEarly := "", "", int64(0), int64(0)
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
-			_, _, _, offDeadline, _, _ := loadRules(r)
+			mode, gl, ge, offDeadline, week, alt := loadRules(r)
 			checkDate, _ = decidePunchKind(time.Now().In(localTZ), offDeadline)
+			if dt, err := time.ParseInLocation("2006-01-02", checkDate, localTZ); err == nil {
+				if rest, ws, we := dayScheduleFor(dt, mode, week, alt); !rest {
+					workStart, workEnd, graceLate, graceEarly = ws, we, gl, ge
+				}
+			}
 		}
 		var macPtr *string
 		if mac != "" {
 			macPtr = &mac
 		}
-		item, kind, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr)
+		item, kind, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr, workStart, workEnd, graceLate, graceEarly)
 		if err != nil {
 			logger.Error(mod, "checkin:create 写入失败", "companyId", cid, "userId", a.ID, "error", err.Error())
 			ack(util.Fail("打卡失败"))
@@ -324,8 +331,13 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 				LastTime:  recs[len(recs)-1].CheckTime,
 			}
 			// 逐日综合状态：只打一次卡 → 下班未打卡（缺卡类）；迟到/早退如实判定。
+			// 历史判定优先用打卡时固化的规则快照（改规则不影响历史）；老数据无快照回退当前规则。
 			in, out := punchInOut(recs, date)
-			if st, ok := computeDayStatus(date, mode, graceLate, graceEarly, week, alt, in, out)["status"].(string); ok {
+			if snap := snapshotFor(recs, date); snap != nil {
+				if st, ok := computeDayStatusFromTimes(date, snap.graceLate, snap.graceEarly, snap.workStart, snap.workEnd, in, out)["status"].(string); ok {
+					day.Status = st
+				}
+			} else if st, ok := computeDayStatus(date, mode, graceLate, graceEarly, week, alt, in, out)["status"].(string); ok {
 				day.Status = st
 			}
 			days = append(days, day)
@@ -554,12 +566,40 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		// 当天打卡记录（复用 list 同源查询，按月取后过滤当天）。
 		punches, _ := store.ListCheckinsByMonth(ctx, cid, a.ID, dateStr[:7])
 		in, out := punchInOut(punches, dateStr)
-		resp := computeDayStatus(dateStr, mode, graceLate, graceEarly, weekRules, altRule, in, out)
+		// 历史判定优先用打卡时固化的规则快照（改规则不影响历史）；老数据无快照回退当前规则。
+		var resp map[string]any
+		if snap := snapshotFor(punches, dateStr); snap != nil {
+			resp = computeDayStatusFromTimes(dateStr, snap.graceLate, snap.graceEarly, snap.workStart, snap.workEnd, in, out)
+		} else {
+			resp = computeDayStatus(dateStr, mode, graceLate, graceEarly, weekRules, altRule, in, out)
+		}
 		// 缺卡细分：上班/下班未打卡（客户端用于「缺卡：上班未打卡、下班未打卡」提示）。
 		resp["missingWork"] = in == ""
 		resp["missingOff"] = out == ""
 		ack(util.OK(map[string]any{"status": resp}))
 	})
+}
+
+// snapshot 打卡时固化的排班规则快照。
+type snapshot struct {
+	workStart  string
+	workEnd    string
+	graceLate  int64
+	graceEarly int64
+}
+
+// snapshotFor 取当天首条打卡记录固化的排班快照；当天无记录或老数据(无快照)返回 nil。
+func snapshotFor(items []types.CheckinItem, dateStr string) *snapshot {
+	for _, it := range items {
+		if it.CheckDate != dateStr {
+			continue
+		}
+		if it.WorkStart == "" || it.WorkEnd == "" {
+			return nil
+		}
+		return &snapshot{workStart: it.WorkStart, workEnd: it.WorkEnd, graceLate: it.GraceLateMin, graceEarly: it.GraceEarlyMin}
+	}
+	return nil
 }
 
 // dedupMac 逐条 trim、大小写不敏感去重。

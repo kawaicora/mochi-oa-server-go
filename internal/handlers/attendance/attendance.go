@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/checkin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/types"
@@ -532,8 +533,30 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		}
 		updated.NotifyStopped = true
 		// 补卡也算打卡：make_up 批准后把补卡时间写入 checkins（解析失败仅记日志，不影响审批）。
+		// 同步固化排班快照：优先当天已有打卡记录的快照（同一天历史判定一致），否则用当前公司规则。
 		if updated.Type == "make_up" && updated.PunchTime != nil && *updated.PunchTime != "" {
-			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime); err != nil {
+			workStart, workEnd, gl, ge := "", "", int64(0), int64(0)
+			punch := *updated.PunchTime
+			pDate := ""
+			if len(punch) >= 10 {
+				pDate = punch[:10]
+			}
+			if pDate != "" {
+				if existing, e := store.ListCheckinsByMonth(ctx, cid, req.UserID, pDate[:7]); e == nil {
+					for _, it := range existing {
+						if it.CheckDate == pDate && it.WorkStart != "" && it.WorkEnd != "" {
+							workStart, workEnd, gl, ge = it.WorkStart, it.WorkEnd, it.GraceLateMin, it.GraceEarlyMin
+							break
+						}
+					}
+				}
+				if workStart == "" || workEnd == "" {
+					if rule, e := store.GetCheckinRules(ctx, cid); e == nil {
+						workStart, workEnd, gl, ge = checkin.RuleSnapshotForDay(rule, pDate)
+					}
+				}
+			}
+			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime, workStart, workEnd, gl, ge); err != nil {
 				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", *updated.PunchTime, "error", err.Error())
 			}
 		}
