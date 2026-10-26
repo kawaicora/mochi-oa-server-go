@@ -297,6 +297,11 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("获取失败"))
 			return
 		}
+		// 取规则用于逐日状态判定（迟到/早退/正常/缺卡）。
+		mode, graceLate, graceEarly, _, week, alt := "standard", int64(0), int64(0), "04:00", []dayRule{}, (*dayRule)(nil)
+		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
+			mode, graceLate, graceEarly, _, week, alt = loadRules(r)
+		}
 		// 按 check_date 分组。
 		byDate := map[string][]types.CheckinItem{}
 		for _, it := range items {
@@ -317,6 +322,11 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 				Records:   recs,
 				FirstTime: recs[0].CheckTime,
 				LastTime:  recs[len(recs)-1].CheckTime,
+			}
+			// 逐日综合状态：只打一次卡 → 下班未打卡（缺卡类）；迟到/早退如实判定。
+			in, out := punchInOut(recs, date)
+			if st, ok := computeDayStatus(date, mode, graceLate, graceEarly, week, alt, in, out)["status"].(string); ok {
+				day.Status = st
 			}
 			days = append(days, day)
 		}

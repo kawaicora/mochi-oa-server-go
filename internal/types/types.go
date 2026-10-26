@@ -1359,6 +1359,7 @@ type CheckinDay struct {
 	Count     int64         `json:"count"`
 	FirstTime string        `json:"firstTime"`
 	LastTime  string        `json:"lastTime"`
+	Status    string        `json:"status"` // rest|none|normal|late|early|late_early（服务端 computeDayStatus）
 	Records   []CheckinItem `json:"records"`
 }
 
