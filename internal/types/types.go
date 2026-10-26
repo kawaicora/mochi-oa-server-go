@@ -402,7 +402,7 @@ type AfdianOrderRow struct {
 	BuyerUserID   string    `db:"buyer_user_id" gorm:"type:varchar(64);not null"`
 	BuyerName     string    `db:"buyer_name" gorm:"type:varchar(128);not null"`
 	BuyerAvatar   string    `db:"buyer_avatar" gorm:"type:varchar(512);not null"`
-	CreateTime    int64     `db:"create_time" gorm:"type:bigint;not null;default:0"`
+	CreateTime    time.Time `db:"create_time" gorm:"type:datetime;not null"` // 爱发电回调下单时间（落库转 DATETIME，输出侧转回 unix 秒）
 	SkuDetail     string    `db:"sku_detail" gorm:"type:text;not null"`
 	Raw           string    `db:"raw" gorm:"type:text;not null"`
 	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`

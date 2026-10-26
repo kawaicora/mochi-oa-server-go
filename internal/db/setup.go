@@ -146,6 +146,11 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		"UPDATE attendance_requests SET punch_time = REPLACE(punch_time, 'T', ' ') WHERE punch_time LIKE '%T%'",
 		"UPDATE attendance_requests SET punch_time = NULL WHERE punch_time = ''",
 		"ALTER TABLE attendance_requests MODIFY `punch_time` DATETIME NULL",
+		// afdian_orders.create_time：bigint(unix 秒) → DATETIME。先加临时列 FROM_UNIXTIME 填，删旧列再改名（DROP 重跑报错忽略，天然幂等）。
+		"ALTER TABLE afdian_orders ADD COLUMN _ct_dt DATETIME NULL",
+		"UPDATE afdian_orders SET _ct_dt = FROM_UNIXTIME(create_time) WHERE create_time > 0 AND _ct_dt IS NULL",
+		"ALTER TABLE afdian_orders DROP COLUMN create_time",
+		"ALTER TABLE afdian_orders CHANGE COLUMN _ct_dt create_time DATETIME NOT NULL",
 	}
 	for _, sql := range timeTypeMigrations {
 		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {

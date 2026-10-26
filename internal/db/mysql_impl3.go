@@ -450,7 +450,7 @@ func (s *MySqlStore) UpsertAfdianOrder(ctx context.Context, in UpsertAfdianOrder
 			"buyer_user_id":   orEmpty(in.BuyerUserID),
 			"buyer_name":      orEmpty(in.BuyerName),
 			"buyer_avatar":    orEmpty(in.BuyerAvatar),
-			"create_time":     in.CreateTime,
+			"create_time":     time.Unix(in.CreateTime, 0).UTC(),
 			"sku_detail":      orEmpty(in.SkuDetail),
 			"raw":             orEmpty(in.Raw),
 			"created_at":      time.Now().UTC(),

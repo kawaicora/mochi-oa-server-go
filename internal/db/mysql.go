@@ -192,7 +192,7 @@ func rowToAfdian(r *types.AfdianOrderRow) types.AfdianOrder {
 		ID: r.ID, OutTradeNo: r.OutTradeNo, CustomOrderID: r.CustomOrderID, PlanID: r.PlanID,
 		PlanTitle: r.PlanTitle, Title: r.Title, Month: r.Month, Amount: r.Amount, ShowAmount: r.ShowAmount,
 		Status: r.Status, Remark: r.Remark, RedeemID: r.RedeemID, ProductType: r.ProductType, Discount: r.Discount,
-		BuyerUserID: r.BuyerUserID, BuyerName: r.BuyerName, BuyerAvatar: r.BuyerAvatar, CreateTime: r.CreateTime,
+		BuyerUserID: r.BuyerUserID, BuyerName: r.BuyerName, BuyerAvatar: r.BuyerAvatar, CreateTime: r.CreateTime.Unix(),
 		SkuDetail: r.SkuDetail, Raw: r.Raw, CreatedAt: toIso(r.CreatedAt),
 	}
 }
