@@ -19,6 +19,8 @@ import (
 	// 注册 "mysql" 驱动，供下面的建库连接使用（GORM 的 mysql dialector 同样依赖它）。
 	_ "github.com/go-sql-driver/mysql"
 
+	"gorm.io/gorm"
+
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/types"
@@ -124,38 +126,83 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 			logger.Info("db", "补 "+tbl+".notify_stopped 跳过（可能已存在）", "error", err.Error())
 		}
 	}
-	// 列改名 work_start/work_end → std_start/std_end：AutoMigrate 已建新列，把旧快照数据拷过去保住历史判定。
-	// 目标列为 TIME：空串/非法值用 NULLIF 归一为 NULL，避免 '' 赋 TIME 报 1292；失败仅记录不阻断启动。
-	if err := s.gorm.WithContext(ctx).Exec(
-		"UPDATE checkins SET std_start = NULLIF(work_start, ''), std_end = NULLIF(work_end, '') WHERE std_start IS NULL AND work_start IS NOT NULL",
-	).Error; err != nil {
-		logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败(不阻断)", "error", err.Error())
+	// ── 旧库升级迁移 ──
+	// 设计原则：全新库 AutoMigrate 已按 types 建出最终表，以下迁移全部静默跳过，启动零报错；
+	// 仅当检测到「旧列结构」才执行，用于从旧库（varchar 存时刻、work_start 快照）无损升级。
+	g := s.gorm.WithContext(ctx)
+
+	// 1) work_start/work_end 旧列 → std_start/std_end 快照拷贝（目标列为 TIME，空串用 NULLIF 归一为 NULL）。
+	if columnExists(g, "checkins", "work_start") {
+		if err := g.Exec(
+			"UPDATE checkins SET std_start = NULLIF(work_start, ''), std_end = NULLIF(work_end, '') WHERE std_start IS NULL AND work_start IS NOT NULL",
+		).Error; err != nil {
+			logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败(不阻断)", "error", err.Error())
+		}
 	}
-	// 时间字段类型规范化：varchar 存时刻 → TIME。先清理空串再 MODIFY，重复执行幂等，错误仅记录不阻断启动。
-	timeTypeMigrations := []string{
-		// checkins.std_start/std_end：空串置 NULL（TIME 列不接受 ''），再 varchar→TIME。
-		"UPDATE checkins SET std_start = NULL WHERE std_start = ''",
-		"UPDATE checkins SET std_end = NULL WHERE std_end = ''",
-		"ALTER TABLE checkins MODIFY `std_start` TIME NULL",
-		"ALTER TABLE checkins MODIFY `std_end` TIME NULL",
-		// company_checkin_settings.offwork_deadline：varchar→TIME。
-		"ALTER TABLE company_checkin_settings MODIFY `offwork_deadline` TIME NOT NULL",
-		// checkins.check_date：varchar→DATE（存量均为合法 YYYY-MM-DD；查询侧已用 DATE_FORMAT 投影回字符串）。
-		"ALTER TABLE checkins MODIFY `check_date` DATE NOT NULL",
-		// attendance_requests.punch_time：历史 ISO→空格、空串→NULL，再 varchar→DATETIME。
-		"UPDATE attendance_requests SET punch_time = REPLACE(punch_time, 'T', ' ') WHERE punch_time LIKE '%T%'",
-		"UPDATE attendance_requests SET punch_time = NULL WHERE punch_time = ''",
-		"ALTER TABLE attendance_requests MODIFY `punch_time` DATETIME NULL",
-		// afdian_orders.create_time：bigint(unix 秒) → DATETIME。先加临时列 FROM_UNIXTIME 填，删旧列再改名（DROP 重跑报错忽略，天然幂等）。
-		"ALTER TABLE afdian_orders ADD COLUMN _ct_dt DATETIME NULL",
-		"UPDATE afdian_orders SET _ct_dt = FROM_UNIXTIME(create_time) WHERE create_time > 0 AND _ct_dt IS NULL",
-		"ALTER TABLE afdian_orders DROP COLUMN create_time",
-		"ALTER TABLE afdian_orders CHANGE COLUMN _ct_dt create_time DATETIME NOT NULL",
+
+	// 2) checkins.std_start/std_end：仅旧库 varchar→TIME（新库已是 time 跳过）。先清空串再 MODIFY。
+	if columnType(g, "checkins", "std_start") == "varchar" {
+		for _, sql := range []string{
+			"UPDATE checkins SET std_start = NULL WHERE std_start = ''",
+			"UPDATE checkins SET std_end = NULL WHERE std_end = ''",
+			"ALTER TABLE checkins MODIFY `std_start` TIME NULL",
+			"ALTER TABLE checkins MODIFY `std_end` TIME NULL",
+		} {
+			if err := g.Exec(sql).Error; err != nil {
+				logger.Error("db", "时间字段类型迁移失败", "sql", sql, "error", err.Error())
+			}
+		}
 	}
-	for _, sql := range timeTypeMigrations {
-		if err := s.gorm.WithContext(ctx).Exec(sql).Error; err != nil {
-			logger.Error("db", "时间字段类型迁移失败", "sql", sql, "error", err.Error())
+	// 3) company_checkin_rules.offwork_deadline：仅旧库 varchar→TIME（注意列在 rules 表，不在 settings）。
+	if columnType(g, "company_checkin_rules", "offwork_deadline") == "varchar" {
+		if err := g.Exec("ALTER TABLE company_checkin_rules MODIFY `offwork_deadline` TIME NOT NULL").Error; err != nil {
+			logger.Error("db", "offwork_deadline 改 TIME 失败(不阻断)", "error", err.Error())
+		}
+	}
+	// 4) checkins.check_date：仅旧库 varchar→DATE。
+	if columnType(g, "checkins", "check_date") == "varchar" {
+		if err := g.Exec("ALTER TABLE checkins MODIFY `check_date` DATE NOT NULL").Error; err != nil {
+			logger.Error("db", "check_date 改 DATE 失败(不阻断)", "error", err.Error())
+		}
+	}
+	// 5) attendance_requests.punch_time：仅旧库 varchar→DATETIME。
+	if columnType(g, "attendance_requests", "punch_time") == "varchar" {
+		for _, sql := range []string{
+			"UPDATE attendance_requests SET punch_time = REPLACE(punch_time, 'T', ' ') WHERE punch_time LIKE '%T%'",
+			"UPDATE attendance_requests SET punch_time = NULL WHERE punch_time = ''",
+			"ALTER TABLE attendance_requests MODIFY `punch_time` DATETIME NULL",
+		} {
+			if err := g.Exec(sql).Error; err != nil {
+				logger.Error("db", "时间字段类型迁移失败", "sql", sql, "error", err.Error())
+			}
+		}
+	}
+	// 6) afdian_orders.create_time：仅旧库 bigint(unix秒)→DATETIME；新库已是 datetime 直接跳过，避免误删正确列。
+	if columnType(g, "afdian_orders", "create_time") == "bigint" {
+		for _, sql := range []string{
+			"ALTER TABLE afdian_orders ADD COLUMN _ct_dt DATETIME NULL",
+			"UPDATE afdian_orders SET _ct_dt = FROM_UNIXTIME(create_time) WHERE create_time > 0 AND _ct_dt IS NULL",
+			"ALTER TABLE afdian_orders DROP COLUMN create_time",
+			"ALTER TABLE afdian_orders CHANGE COLUMN _ct_dt create_time DATETIME NOT NULL",
+		} {
+			if err := g.Exec(sql).Error; err != nil {
+				logger.Error("db", "时间字段类型迁移失败", "sql", sql, "error", err.Error())
+			}
 		}
 	}
 	return nil
+}
+
+// columnExists 判断某表某列是否存在（information_schema，兼容旧库升级检测）。
+func columnExists(g *gorm.DB, table, column string) bool {
+	var n int64
+	g.Raw("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", table, column).Scan(&n)
+	return n > 0
+}
+
+// columnType 取某列数据类型（小写，如 time/datetime/bigint/varchar）；列不存在返回空串。
+func columnType(g *gorm.DB, table, column string) string {
+	var t string
+	g.Raw("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?", table, column).Scan(&t)
+	return t
 }
