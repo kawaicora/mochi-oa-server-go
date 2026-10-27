@@ -436,6 +436,9 @@ func RegisterDev(c Ctx) {
 	})
 
 	// ---- 信令：按角色分发（被控端→控制端 / 控制端→被控端） ----
+	// ---- 信令中继（SDP offer/answer + ICE candidate）→ 对端 ----
+	// [DEPRECATED] SFU 化后远程控制走 LiveKit（被控端发布屏幕/声音、控制端订阅，键鼠走 data 消息），
+	// 新客户端不再调用 dev:signal；本 handler 保留转发以兼容未升级的旧客户端。
 	srv.On("dev:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
 		var d devSignalReq
 		_ = json.Unmarshal(raw, &d)
@@ -537,7 +540,31 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("该设备已离线"))
 			return
 		}
-		send(dev.conn, "dev:view", map[string]any{"deviceId": deviceID})
+		// SFU：控制端/被控端进同一 LiveKit room；被控端发布屏幕+声音，控制端订阅；键鼠走 LiveKit data。
+		sfuURL, sfuToken, sfuRoomName := "", "", ""
+		var slaveToken string
+		if liveKitEnabled(cfg.LiveKit) {
+			lk := cfg.LiveKit
+			sfuRoomName = liveKitRoomName(lk, "remote:"+deviceID)
+			ctrlTok, err1 := signLiveKitToken(lk, "ctrl-"+c.ID(), sfuRoomName)
+			slaveTok, err2 := signLiveKitToken(lk, "slave-"+deviceID, sfuRoomName)
+			if err1 != nil || err2 != nil {
+				logger.Warn(module, "dev:view 签发 LiveKit token 失败", "deviceId", deviceID,
+					"ctrlErr", err1, "slaveErr", err2)
+			} else {
+				sfuURL = lk.URL
+				sfuToken = ctrlTok
+				slaveToken = slaveTok
+			}
+		}
+		// 通知被控端连接同一 SFU room 并准备发布屏幕（携带被控端 token）。
+		viewMsg := map[string]any{"deviceId": deviceID}
+		if sfuRoomName != "" {
+			viewMsg["url"] = sfuURL
+			viewMsg["token"] = slaveToken
+			viewMsg["roomName"] = sfuRoomName
+		}
+		send(dev.conn, "dev:view", viewMsg)
 		logger.Info(module, "控制端查看设备", "deviceId", deviceID, "name", dev.name)
 		ack(util.OK(map[string]any{
 			"deviceId":   deviceID,
@@ -545,8 +572,12 @@ func RegisterDev(c Ctx) {
 			"username":   dev.username,
 			"os":         dev.osName,
 			"ip":         dev.ip,
-			"iceServers": cfg.IceServers, // 控制端信令用静态 ICE（照 TS dev.ts，不走 CF 动态）
+			"iceServers": cfg.IceServers, // 旧 P2P 信令用静态 ICE（新链路走 SFU，仅兼容旧客户端保留）
 			"sys":        dev.sys,
+			// SFU：控制端连接信息。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
 	})
 
@@ -606,6 +637,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("采集类型不合法"))
 			return
 		}
+		// SFU：dev:view 已向双方下发同一 room 的 token；被控端收到 dev:start 后在该 room publish 对应轨道（camera/screen/mic）。
 		send(dev.conn, "dev:start", map[string]any{
 			"deviceId":   deviceID,
 			"kind":       kind,

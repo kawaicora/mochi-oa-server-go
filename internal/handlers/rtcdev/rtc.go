@@ -526,7 +526,13 @@ func RegisterRtc(c Ctx) {
 		// 预约会议：不立即开始，保留会议号，由首个加入者开始。
 		scheduled := d.StartAt != nil && d.StartAt != ""
 		if scheduled {
-			ack(util.OK(map[string]any{"meeting": sess.view(), "scheduled": true}))
+			res := map[string]any{"meeting": sess.view(), "scheduled": true}
+			if liveKitEnabled(cfg.LiveKit) {
+				// 预约不签发 token（token 有效期 2h 可能盖不住预约时长）；先下发 url，token 由 rtc:join 时签发。
+				res["url"] = cfg.LiveKit.URL
+				res["roomName"] = liveKitRoomName(cfg.LiveKit, meetingNo)
+			}
+			ack(util.OK(res))
 			return
 		}
 		// 直接开始：主持人加入房间
@@ -534,11 +540,16 @@ func RegisterRtc(c Ctx) {
 		sess.startedAt = &ts
 		addSocket(srv, st, c, meetingNo, u)
 		broadcastRoomsChanged(srv)
+		// SFU：主持人为首个加入者，一并下发连接信息。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, meetingNo, u.ID)
 		ack(util.OK(map[string]any{
 			"meeting":    sess.view(),
 			"scheduled":  false,
 			"peers":      filterPeers(srv, meetingNo, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
+			"url":        sfuURL,
+			"token":      sfuToken,
+			"roomName":   sfuRoomName,
 		}))
 	})
 
@@ -709,15 +720,23 @@ func RegisterRtc(c Ctx) {
 		broadcastRoomsChanged(srv)
 		logger.Info(module, "rtc:join", "user", u.ID, "room", roomID, "type", r.typ,
 			"已有成员", len(peersInfo(srv, roomID))-1)
+		// SFU：启用 LiveKit 时为加入者签发 access token（客户端据此连 SFU，不再走 rtc:signal P2P 媒体信令）。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, roomID, u.ID)
 		ack(util.OK(map[string]any{
 			"room":       r.view(),
 			"peers":      filterPeers(srv, roomID, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
 			"started":    wasStarted,
+			// SFU 化：启用 LiveKit 时下发连接信息，客户端据此连 SFU（不再走 rtc:signal P2P 媒体信令）。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
 	})
 
 	// ---- 信令中继（SDP offer/answer + ICE candidate）→ 房间内其他参与者 ----
+	// [DEPRECATED] SFU 化后媒体协商改走 LiveKit，新客户端不再调用 rtc:signal；
+	// 本 handler 保留转发以兼容仍在线/未升级的旧客户端，不再承担新链路的媒体协商。
 	srv.On("rtc:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
 		u := authed(c)
 		if u == nil {
@@ -924,14 +943,30 @@ func RegisterRtc(c Ctx) {
 		}
 		roomsMu.Unlock()
 		addSocket(srv, st, c, rtcID, u)
+		// SFU：为双方签发同一 room 的 token；控制端（发起方）从 ack 拿，被控端从 rtc:dmIncoming 拿。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, rtcID, u.ID)
+		dmIncoming := map[string]any{"room": rtcID, "kind": kind, "from": peerOf(c), "ts": nowMs()}
+		if sfuRoomName != "" {
+			slaveTok, err := signLiveKitToken(cfg.LiveKit, strconv.FormatInt(targetID, 10), sfuRoomName)
+			if err == nil {
+				dmIncoming["url"] = sfuURL
+				dmIncoming["token"] = slaveTok
+				dmIncoming["roomName"] = sfuRoomName
+			} else {
+				logger.Warn(module, "rtc:dmCall 签被控端 LiveKit token 失败", "user", targetID, "room", rtcID, "error", err)
+			}
+		}
 		// 通知对方所有在线端
-		_ = srv.EmitTo(util.UserRoom(targetID), "rtc:dmIncoming",
-			map[string]any{"room": rtcID, "kind": kind, "from": peerOf(c), "ts": nowMs()})
+		_ = srv.EmitTo(util.UserRoom(targetID), "rtc:dmIncoming", dmIncoming)
 		broadcastRoomsChanged(srv)
 		ack(util.OK(map[string]any{
 			"room":       sess.view(),
 			"kind":       kind,
 			"iceServers": ice.GetIceServers(cfg),
+			// SFU：发起方进入房间，一并下发连接信息。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
 	})
 
@@ -961,10 +996,15 @@ func RegisterRtc(c Ctx) {
 			_ = srv.EmitToSkip(rtcRoom(roomID), "rtc:peerJoined",
 				map[string]any{"room": roomID, "peer": peerOf(c)}, c.ID())
 			broadcastRoomsChanged(srv)
+			// SFU：被叫方接受并进入房间，一并下发连接信息。
+			sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, roomID, u.ID)
 			ack(util.OK(map[string]any{
 				"room":       sess.view(),
 				"peers":      filterPeers(srv, roomID, c.ID()),
 				"iceServers": ice.GetIceServers(cfg),
+				"url":        sfuURL,
+				"token":      sfuToken,
+				"roomName":   sfuRoomName,
 			}))
 			return
 		}
@@ -1031,10 +1071,15 @@ func RegisterRtc(c Ctx) {
 		_ = srv.EmitToSkip(util.GroupRoom(gid), "rtc:groupCall",
 			map[string]any{"room": rtcID, "kind": kind, "groupId": gid, "from": peerOf(c), "ts": nowMs()}, c.ID())
 		broadcastRoomsChanged(srv)
+		// SFU：群通话发起方进入房间，一并下发连接信息。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, rtcID, u.ID)
 		ack(util.OK(map[string]any{
 			"room":       sess.view(),
 			"peers":      filterPeers(srv, rtcID, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
+			"url":        sfuURL,
+			"token":      sfuToken,
+			"roomName":   sfuRoomName,
 		}))
 	})
 
