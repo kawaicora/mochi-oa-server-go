@@ -125,11 +125,11 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		}
 	}
 	// 列改名 work_start/work_end → std_start/std_end：AutoMigrate 已建新列，把旧快照数据拷过去保住历史判定。
+	// 目标列为 TIME：空串/非法值用 NULLIF 归一为 NULL，避免 '' 赋 TIME 报 1292；失败仅记录不阻断启动。
 	if err := s.gorm.WithContext(ctx).Exec(
-		"UPDATE checkins SET std_start = work_start, std_end = work_end WHERE (std_start IS NULL OR std_start = '') AND work_start IS NOT NULL",
+		"UPDATE checkins SET std_start = NULLIF(work_start, ''), std_end = NULLIF(work_end, '') WHERE std_start IS NULL AND work_start IS NOT NULL",
 	).Error; err != nil {
-		logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败", "error", err.Error())
-		return err
+		logger.Error("db", "checkins 快照列迁移 std_start/std_end 失败(不阻断)", "error", err.Error())
 	}
 	// 时间字段类型规范化：varchar 存时刻 → TIME。先清理空串再 MODIFY，重复执行幂等，错误仅记录不阻断启动。
 	timeTypeMigrations := []string{
