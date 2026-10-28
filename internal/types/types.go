@@ -460,7 +460,7 @@ type AttendanceRequestRow struct {
 	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
 	Type          string     `db:"type" gorm:"type:varchar(16);not null"`                   // make_up|leave|comp_time
 	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected
-	PunchTime     *string    `db:"punch_time" gorm:"type:datetime"` // 补卡时间，如 "2026-10-17 09:00"
+	PunchTime     *string    `db:"punch_time" gorm:"type:datetime"`                         // 补卡时间，如 "2026-10-17 09:00"
 	LeaveType     *string    `db:"leave_type" gorm:"type:varchar(32)"`                      // 请假类型
 	CompType      *string    `db:"comp_type" gorm:"type:varchar(32)"`                       // 调休类型
 	StartTime     *time.Time `db:"start_time" gorm:"type:datetime(3)"`                      // 可空：补卡无区间
@@ -473,10 +473,12 @@ type AttendanceRequestRow struct {
 	// ApproverIDs/CcIDs 是创建时按公司审批流配置的快照（JSON 数组字符串）。
 	// JSON 列一律可空、无 default（MySQL 8 禁止 JSON 列字面 DEFAULT，Error 1101）；
 	// 写入侧空数组落 "[]"，读取侧 NULL/空兜底 []。
-	ApproverIDs string    `db:"approver_ids" gorm:"type:json"`
-	CcIDs       string    `db:"cc_ids" gorm:"type:json"`
-	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
-	UpdatedAt   time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+	ApproverIDs   string    `db:"approver_ids" gorm:"type:json"`
+	CcIDs         string    `db:"cc_ids" gorm:"type:json"`
+	CcViewedIDs   string    `db:"cc_viewed_ids" gorm:"type:json"`                           // 抄送人已读 id 集合（JSON 数组），查询引用列、AutoMigrate 据此建列
+	NotifyStopped bool      `db:"notify_stopped" gorm:"type:tinyint(1);not null;default:0"` // 主动停止循环提醒
+	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // ExpenseRequestRow 对应 expenses 表（报销申请，公司隔离）。
@@ -486,10 +488,10 @@ type ExpenseRequestRow struct {
 	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
 	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
-	Category      string     `db:"category" gorm:"type:varchar(32);not null"`  // 报销类型
-	Amount        float64    `db:"amount" gorm:"type:decimal(12,2);not null"`  // 金额
-	Reason        string     `db:"reason" gorm:"type:text;not null"`           // HTML 富文本事由
-	Evidence      string     `db:"evidence" gorm:"type:json"`                  // 凭证图片 URL JSON 数组
+	Category      string     `db:"category" gorm:"type:varchar(32);not null"` // 报销类型
+	Amount        float64    `db:"amount" gorm:"type:decimal(12,2);not null"` // 金额
+	Reason        string     `db:"reason" gorm:"type:text;not null"`          // HTML 富文本事由
+	Evidence      string     `db:"evidence" gorm:"type:json"`                 // 凭证图片 URL JSON 数组
 	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"`
 	ApproverID    *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
 	ApprovalNote  *string    `db:"approval_note" gorm:"type:text"`
@@ -531,16 +533,16 @@ type CheckinRow struct {
 	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	CompanyID int64     `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
 	UserID    int64     `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
-	CheckDate string    `db:"check_date" gorm:"type:date;not null;index"` // YYYY-MM-DD（服务端本地今天）
-	CheckTime time.Time `db:"check_time" gorm:"type:datetime(3);not null"`       // 打卡时刻
-	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
-	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空
+	CheckDate string    `db:"check_date" gorm:"type:date;not null;index"`  // YYYY-MM-DD（服务端本地今天）
+	CheckTime time.Time `db:"check_time" gorm:"type:datetime(3);not null"` // 打卡时刻
+	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                  // 可空
+	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                 // 可空
 	// 打卡时的排班规则快照：历史判定用打卡当时规则，管理员后续改规则不影响历史。
 	// std_start/std_end 为 datetime 列，写入完整 "YYYY-MM-DD HH:MM:SS"（生产列即 datetime）；空写 NULL。
 	StdStart      *string `db:"std_start" gorm:"type:datetime"`
 	StdEnd        *string `db:"std_end" gorm:"type:datetime"`
-	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
-	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
+	GraceLateMin  int64   `db:"grace_late_min" gorm:"type:int;not null;default:0"`
+	GraceEarlyMin int64   `db:"grace_early_min" gorm:"type:int;not null;default:0"`
 	// state 位掩码（每条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休；单条只含一类型位，补卡=卡类型|8(补上班=9/补下班=10)。
 	State     int64     `db:"state" gorm:"type:int;not null;default:0"`
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
@@ -562,16 +564,16 @@ type CompanyCheckinSettingsRow struct {
 // CompanyCheckinRulesRow 对应 company_checkin_rules 表（公司打卡排班规则，一公司一行）。
 // week_rules/alt_rule 为 TEXT(JSON 字符串)，写入侧由 db 层 marshal，读取侧反序列化。
 type CompanyCheckinRulesRow struct {
-	ID            int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
-	CompanyID     int64     `db:"company_id" gorm:"uniqueIndex;type:bigint unsigned;not null"`
-	Mode          string    `db:"mode" gorm:"type:varchar(16);not null;default:standard"` // standard|sixday|nosleep|bigsmall
-	GraceLateMin  int64     `db:"grace_late_min" gorm:"type:int;not null;default:0"`
-	GraceEarlyMin int64     `db:"grace_early_min" gorm:"type:int;not null;default:0"`
-	WeekRules     string    `db:"week_rules" gorm:"type:text"` // JSON：7 项 {dow,start,end,rest}
-	AltRule       *string   `db:"alt_rule" gorm:"type:text"`   // JSON：大小周交替日 {dow,altStart,altEnd}，可空
-	OffworkDeadline string  `db:"offwork_deadline" gorm:"type:time;not null"` // 下班卡次日截止时刻 HH:MM，超时不算当天/前天下班卡；无 DB DEFAULT，由应用层 defaultDeadline() 兜底
-	CreatedAt     time.Time `db:"created_at" gorm:"type:datetime;not null"`
-	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+	ID              int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID       int64     `db:"company_id" gorm:"uniqueIndex;type:bigint unsigned;not null"`
+	Mode            string    `db:"mode" gorm:"type:varchar(16);not null;default:standard"` // standard|sixday|nosleep|bigsmall
+	GraceLateMin    int64     `db:"grace_late_min" gorm:"type:int;not null;default:0"`
+	GraceEarlyMin   int64     `db:"grace_early_min" gorm:"type:int;not null;default:0"`
+	WeekRules       string    `db:"week_rules" gorm:"type:text"`                // JSON：7 项 {dow,start,end,rest}
+	AltRule         *string   `db:"alt_rule" gorm:"type:text"`                  // JSON：大小周交替日 {dow,altStart,altEnd}，可空
+	OffworkDeadline string    `db:"offwork_deadline" gorm:"type:time;not null"` // 下班卡次日截止时刻 HH:MM，超时不算当天/前天下班卡；无 DB DEFAULT，由应用层 defaultDeadline() 兜底
+	CreatedAt       time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt       time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyApprovalCcRow 对应 company_approval_cc 表：公司默认审批抄送人（一公司可多条，user_id 唯一）。
@@ -602,20 +604,21 @@ type ProxyAccountRow struct {
 // ProxyAccessRequestRow 对应 proxy_access_requests 表（上网申请审批）。
 // JSON 列 approver_ids/cc_ids 为创建/续期时按公司 internet 审批流的快照（type:json 可空无 default）。
 type ProxyAccessRequestRow struct {
-	ID           int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
-	CompanyID    int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
-	UserID       int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
-	Status       string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected|renew_pending
-	Note         *string    `db:"note" gorm:"type:varchar(200)"`
-	AccountID    *int64     `db:"account_id" gorm:"index;type:bigint unsigned"` // 批准时回填
-	ApproverIDs  string     `db:"approver_ids" gorm:"type:json"`
-	CcIDs        string     `db:"cc_ids" gorm:"type:json"`
-	ApproverID   *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
-	ApprovalNote *string    `db:"approval_note" gorm:"type:text"`
-	ApprovedAt   *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
-	ExpiresAt    *time.Time `db:"expires_at" gorm:"type:datetime(3)"` // 批准时 now+30 天
-	CreatedAt    time.Time  `db:"created_at" gorm:"type:datetime;not null"`
-	UpdatedAt    time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
+	ID            int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID     int64      `db:"company_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected|renew_pending
+	Note          *string    `db:"note" gorm:"type:varchar(200)"`
+	AccountID     *int64     `db:"account_id" gorm:"index;type:bigint unsigned"` // 批准时回填
+	ApproverIDs   string     `db:"approver_ids" gorm:"type:json"`
+	CcIDs         string     `db:"cc_ids" gorm:"type:json"`
+	NotifyStopped bool       `db:"notify_stopped" gorm:"type:tinyint(1);not null;default:0"` // 主动停止循环提醒，查询引用列、AutoMigrate 据此建列
+	ApproverID    *int64     `db:"approver_id" gorm:"type:bigint unsigned"`
+	ApprovalNote  *string    `db:"approval_note" gorm:"type:text"`
+	ApprovedAt    *time.Time `db:"approved_at" gorm:"type:datetime(3)"`
+	ExpiresAt     *time.Time `db:"expires_at" gorm:"type:datetime(3)"` // 批准时 now+30 天
+	CreatedAt     time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt     time.Time  `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // AssetRow 对应 assets 表（公司资产）。code 公司内唯一，按 日期+当日序号 生成（AS20261017-001）。
@@ -695,10 +698,11 @@ func (ReportTemplateRow) TableName() string         { return "report_templates" 
 func (ReportRow) TableName() string                 { return "reports" }
 func (AttendanceRequestRow) TableName() string      { return "attendance_requests" }
 func (ExpenseRequestRow) TableName() string         { return "expenses" }
-func (AdvanceRequestRow) TableName() string        { return "advances" }
+func (AdvanceRequestRow) TableName() string         { return "advances" }
 func (CheckinRow) TableName() string                { return "checkins" }
 func (CompanyCheckinSettingsRow) TableName() string { return "company_checkin_settings" }
 func (CompanyCheckinRulesRow) TableName() string    { return "company_checkin_rules" }
+func (CompanyApprovalCcRow) TableName() string      { return "company_approval_cc" }
 func (ProxyAccountRow) TableName() string           { return "proxy_accounts" }
 func (ProxyAccessRequestRow) TableName() string     { return "proxy_access_requests" }
 func (AssetRow) TableName() string                  { return "assets" }
@@ -1350,8 +1354,8 @@ type AdvanceRequest struct {
 	CompanyID     int64    `json:"companyId"`
 	UserID        int64    `json:"userId"`
 	Category      string   `json:"category"` // 备用金类型
-	Amount        float64  `json:"amount"`  // 金额
-	Reason        string   `json:"reason"`  // HTML 富文本事由
+	Amount        float64  `json:"amount"`   // 金额
+	Reason        string   `json:"reason"`   // HTML 富文本事由
 	Evidence      []string `json:"evidence"` // 凭证附件 URL
 	Status        string   `json:"status"`   // pending|approved|rejected
 	ApproverID    *int64   `json:"approverId"`
@@ -1384,8 +1388,8 @@ type CheckinItem struct {
 	// state 位掩码（单条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
 	State     int64  `json:"state"`
 	CreatedAt string `json:"createdAt"`
-	Nick      string  `json:"nick"`
-	Username  string  `json:"username"`
+	Nick      string `json:"nick"`
+	Username  string `json:"username"`
 }
 
 // CheckinDay 某用户某一天的打卡聚合：date 倒序、组内按 check_time 升序。

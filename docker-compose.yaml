@@ -34,11 +34,11 @@ services:
       PORT: ${PORT:-80}
       STORAGE: mysql
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
-      MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
-      MYSQL_PORT: "3306"
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_PORT: ${MYSQL_PORT}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
-      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_USER: ${MYSQL_USER:-}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
       FILE_DIR: /app/data
       TZ: Asia/Shanghai
@@ -86,9 +86,9 @@ services:
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
-    depends_on:
-      mochi-oa-server-go-mysql-c54f8e4:
-        condition: service_healthy
+    # depends_on:
+    #   mochi-oa-server-go-mysql-c54f8e4:
+    #     condition: service_healthy
     restart: unless-stopped
 
 
