@@ -13,6 +13,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
@@ -422,17 +423,18 @@ func (s *MySqlStore) ListReportsByPeriod(ctx context.Context, companyID int64, t
 
 // ListInboxReports 收件箱：查「别人发给我」的报告——即 recipient_ids 这个 JSON 数组里包含本人 userId。
 //
-// JSON_CONTAINS(recipient_ids, CAST(? AS JSON))：
+// JSON_CONTAINS(recipient_ids, ?)：
 //   - recipient_ids 是 JSON 列，形如 "[1,2]"；
-//   - 第二参数必须是合法 JSON 值；直接绑定数字时 MySQL JSON 数字匹配不能按字符串传，
-//     用 CAST(? AS JSON) 把绑定的 int64 转成 JSON 值（数字 5 → JSON 5），再做数组包含判断；
+//   - 第二参数必须是合法 JSON 值：传数字字符串（strconv.FormatInt 得 "5"），
+//     MySQL 与 MariaDB 都会把该字符串解析为 JSON 数字 5，再做数组包含判断（兼容 MySQL 8 + MariaDB，
+//     MariaDB 11 不支持 MySQL 专属的 CAST(? AS JSON) 语法）；
 //   - 命中即该报告把本人列进了接收人。
 //
 // createdAt 倒序（新收到的在前），分页返回（行, 总数）。
 func (s *MySqlStore) ListInboxReports(ctx context.Context, companyID, userID int64, page, pageSize int64) ([]types.ReportItem, int64, error) {
 	q := s.gorm.WithContext(ctx).Table("reports r").
 		Where("r.company_id = ?", companyID).
-		Where("JSON_CONTAINS(r.recipient_ids, CAST(? AS JSON))", userID)
+		Where("JSON_CONTAINS(r.recipient_ids, ?)", strconv.FormatInt(userID, 10))
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err

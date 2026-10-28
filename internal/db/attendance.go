@@ -105,6 +105,7 @@ func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAtten
 		Reason:        in.Reason,
 		ApproverIDs:   encodeRecipients(in.ApproverIDs),
 		CcIDs:         encodeRecipients(in.CcIDs),
+		CcViewedIDs:   "[]", // MariaDB JSON 列拒绝空串，必须落合法 JSON（与 advance/expense 一致）
 		ApproverID:    nil,
 		ApprovalNote:  nil,
 		ApprovedAt:    nil,
