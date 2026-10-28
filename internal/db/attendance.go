@@ -153,11 +153,14 @@ func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID
 	if typ != "" {
 		q = q.Where("r.type = ?", typ)
 	}
+	// 日期过滤统一日期列：补卡(make_up)无 start_time，用目标日期 makeup_date；其余用 start_time；再兜底 created_at。
+	// （补卡若按 DATE(start_time) 过滤会因 NULL 被排除，导致打卡页紫点查不到补卡申请。）
+	dateCol := "COALESCE(r.makeup_date, DATE(r.start_time), DATE(r.created_at))"
 	if dateStart != "" {
-		q = q.Where("DATE(r.start_time) >= ?", dateStart)
+		q = q.Where(dateCol+" >= ?", dateStart)
 	}
 	if dateEnd != "" {
-		q = q.Where("DATE(r.start_time) <= ?", dateEnd)
+		q = q.Where(dateCol+" <= ?", dateEnd)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -180,11 +183,12 @@ func (s *MySqlStore) ListAttendanceRequestsByUser(ctx context.Context, companyID
 	if typ != "" {
 		listQ = listQ.Where("r.type = ?", typ)
 	}
+	// 与 count 查询同一过滤口径：补卡用 makeup_date，其余 start_time，兜底 created_at。
 	if dateStart != "" {
-		listQ = listQ.Where("DATE(r.start_time) >= ?", dateStart)
+		listQ = listQ.Where(dateCol+" >= ?", dateStart)
 	}
 	if dateEnd != "" {
-		listQ = listQ.Where("DATE(r.start_time) <= ?", dateEnd)
+		listQ = listQ.Where(dateCol+" <= ?", dateEnd)
 	}
 	if err := listQ.Order("r.created_at DESC, r.id DESC").
 		Limit(int(pageSize)).
