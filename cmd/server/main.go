@@ -340,11 +340,11 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 	}
 }
 
-// sessionValid 会话未过期（ExpiresAt 为本地 +08:00 偏移 ISO，兼容旧 Z；RFC3339Nano 同时接受 Z 与 ±08:00）。
+// sessionValid 会话未过期（ExpiresAt 为本地空格完整时间或旧 ISO；util.ParseLocalTime 两者皆收）。
 func sessionValid(expiresAt string) bool {
-	t, err := time.Parse(time.RFC3339Nano, expiresAt)
-	if err != nil {
-		logger.Warn("auth", "会话过期时间解析失败，按未过期兜底放行", "expiresAt", expiresAt, "error", err.Error())
+	t, ok := util.ParseLocalTime(expiresAt)
+	if !ok {
+		logger.Warn("auth", "会话过期时间解析失败，按未过期兜底放行", "expiresAt", expiresAt)
 		return true
 	}
 	return t.After(time.Now())

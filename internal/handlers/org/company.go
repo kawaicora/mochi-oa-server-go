@@ -1103,15 +1103,10 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		if eaVal, hasEA := d["expiresAt"]; hasEA && eaVal != nil {
 			eaStr := strings.TrimSpace(fmt.Sprintf("%v", eaVal))
 			if eaStr != "" && eaStr != "<nil>" {
-				t, err := time.Parse(time.RFC3339, eaStr)
-				if err != nil {
-					// 尝试宽松解析
-					t2, err2 := time.Parse("2006-01-02T15:04:05", eaStr)
-					if err2 != nil {
-						ack(util.Fail("过期时间不合法"))
-						return
-					}
-					t = t2
+				t, ok := util.ParseLocalTime(eaStr)
+				if !ok {
+					ack(util.Fail("过期时间不合法"))
+					return
 				}
 				s := util.LocalTimeFormat(t)
 				expiresAt = &s
@@ -1218,7 +1213,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		}
 		// 过期检查
 		if inv.ExpiresAt != nil {
-			if t, err := time.Parse(time.RFC3339, *inv.ExpiresAt); err == nil && t.Before(time.Now()) {
+			if t, ok := util.ParseLocalTime(*inv.ExpiresAt); ok && t.Before(time.Now()) {
 				_ = store.SetCompanyInvitationStatus(ctx, inv.ID, "expired")
 				ack(util.Fail("邀请已过期"))
 				return

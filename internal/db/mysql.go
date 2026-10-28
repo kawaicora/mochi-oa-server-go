@@ -108,12 +108,12 @@ func mustLocalTZ() *time.Location {
 	return loc
 }
 
-// toIso 把 time.Time 转业务本地时区可解析字符串（带 +08:00 偏移、无 Z 后缀）。零值返回空串。
+// toIso 把 time.Time 转业务本地时区完整时间字符串（空格分隔、无毫秒、无时区）。零值返回空串。
 func toIso(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.In(localTZ).Format("2006-01-02T15:04:05.000+08:00")
+	return t.In(localTZ).Format("2006-01-02 15:04:05")
 }
 
 // isoPtr 把可空时间转可空 ISO 字符串。

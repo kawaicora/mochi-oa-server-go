@@ -11,6 +11,7 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net"
 	"os"
@@ -818,13 +819,15 @@ func pageArgs(d map[string]any, dftSize int64) (int64, int64) {
 
 func strPtrStr(s string) *string { return &s }
 
-// parseFlexTime 解析 YYYY-MM-DD 或 RFC3339。
+// parseFlexTime 解析 YYYY-MM-DD 或空格完整时间/ISO（util.ParseLocalTime 兼容）。
 func parseFlexTime(s string) (time.Time, error) {
 	if t, err := time.Parse("2006-01-02", s); err == nil {
 		return t.UTC(), nil
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	return t.UTC(), err
+	if t, ok := util.ParseLocalTime(s); ok {
+		return t.UTC(), nil
+	}
+	return time.Time{}, errors.New("时间不合法")
 }
 
 // toIso 转业务本地时区可解析字符串（+08:00 偏移、无 Z，与 db/util 同口径）。

@@ -25,12 +25,32 @@ func mustLocalTZ() *time.Location {
 	return loc
 }
 
-// LocalTimeFormat 把 time.Time 转为本地可解析字符串（+08:00 偏移、无 Z）。
+// LocalTimeFormat 把 time.Time 转为业务本地时区完整时间字符串（空格分隔、无毫秒、无时区）。
+// 全局统一输出格式：2026-10-28 11:17:23。零值返回空串。
 func LocalTimeFormat(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.In(LocalTZ).Format("2006-01-02T15:04:05.000+08:00")
+	return t.In(LocalTZ).Format("2006-01-02 15:04:05")
+}
+
+// ParseLocalTime 解析完整时间字符串，兼容服务端输出的空格格式与客户端旧 ISO(RFC3339Nano/RFC3339) 及分钟级格式。
+// 无时区后缀的按业务本地时区解析；非法返回 (zero, false)。
+func ParseLocalTime(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	} {
+		if t, err := time.ParseInLocation(layout, s, LocalTZ); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // joinCodeChars 是加入码字符集（去掉易混淆的 I/O/0/1，对齐源码）。

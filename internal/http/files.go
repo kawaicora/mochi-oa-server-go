@@ -30,6 +30,7 @@ import (
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/token"
+	"mochi-oa-server-go/internal/util"
 )
 
 // filesHandler 聚合文件路由的依赖（对标 registerUploadRoutes 闭包捕获）。
@@ -256,10 +257,10 @@ func authedUserId(r *http.Request, store db.Store, cfg *config.ServerConfig) int
 	return 0
 }
 
-// sessionNotExpired 会话未过期（ExpiresAt 为本地 +08:00 偏移 ISO，兼容旧 Z；RFC3339Nano 同时接受两种格式）。
+// sessionNotExpired 会话未过期（ExpiresAt 为本地空格完整时间或旧 ISO；util.ParseLocalTime 两者皆收）。
 func sessionNotExpired(expiresAt string) bool {
-	t, err := time.Parse(time.RFC3339Nano, expiresAt)
-	if err != nil {
+	t, ok := util.ParseLocalTime(expiresAt)
+	if !ok {
 		return false
 	}
 	return t.After(time.Now())

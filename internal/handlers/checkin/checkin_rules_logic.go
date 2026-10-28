@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"mochi-oa-server-go/internal/types"
+	"mochi-oa-server-go/internal/util"
 )
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -165,8 +166,8 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 		if it.CheckDate != dateStr {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, it.CheckTime)
-		if err != nil {
+		t, ok := util.ParseLocalTime(it.CheckTime)
+		if !ok {
 			continue
 		}
 		t = t.In(localTZ)

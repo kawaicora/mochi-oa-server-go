@@ -158,7 +158,7 @@ func requireAdmin(c socketapi.Conn, d map[string]any, st db.Store, ack socketapi
 	return a, cid, true
 }
 
-// parseTimePtr 解析可选时间字段（ISO8601/RFC3339）；未传→nil；非法→(nil,false)。
+// parseTimePtr 解析可选时间字段（空格完整时间或 ISO/RFC3339）；未传→nil；非法→(nil,false)。
 func parseTimePtr(m map[string]any, key string) (*time.Time, bool) {
 	v, present := m[key]
 	if !present || v == nil {
@@ -169,8 +169,8 @@ func parseTimePtr(m map[string]any, key string) (*time.Time, bool) {
 	if s == "" {
 		return nil, true
 	}
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
+	t, ok := util.ParseLocalTime(s)
+	if !ok {
 		return nil, false
 	}
 	utc := t.UTC()

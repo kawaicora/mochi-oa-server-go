@@ -424,7 +424,7 @@ func Register(c Ctx) {
 			}
 			if mutedUntil != nil && *mutedUntil != "" {
 				// TS: me.mutedUntil.getTime() > Date.now() → 禁言未过则拒绝
-				if t, err := time.Parse(time.RFC3339Nano, *mutedUntil); err == nil && t.After(time.Now()) {
+				if t, ok := util.ParseLocalTime(*mutedUntil); ok && t.After(time.Now()) {
 					ack(util.Fail("您已被禁言"))
 					return
 				}
