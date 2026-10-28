@@ -526,8 +526,9 @@ type CheckinRow struct {
 	IP        *string   `db:"ip" gorm:"type:varchar(64)"`                        // 可空
 	MAC       *string   `db:"mac" gorm:"type:varchar(64)"`                       // 可空
 	// 打卡时的排班规则快照：历史判定用打卡当时规则，管理员后续改规则不影响历史。
-	StdStart      string `db:"std_start" gorm:"type:time"`  // 该日标准(规定)上班时间（TIME 列，读回如 09:30:00）
-	StdEnd        string `db:"std_end" gorm:"type:time"`    // 该日标准(规定)下班时间
+	// std_start/std_end 为 datetime 列，写入完整 "YYYY-MM-DD HH:MM:SS"（生产列即 datetime）；空写 NULL。
+	StdStart      *string `db:"std_start" gorm:"type:datetime"`
+	StdEnd        *string `db:"std_end" gorm:"type:datetime"`
 	GraceLateMin  int64  `db:"grace_late_min" gorm:"type:int;not null;default:0"`
 	GraceEarlyMin int64  `db:"grace_early_min" gorm:"type:int;not null;default:0"`
 	// state 位掩码（每条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休；单条只含一类型位，补卡=卡类型|8(补上班=9/补下班=10)。

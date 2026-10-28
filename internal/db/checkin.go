@@ -51,14 +51,25 @@ func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
 		Joins("LEFT JOIN users u ON u.id = r.user_id")
 }
 
-const checkinSelect = "r.id, r.company_id, r.user_id, DATE_FORMAT(r.check_date, '%Y-%m-%d') AS check_date, r.check_time, r.ip, r.mac, r.std_start, r.std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
+const checkinSelect = "r.id, r.company_id, r.user_id, DATE_FORMAT(r.check_date, '%Y-%m-%d') AS check_date, r.check_time, r.ip, r.mac, DATE_FORMAT(r.std_start, '%H:%i') AS std_start, DATE_FORMAT(r.std_end, '%H:%i') AS std_end, r.grace_late_min, r.grace_early_min, r.state, r.created_at, u.username, u.nick"
 
-// normHHMM 把 TIME 列读回的 "HH:MM:SS" 规范为 "HH:MM"（空串/短串原样返回）。
+// normHHMM 把 "HH:MM:SS"（或完整 datetime "YYYY-MM-DD HH:MM:SS" 经 DATE_FORMAT 已裁为 HH:MM）
+// 规范为 "HH:MM"（空串/短串原样返回）。
 func normHHMM(s string) string {
 	if len(s) >= 5 {
 		return s[:5]
 	}
 	return s
+}
+
+// fullDT 把排班时间（"09:30" 或 "09:30:00"）+ 当天日期拼成完整 datetime "2026-10-28 09:30:00"。
+// 生产库 checkins.std_start/std_end 为 datetime 列，只写时间会报 1292；空返回 nil（落 NULL）。
+func fullDT(checkDate, v string) *string {
+	if v == "" {
+		return nil
+	}
+	s := checkDate + " " + normHHMM(v) + ":00"
+	return &s
 }
 
 func scanRowToCheckin(r checkinScanRow) types.CheckinItem {
@@ -132,7 +143,7 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		}
 		res := tx.Table("checkins").Where("id = ?", last.ID).
 			Updates(map[string]any{"check_time": now, "ip": ip, "mac": mac,
-				"std_start": workStart, "std_end": workEnd, "grace_late_min": graceLate, "grace_early_min": graceEarly,
+				"std_start": fullDT(checkDate, workStart), "std_end": fullDT(checkDate, workEnd), "grace_late_min": graceLate, "grace_early_min": graceEarly,
 				"state": stateOff})
 		if res.Error != nil {
 			tx.Rollback()
@@ -157,8 +168,8 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		CheckTime:     now,
 		IP:            &ip,
 		MAC:           mac,
-		StdStart:      workStart,
-		StdEnd:        workEnd,
+		StdStart:      fullDT(checkDate, workStart),
+		StdEnd:        fullDT(checkDate, workEnd),
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
 		State:         state,
@@ -258,8 +269,8 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 		UserID:        userID,
 		CheckDate:     checkDate,
 		CheckTime:     checkTime,
-		StdStart:      workStart,
-		StdEnd:        workEnd,
+		StdStart:      fullDT(checkDate, workStart),
+		StdEnd:        fullDT(checkDate, workEnd),
 		GraceLateMin:  graceLate,
 		GraceEarlyMin: graceEarly,
 		State:         makeupState,

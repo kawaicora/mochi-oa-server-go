@@ -13,22 +13,32 @@ $targets = @(
     @("darwin", "arm64", "")
 )
 
-foreach ($t in $targets) {
-    $GOOS = $t[0]
-    $GOARCH = $t[1]
-    $ext = $t[2]
-    $outFile = "./dist/mochi-oa-server_$GOOS`_$GOARCH$ext"
+# 需要编译的程序：入口文件 -> 输出名基
+$programs = @(
+    @(".\cmd\server\main.go", "mochi-oa-server"),
+    @(".\cmd\tools\database_update\main.go", "mochi-oa-database_update")
+)
 
-    Write-Host "`n===== Building $GOOS/$GOARCH -> $outFile ====="
-    $env:CGO_ENABLED="0"
-    $env:GOOS=$GOOS
-    $env:GOARCH=$GOARCH
+foreach ($p in $programs) {
+    $entry = $p[0]
+    $outBase = $p[1]
+    foreach ($t in $targets) {
+        $GOOS = $t[0]
+        $GOARCH = $t[1]
+        $ext = $t[2]
+        $outFile = "./dist/${outBase}_$GOOS`_$GOARCH$ext"
 
-    go build -trimpath -ldflags "-s -w" -o $outFile .\cmd\server\main.go
+        Write-Host "`n===== Building $GOOS/$GOARCH -> $outFile ====="
+        $env:CGO_ENABLED="0"
+        $env:GOOS=$GOOS
+        $env:GOARCH=$GOARCH
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Build failed for $GOOS/$GOARCH"
-        exit $LASTEXITCODE
+        go build -trimpath -ldflags "-s -w" -o $outFile $entry
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Build failed for $GOOS/$GOARCH ($entry)"
+            exit $LASTEXITCODE
+        }
     }
 }
 
