@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
@@ -90,10 +91,10 @@ func buildAccountView(c socketapi.Conn, acc *types.ProxyAccountRow, withPassword
 	port := proxyPort()
 	exp := util.LocalTimeFormat(acc.ExpiresAt)
 	v := &types.ProxyAccountView{
-		ID:       acc.ID,
-		Host:     host,
-		Port:     port,
-		Username: acc.Username,
+		ID:        acc.ID,
+		Host:      host,
+		Port:      port,
+		Username:  acc.Username,
 		ExpiresAt: &exp,
 	}
 	if withPassword {
@@ -220,6 +221,44 @@ func canApproveRequest(req *types.ProxyRequestItem, role string, uid int64) bool
 // RegisterProxyHandlers 注册 proxy:account:* 与 proxy:request:* 事件。
 func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 	ctx := context.Background()
+
+	// ====== 代理服务器列表（任意登录用户可读，供客户端「代理设置」下拉） ======
+
+	// ---- proxy:server:list：下发可用代理服务器列表 ----
+	// 第一项 = 服务端自身出网代理（PROXY_ENABLED=true 时默认存在，无需在 .env 写自身，
+	//          host 由 resolveProxyHost 取 PROXY_HOST/握手 Host，port 取 PROXY_HTTP_PORT）；
+	// 其余   = .env PROXY_SERVERS（host:port:user:pass，逗号分隔）里服主自添加的代理。
+	// 任何登录用户可读；密码绝不下发（客户端连接仍走 proxy_accounts 账号认证链路）。
+	srv.On("proxy:server:list", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		if getAuth(c) == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		cfg := config.Get().Proxy
+		list := make([]map[string]any, 0, len(cfg.Servers)+1)
+		if cfg.Enabled {
+			list = append(list, map[string]any{
+				"name": "本服务器代理",
+				"host": resolveProxyHost(c),
+				"port": cfg.HTTPPort,
+				"type": "http",
+				"self": true,
+				"auth": true, // 需公司申请的代理账号（proxy_accounts）认证
+				"user": "",
+			})
+		}
+		for _, s := range cfg.Servers {
+			list = append(list, map[string]any{
+				"name": s.Label(),
+				"host": s.Host,
+				"port": s.Port,
+				"type": "http",
+				"auth": true,
+				"user": s.User,
+			})
+		}
+		ack(util.OK(map[string]any{"servers": list}))
+	})
 
 	// ====== 账号管理（admin/owner） ======
 
@@ -601,7 +640,7 @@ func RegisterProxyHandlers(srv socketapi.Server, store db.Store) {
 			_ = srv.EmitTo(util.UserRoom(req.UserID), "proxy:request:notification", map[string]any{
 				"kind": "company", "type": "proxy_request_approved", "companyId": cid,
 				"requestId": id, "title": "上网申请已通过",
-				"body": "您的上网申请已通过，可在详情查看账号",
+				"body":    "您的上网申请已通过，可在详情查看账号",
 				"account": map[string]any{"id": acc.ID, "username": acc.Username, "expiresAt": toIso(acc.ExpiresAt)},
 			})
 			ack(util.OK(map[string]any{
