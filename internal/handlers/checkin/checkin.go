@@ -258,15 +258,21 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			}
 		}
 
-		// check_date 归属：次日下班截止前（默认 04:00）打的卡归前一天（补前天下班卡），
-		// 其余时刻归当天。避免 UTC 日期错位，一律按业务本地口径。
+		// check_date 归属：前天下班 +8 小时内（含跨天，三班倒也适用）打的卡归前一天（补前天下班卡），
+		// 其余时刻归当天。用规则里的排班 workEnd 动态算窗口，避免固定 04:00 漏掉 04:00~workEnd+8h 段。
 		// 同时固化打卡时的排班规则快照（workStart/workEnd/grace），历史判定用快照，改规则不影响历史。
 		checkDate := time.Now().In(localTZ).Format("2006-01-02")
 		workStart, workEnd, graceLate, graceEarly := "", "", int64(0), int64(0)
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
-			mode, gl, ge, offDeadline, week, alt := loadRules(r)
-			checkDate, _ = decidePunchKind(time.Now().In(localTZ), offDeadline)
-			if dt, err := time.ParseInLocation("2006-01-02", checkDate, localTZ); err == nil {
+			mode, gl, ge, _, week, alt := loadRules(r)
+			now := time.Now().In(localTZ)
+			// 昨天排班的下班+8h 窗口判定：命中 → 归属昨天，用昨天排班快照。
+			y := now.AddDate(0, 0, -1)
+			if yRest, yWs, yWe := dayScheduleFor(y, mode, week, alt); !yRest && inOffWindow(now, yWe) {
+				checkDate = y.Format("2006-01-02")
+				workStart, workEnd, graceLate, graceEarly = yWs, yWe, gl, ge
+			} else if dt, err := time.ParseInLocation("2006-01-02", checkDate, localTZ); err == nil {
+				// 归属当天 → 当天排班快照。
 				if rest, ws, we := dayScheduleFor(dt, mode, week, alt); !rest {
 					workStart, workEnd, graceLate, graceEarly = ws, we, gl, ge
 				}

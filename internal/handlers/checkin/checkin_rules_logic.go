@@ -401,6 +401,8 @@ func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (wor
 //   - 其余时刻：归属**当天**（kind 由当天已打次数决定：0 次=上班卡、≥1=下班卡，第一次打卡永不拒绝，迟到仅作状态标记）。
 //
 // 返回 targetDate（业务本地 YYYY-MM-DD）与 isMidnight（是否处于次日凌晨补下班段）。
+//
+// 注：实时打卡归属已改用 inOffWindow（下班+8h 动态窗口），此函数仅作兼容保留。
 func decidePunchKind(now time.Time, offworkDeadline string) (targetDate string, isMidnight bool) {
 	nowMin := now.Hour()*60 + now.Minute()
 	deadMin := minutesSinceMidnight(defaultDeadline(offworkDeadline))
@@ -408,4 +410,19 @@ func decidePunchKind(now time.Time, offworkDeadline string) (targetDate string, 
 		return now.AddDate(0, 0, -1).Format("2006-01-02"), true
 	}
 	return now.Format("2006-01-02"), false
+}
+
+// inOffWindow 判断 now 是否处于"下班后 8 小时内"（含跨天到次日）的下班区间。
+// 下班区间 = 当天下班 ~ 下班 +8 小时，三班倒也适用（如 12:00-23:00 班 → 23:00 起 8h 内即次日 7:00 前）。
+func inOffWindow(now time.Time, workEnd string) bool {
+	weMin := minutesSinceMidnight(workEnd)
+	if weMin < 0 {
+		return false
+	}
+	nm := now.Hour()*60 + now.Minute()
+	off := nm - weMin
+	if off < 0 {
+		off += 24 * 60
+	}
+	return off >= 0 && off <= 8*60
 }

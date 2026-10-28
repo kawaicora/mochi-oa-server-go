@@ -604,12 +604,13 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 				}
 				crossOff := stdEndDate != "" && punchDate > stdEndDate
 				if wsMin >= 0 && weMin >= 0 && pm >= 0 {
-					// 下班区间 = 当天下班 ~ 次日 4 点：
-					// 跨天凌晨（<=4 点）或 当天已过下班且未超次日 4 点 → 补下班；
-					// 否则距下班更近 → 补下班，距上班更近 → 补上班。
-					if (crossOff && pm < 4*60) || (!crossOff && pm >= weMin && pm <= weMin+10*60) {
-						slot = 2
-					} else if absInt(pm-weMin) < absInt(pm-wsMin) {
+					// 下班区间 = 当天下班 ~ 下班 +8 小时（三班倒也适用；如 12:00-23:00 班 → 23:00 起 8h 内即次日 7:00 前都可打/补下班卡）。
+					// punch 相对下班时刻偏移（跨天 +24h），落在 [0, 8h] → 补下班；否则距下班更近 → 补下班，距上班更近 → 补上班。
+					offMin := pm - weMin
+					if crossOff {
+						offMin += 24 * 60
+					}
+					if (offMin >= 0 && offMin <= 8*60) || absInt(pm-weMin) < absInt(pm-wsMin) {
 						slot = 2
 					}
 				}
