@@ -593,8 +593,25 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 				wsMin := clockMinutes(workStart)
 				weMin := clockMinutes(workEnd)
 				pm := punchMinutesOf(*updated.PunchTime)
-				if wsMin >= 0 && weMin >= 0 && pm >= 0 && absInt(pm-weMin) < absInt(pm-wsMin) {
-					slot = 2
+				// 无槽位（独立发起/旧数据）按 PunchTime 判定槽位。
+				// 跨天判定：punch 日期晚于排班下班日期 → 次日凌晨补下班。
+				stdEndDate, punchDate := "", ""
+				if len(workEnd) >= 10 {
+					stdEndDate = workEnd[:10]
+				}
+				if len(punch) >= 10 {
+					punchDate = punch[:10]
+				}
+				crossOff := stdEndDate != "" && punchDate > stdEndDate
+				if wsMin >= 0 && weMin >= 0 && pm >= 0 {
+					// 下班区间 = 当天下班 ~ 次日 4 点：
+					// 跨天凌晨（<=4 点）或 当天已过下班且未超次日 4 点 → 补下班；
+					// 否则距下班更近 → 补下班，距上班更近 → 补上班。
+					if (crossOff && pm < 4*60) || (!crossOff && pm >= weMin && pm <= weMin+10*60) {
+						slot = 2
+					} else if absInt(pm-weMin) < absInt(pm-wsMin) {
+						slot = 2
+					}
 				}
 			}
 			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, pDate, *updated.PunchTime, workStart, workEnd, gl, ge, slot); err != nil {
