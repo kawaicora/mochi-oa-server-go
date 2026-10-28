@@ -305,6 +305,8 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			UserID:        a.ID,
 			Type:          typ,
 			PunchTime:     strPtr(d, "punchTime"),
+			MakeupDate:    strField(d, "makeupDate"), // 补卡目标日期（被补那天）
+			MakeupSlot:    strField(d, "makeupSlot"), // 补卡槽位 work|off
 			LeaveType:     strPtr(d, "leaveType"),
 			CompType:      strPtr(d, "compType"),
 			StartTime:     startT,
@@ -557,8 +559,10 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		if updated.Type == "make_up" && updated.PunchTime != nil && *updated.PunchTime != "" {
 			workStart, workEnd, gl, ge := "", "", int64(0), int64(0)
 			punch := *updated.PunchTime
-			pDate := ""
-			if len(punch) >= 10 {
+			// 目标日期优先（跨天补下班：补 10-27 卡但实际 10-28 02:00 打卡，仍落 10-27）；
+			// 空（独立发起/旧数据）则回退 punch 字面日期。
+			pDate := updated.MakeupDate
+			if pDate == "" && len(punch) >= 10 {
 				pDate = punch[:10]
 			}
 			if pDate != "" {
@@ -576,9 +580,13 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 					}
 				}
 			}
-			// 补卡槽位：PunchTime 距 workStart 近 → 补上班卡(1)；距 workEnd 近 → 补下班卡(2)。
+			// 补卡槽位：客户端已明确补上班/补下班（MakeupSlot）则直接采用——
+			// 补下班卡即使跨天到次日凌晨也算下班（下班区间 = 当天下班 ~ 次日 4 点）。
+			// 无槽位（独立发起/旧数据）才按 PunchTime 距 workStart/workEnd 邻近兜底判定。
 			slot := int64(1)
-			if workStart != "" && workEnd != "" {
+			if updated.MakeupSlot == "off" {
+				slot = 2
+			} else if updated.MakeupSlot != "work" && workStart != "" && workEnd != "" {
 				wsMin := clockMinutes(workStart)
 				weMin := clockMinutes(workEnd)
 				pm := punchMinutesOf(*updated.PunchTime)
@@ -586,7 +594,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 					slot = 2
 				}
 			}
-			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, *updated.PunchTime, workStart, workEnd, gl, ge, slot); err != nil {
+			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, pDate, *updated.PunchTime, workStart, workEnd, gl, ge, slot); err != nil {
 				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", *updated.PunchTime, "error", err.Error())
 			}
 		}

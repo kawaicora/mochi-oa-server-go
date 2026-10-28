@@ -29,21 +29,21 @@ const (
 
 // checkinScanRow 联表行：打卡记录字段 + 发起人 nick/username。
 type checkinScanRow struct {
-	ID        int64     `gorm:"column:id"`
-	CompanyID int64     `gorm:"column:company_id"`
-	UserID    int64     `gorm:"column:user_id"`
-	CheckDate string    `gorm:"column:check_date"`
-	CheckTime time.Time `gorm:"column:check_time"`
-	IP        *string   `gorm:"column:ip"`
-	MAC       *string   `gorm:"column:mac"`
-	StdStart      string `gorm:"column:std_start"`
-	StdEnd        string `gorm:"column:std_end"`
-	GraceLateMin  int64  `gorm:"column:grace_late_min"`
-	GraceEarlyMin int64  `gorm:"column:grace_early_min"`
-	State         int64  `gorm:"column:state"`
-	CreatedAt time.Time `gorm:"column:created_at"`
-	Username  string    `gorm:"column:username"`
-	Nick      string    `gorm:"column:nick"`
+	ID            int64     `gorm:"column:id"`
+	CompanyID     int64     `gorm:"column:company_id"`
+	UserID        int64     `gorm:"column:user_id"`
+	CheckDate     string    `gorm:"column:check_date"`
+	CheckTime     time.Time `gorm:"column:check_time"`
+	IP            *string   `gorm:"column:ip"`
+	MAC           *string   `gorm:"column:mac"`
+	StdStart      string    `gorm:"column:std_start"`
+	StdEnd        string    `gorm:"column:std_end"`
+	GraceLateMin  int64     `gorm:"column:grace_late_min"`
+	GraceEarlyMin int64     `gorm:"column:grace_early_min"`
+	State         int64     `gorm:"column:state"`
+	CreatedAt     time.Time `gorm:"column:created_at"`
+	Username      string    `gorm:"column:username"`
+	Nick          string    `gorm:"column:nick"`
 }
 
 func (s *MySqlStore) checkinBaseQuery(ctx context.Context) *gorm.DB {
@@ -118,6 +118,7 @@ func decodeStrings(s string) []string {
 //   - 当天 0 条 → INSERT（第1次=上班时间），kind=first；
 //   - 当天 1 条 → INSERT（第2次=下班时间），kind=second；
 //   - 当天 ≥2 条 → UPDATE 当天 check_time 升序最后一条的 check_time=now（覆盖下班时间，不新增行），kind=override。
+//
 // workStart/workEnd/graceLate/graceEarly 为打卡时的排班规则快照，随记录落库供历史判定（改规则不影响历史）。
 func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string, workStart, workEnd string, graceLate, graceEarly int64) (*types.CheckinItem, string, error) {
 	now := time.Now().UTC()
@@ -227,7 +228,13 @@ func (s *MySqlStore) ListCheckinsByMonth(ctx context.Context, companyID, userID 
 //   - punchTime 为本地时间字符串，兼容 "2006-01-02 15:04" 与 "2006-01-02 15:04:05"；
 //   - 按本地时区解析出 check_date（本地日期）与 check_time（转 UTC 存储，与实时打卡一致）；
 //   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
-func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly int64, slot int64) error {
+//
+// InsertMakeupCheckin 补卡批准后落库。
+//   - checkDate 为调用方给定的「目标日期」（被补那天），跨天补下班（如补 10-27 卡、实际 10-28 02:00 打卡）
+//     仍落到目标日期；为空则回退 punchTime 字面日期（独立发起/旧数据）。
+//   - checkTime 由 punchTime 解析（实际时刻，转 UTC 存储，与实时打卡一致）；
+//   - 幂等：同公司+用户+日期+时刻已存在则跳过（重复审批不会重复插入）。
+func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID int64, checkDate, punchTime, workStart, workEnd string, graceLate, graceEarly int64, slot int64) error {
 	// 兼容 ISO("2026-10-25T21:00") 与空格分隔("2026-10-25 21:00")两种 punchTime 格式。
 	norm := strings.Replace(punchTime, "T", " ", 1)
 	t, err := time.ParseInLocation("2006-01-02 15:04", norm, localTZ)
@@ -237,7 +244,9 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 			return err
 		}
 	}
-	checkDate := t.In(localTZ).Format("2006-01-02")
+	if checkDate == "" {
+		checkDate = t.In(localTZ).Format("2006-01-02")
+	}
 	checkTime := t.UTC()
 	var cnt int64
 	if err := s.gorm.WithContext(ctx).Table("checkins").

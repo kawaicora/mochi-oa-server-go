@@ -460,7 +460,9 @@ type AttendanceRequestRow struct {
 	UserID        int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
 	Type          string     `db:"type" gorm:"type:varchar(16);not null"`                   // make_up|leave|comp_time
 	Status        string     `db:"status" gorm:"type:varchar(16);not null;default:pending"` // pending|approved|rejected
-	PunchTime     *string    `db:"punch_time" gorm:"type:datetime"`                         // 补卡时间，如 "2026-10-17 09:00"
+	PunchTime     *string    `db:"punch_time" gorm:"type:datetime"`                         // 补卡实际时刻（可跨天到次日凌晨，如 2026-10-28 02:00 补 10-27 的下班卡）
+	MakeupDate    string     `db:"makeup_date" gorm:"type:date"`                            // 补卡目标日期（被补那天 YYYY-MM-DD），落库/槽位以它为准
+	MakeupSlot    string     `db:"makeup_slot" gorm:"type:varchar(8)"`                      // 补卡槽位：work(补上班)|off(补下班)，空=独立发起按时刻邻近判定
 	LeaveType     *string    `db:"leave_type" gorm:"type:varchar(32)"`                      // 请假类型
 	CompType      *string    `db:"comp_type" gorm:"type:varchar(32)"`                       // 调休类型
 	StartTime     *time.Time `db:"start_time" gorm:"type:datetime(3)"`                      // 可空：补卡无区间
@@ -1306,6 +1308,8 @@ type AttendanceRequest struct {
 	Type          string   `json:"type"`   // make_up|leave|comp_time
 	Status        string   `json:"status"` // pending|approved|rejected
 	PunchTime     *string  `json:"punchTime"`
+	MakeupDate    string   `json:"makeupDate"` // 补卡目标日期（被补那天），审批通过时据此落库
+	MakeupSlot    string   `json:"makeupSlot"` // 补卡槽位 work|off
 	LeaveType     *string  `json:"leaveType"`
 	CompType      *string  `json:"compType"`
 	StartTime     *string  `json:"startTime"`

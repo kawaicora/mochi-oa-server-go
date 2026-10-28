@@ -648,9 +648,10 @@ type Store interface {
 	// ListCheckinsByMonth 本人某月全部记录（check_date=月份前缀），联表补昵称。
 	ListCheckinsByMonth(ctx context.Context, companyID, userID int64, month string) ([]types.CheckinItem, error)
 	// InsertMakeupCheckin 补卡批准后把补卡时间写入 checkins（补卡算打卡）。
-	// punchTime 为本地时间字符串（如 "2026-10-17 09:00"）；解析失败或同时间点已存在时幂等跳过。
-	// workStart/workEnd/graceLate/graceEarly 为补卡时的排班规则快照；slot=补的卡类型(1上班/2下班)。
-	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, punchTime, workStart, workEnd string, graceLate, graceEarly, slot int64) error
+	// checkDate 为目标日期（被补那天，可跨天补下班）；punchTime 为实际打卡时刻（本地时间字符串）。
+	// 解析失败或同时间点已存在时幂等跳过。workStart/workEnd/graceLate/graceEarly 为补卡时的排班规则快照；
+	// slot=补的卡类型(1上班/2下班)。
+	InsertMakeupCheckin(ctx context.Context, companyID, userID int64, checkDate, punchTime, workStart, workEnd string, graceLate, graceEarly, slot int64) error
 	// GetCheckinSettings 公司打卡白名单；未配置返回 (nil, nil)。
 	GetCheckinSettings(ctx context.Context, companyID int64) (*types.CheckinSettings, error)
 	// SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。
@@ -837,7 +838,9 @@ type CreateAttendanceRequestInput struct {
 	CompanyID     int64
 	UserID        int64
 	Type          string     // make_up|leave|comp_time
-	PunchTime     *string    // 补卡时间
+	PunchTime     *string    // 补卡实际时刻（可跨天到次日凌晨）
+	MakeupDate    string     // 补卡目标日期（被补那天）
+	MakeupSlot    string     // 补卡槽位 work|off
 	LeaveType     *string    // 请假类型
 	CompType      *string    // 调休类型
 	StartTime     *time.Time // 可空
