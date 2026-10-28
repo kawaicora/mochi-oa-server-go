@@ -154,7 +154,7 @@ const (
 )
 
 // punchInOut 从当月记录中取当天首末打卡（复用 list 同源数据）。
-// in/out 为当天"HH:MM"字符串；无记录则为空串。
+// in/out 为当天"完整时间"字符串（YYYY-MM-DD HH:MM:SS）；无记录则为空串。
 // 按 state 位区分上下班：in=所有上班卡(state&1)最早、out=所有下班卡(state&2)最晚；
 // 这样补上班卡+实时上班卡都算上班，不会把末次上班卡误判成下班(早退)。
 // 老数据(state=0)回退首末；仅一条(上班卡)时 out 为空(下班未打卡)。
@@ -196,10 +196,10 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 			offMax = fallback[len(fallback)-1]
 		}
 		if !workMin.IsZero() {
-			in = workMin.Format("15:04")
+			in = workMin.Format("2006-01-02 15:04:05")
 		}
 		if !offMax.IsZero() {
-			out = offMax.Format("15:04")
+			out = offMax.Format("2006-01-02 15:04:05")
 		}
 		return in, out
 	}
@@ -208,9 +208,9 @@ func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
 		return "", ""
 	}
 	if len(fallback) == 1 {
-		return fallback[0].Format("15:04"), ""
+		return fallback[0].Format("2006-01-02 15:04:05"), ""
 	}
-	return fallback[0].Format("15:04"), fallback[len(fallback)-1].Format("15:04")
+	return fallback[0].Format("2006-01-02 15:04:05"), fallback[len(fallback)-1].Format("2006-01-02 15:04:05")
 }
 
 // computeDayStatus 内聚的当天状态判断。
@@ -330,10 +330,14 @@ func emptyNil(s string) any {
 	return s
 }
 
-// minutesSinceMidnight "HH:MM" → 当天分钟数。
-func minutesSinceMidnight(hhmm string) int {
+// minutesSinceMidnight 时间字符串 → 当天分钟数。兼容 "HH:MM" 与完整 "YYYY-MM-DD HH:MM:SS"（取空格后时段）。
+func minutesSinceMidnight(s string) int {
 	var h, m int
-	fmt.Sscanf(hhmm, "%d:%d", &h, &m)
+	seg := s
+	if idx := strings.LastIndex(s, " "); idx >= 0 {
+		seg = s[idx+1:]
+	}
+	fmt.Sscanf(seg, "%d:%d", &h, &m)
 	return h*60 + m
 }
 
