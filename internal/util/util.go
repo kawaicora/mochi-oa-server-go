@@ -45,6 +45,8 @@ func ParseLocalTime(s string) (time.Time, bool) {
 		time.RFC3339,
 		"2006-01-02 15:04:05",
 		"2006-01-02 15:04",
+		"2006-01-02T15:04",    // DateTimeInput(time) 输出：2026-10-28T21:00
+		"2006-01-02T15:04:05", // T 分隔带秒
 	} {
 		if t, err := time.ParseInLocation(layout, s, LocalTZ); err == nil {
 			return t, true
