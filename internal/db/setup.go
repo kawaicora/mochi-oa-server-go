@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"strings"
 
 	// 注册 "mysql" 驱动，供下面的建库连接使用（GORM 的 mysql dialector 同样依赖它）。
 	_ "github.com/go-sql-driver/mysql"
@@ -73,6 +74,7 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.MemberProfileRow{},
 		&types.SessionRow{},
 		&types.MailConfigRow{},
+		&types.ServerAdminRow{},
 		&types.HolidayRow{},
 		&types.ProjectRow{},
 		&types.ProjectMemberRow{},
@@ -112,7 +114,64 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 	// notify_stopped 补列 / checkins.std_start 等旧库列类型升级）已抽离为独立工具
 	// cmd/tools/database_update；服务端启动只负责 GORM AutoMigrate 建表/补列，
 	// 需要执行迁移时单独运行该工具（build.ps1 / build.sh 已编译，见 dist/mochi-oa-database_update_*）。
+	// 建表完成后，首次部署播种 .env 业务配置（server_admins + mail_configs）到库。
+	s.seedConfigFromEnv(ctx, config.Get())
 	return nil
+}
+
+// seedConfigFromEnv 首次部署播种：把 .env 的业务配置作为第一条写入数据库（幂等）。
+//
+// 只播种两块（用户确认范围）：
+//   - server_admins：cfg.ServerAdmins（SERVER_ADMIN_USERS / ADMIN_USER）→ server_admins 表
+//   - mail_configs：cfg.Mail（MAIL_*）→ 主邮件配置
+//
+// 判定"首次"用表是否为空：目标表无记录才写入，有数据则跳过（库可为权威，重启保留，
+// 不覆盖后台已修改的值）。MySQL/PORT/STORAGE/JWT 等连接期配置不入库。
+func (s *MySqlStore) seedConfigFromEnv(ctx context.Context, cfg *config.ServerConfig) {
+	// 1) SERVER_ADMIN 播种：server_admins 表为空才写 .env 种子。
+	var admCount int64
+	if err := s.gorm.WithContext(ctx).Model(&types.ServerAdminRow{}).Count(&admCount).Error; err != nil {
+		logger.Warn("db", "查 server_admins 数量失败，跳过播种", "error", err.Error())
+	} else if admCount == 0 {
+		for _, u := range cfg.ServerAdmins {
+			if err := s.UpsertServerAdmin(ctx, u, 0); err != nil {
+				logger.Warn("db", "播种 SERVER_ADMIN 失败", "user", u, "error", err.Error())
+			}
+		}
+		if len(cfg.ServerAdmins) > 0 {
+			logger.Info("db", "首次播种 SERVER_ADMIN 到 server_admins", "users", strings.Join(cfg.ServerAdmins, ","))
+		}
+	}
+
+	// 2) 主邮件播种：mail_configs 无任何记录且环境已配 MAIL_* 才写入一条主配置。
+	if cfg.Mail != nil && cfg.Mail.Enabled {
+		existing, err := s.ListMailConfigs(ctx, MailConfigScope{})
+		if err != nil {
+			logger.Warn("db", "查 mail_configs 失败，跳过邮件播种", "error", err.Error())
+			return
+		}
+		if len(existing) == 0 {
+			port := int64(cfg.Mail.Port)
+			secure := cfg.Mail.Secure
+			def := true
+			en := true
+			if _, err := s.SaveMailConfig(ctx, SaveMailConfigInput{
+				Email:       cfg.Mail.FromEmail,
+				DisplayName: cfg.Mail.FromName,
+				Host:        cfg.Mail.Host,
+				Port:        &port,
+				Secure:      &secure,
+				User:        cfg.Mail.User,
+				Password:    cfg.Mail.Password,
+				IsDefault:   &def,
+				Enabled:     &en,
+			}); err != nil {
+				logger.Warn("db", "播种主邮件配置失败", "error", err.Error())
+				return
+			}
+			logger.Info("db", "首次播种主邮件配置到 mail_configs", "host", cfg.Mail.Host, "from", cfg.Mail.FromEmail)
+		}
+	}
 }
 
 // columnExists / columnType 辅助函数已随显式迁移一并移入 cmd/tools/database_update 工具。

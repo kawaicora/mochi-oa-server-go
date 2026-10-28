@@ -26,6 +26,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/ice"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
@@ -104,21 +105,6 @@ func authed(c socketapi.Conn) *types.Auth {
 		return &a
 	}
 	return nil
-}
-
-// isServerAdmin 判定 SERVER_ADMIN：用户名大小写不敏感匹配 config.ServerAdmins。
-// （TS mail.ts 另有运行时 serverAdminOverrides 集合，属 admin handler 移植范围，此处不实现。）
-func isServerAdmin(a *types.Auth, cfg *config.ServerConfig) bool {
-	if a == nil || cfg == nil {
-		return false
-	}
-	n := strings.ToLower(a.Username)
-	for _, u := range cfg.ServerAdmins {
-		if strings.ToLower(u) == n {
-			return true
-		}
-	}
-	return false
 }
 
 // connByID 按连接 id 找连接（对标 io.sockets.sockets.get(sid)）。找不到返回 nil。
@@ -555,7 +541,7 @@ func RegisterRtc(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -665,7 +651,7 @@ func RegisterRtc(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}

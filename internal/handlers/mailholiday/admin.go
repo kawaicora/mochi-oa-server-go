@@ -2,11 +2,12 @@
 // 1:1 复刻自 server/src/handlers/admin-users.ts。
 //
 // 全部事件要求 SERVER_ADMIN（服务端兜底判定，与 TS 一致）：
-//   - admin:listUsers      全部用户（含所属公司 + serverAdmin 标记）
-//   - admin:updateUser     修改用户资料（昵称/头像/手机/邮箱），邮箱查重
-//   - admin:setServerAdmin 动态设置/取消某用户的 SERVER_ADMIN（运行时覆盖 serverAdminOverrides，重启回退 config）
-//   - admin:listCompanies 全部公司（含成员与角色）
-//   - admin:listDevices    已登录设备列表（本机 + 在线远程客户端；远程设备注册表 dev.ts 未移植，见文末说明）
+//   - admin:listUsers       全部用户（含所属公司 + serverAdmin 标记）
+//   - admin:updateUser      修改用户资料（昵称/头像/手机/邮箱），邮箱查重
+//   - admin:setServerAdmin  动态设置/取消某用户的 SERVER_ADMIN（写 server_admins 表，持久化、重启保留）
+//   - admin:listServerAdmins 列出持久化 SERVER_ADMIN 名单
+//   - admin:listCompanies   全部公司（含成员与角色）
+//   - admin:listDevices     已登录设备列表（本机 + 在线远程客户端；远程设备注册表 dev.ts 未移植，见文末说明）
 package mailholiday
 
 import (
@@ -21,6 +22,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/handlers/rtcdev"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
@@ -36,7 +38,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -68,7 +70,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 				"email":       usr.Email,
 				"extra":       usr.Extra,
 				"createdAt":   usr.CreatedAt,
-				"serverAdmin": isServerAdminUsername(usr.Username, cfg),
+				"serverAdmin": admin.IsServerAdminByUsername(usr.Username, cfg, store),
 				"companies":   companies,
 			})
 		}
@@ -82,7 +84,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -153,7 +155,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -163,23 +165,58 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("缺少用户名"))
 			return
 		}
-		admin := asBool(d["admin"])
+		grant := asBool(d["admin"])
 		target, err := store.GetUserByUsername(context.Background(), username)
 		// 对标 TS: getUserByUsername(...).catch(() => null)。
 		if err != nil || target == nil {
 			ack(util.Fail("用户不存在：" + username))
 			return
 		}
-		if admin {
-			// 已是 config 名单成员则无需加入覆盖集合（幂等）。
-			if !isServerAdminUsername(target.Username, cfg) {
-				addOverride(target.Username)
+		if grant {
+			// 设管理员：写 server_admins 表（Upsert 幂等；环境种子成员重复写无害，仅刷新 updated_at）。
+			if err := store.UpsertServerAdmin(context.Background(), target.Username, auth.ID); err != nil {
+				logger.Error(mod, "admin:setServerAdmin 写表失败", "error", err.Error())
+				ack(util.Fail("设置失败：" + err.Error()))
+				return
 			}
 		} else {
-			// 取消管理员：仅移除运行时覆盖（config 里的保留）。
-			deleteOverride(target.Username)
+			// 取消管理员：删 server_admins 表（环境种子不在表内，删表即取消）。
+			if err := store.DeleteServerAdmin(context.Background(), target.Username); err != nil {
+				logger.Error(mod, "admin:setServerAdmin 删除失败", "error", err.Error())
+				ack(util.Fail("取消失败：" + err.Error()))
+				return
+			}
 		}
-		ack(util.OK(map[string]any{"admin": admin}))
+		ack(util.OK(map[string]any{"admin": grant}))
+	})
+
+	// ---- 列出全部 SERVER_ADMIN（server_admins 表持久化名单） ----
+	srv.On("admin:listServerAdmins", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
+		auth, ok := authedUser(c)
+		if !ok {
+			ack(util.Fail("未登录"))
+			return
+		}
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
+			ack(util.Fail("需要 SERVER_ADMIN 权限"))
+			return
+		}
+		rows, err := store.ListServerAdmins(context.Background())
+		if err != nil {
+			logger.Error(mod, "admin:listServerAdmins 查询失败", "error", err.Error())
+			ack(util.Fail("查询失败：" + err.Error()))
+			return
+		}
+		list := make([]map[string]any, 0, len(rows))
+		for _, r := range rows {
+			list = append(list, map[string]any{
+				"username":  r.Username,
+				"createdBy": r.CreatedBy,
+				"createdAt": util.LocalTimeFormat(r.CreatedAt),
+				"updatedAt": util.LocalTimeFormat(r.UpdatedAt),
+			})
+		}
+		ack(util.OK(map[string]any{"admins": list}))
 	})
 
 	// ---- 全部公司（含成员与角色） ----
@@ -189,7 +226,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -251,7 +288,7 @@ func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.Server
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}

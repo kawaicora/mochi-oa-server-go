@@ -15,7 +15,8 @@
 //
 // 已知缺口（不在本包解决，见交付报告）：
 //   - presence（addPresence/broadcastPresence）尚未移植为 Go 包，register/login 中的调用点留 hook 注释；
-//   - mail.ts 的 serverAdminOverrides 运行时管理员集合属 admin handler 范围，本包 isServerAdmin 仅判 config.ServerAdmins。
+//   - SERVER_ADMIN 判定收敛到唯一入口 admin.IsServerAdmin（见 internal/handlers/admin/perm.go），
+//     判据 = config.ServerAdmins ∪ server_admins 表，表为权威、重启保留。
 package auth
 
 import (
@@ -36,6 +37,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/mailer"
 	"mochi-oa-server-go/internal/password"
@@ -210,21 +212,6 @@ func authed(c socketapi.Conn) *types.Auth {
 
 // setAuth 写回连接认证态（TS: socket.data.auth = {...}）。
 func setAuth(c socketapi.Conn, a *types.Auth) { c.Set(keyAuth, a) }
-
-// isServerAdmin 判定服务器所有者权限：用户名大小写不敏感匹配 config.ServerAdmins。
-// （TS 另有 serverAdminOverrides 运行时集合，属 admin handler 移植范围，见文件头缺口说明。）
-func isServerAdmin(a *types.Auth, cfg *config.ServerConfig) bool {
-	if a == nil || cfg == nil {
-		return false
-	}
-	n := strings.ToLower(a.Username)
-	for _, u := range cfg.ServerAdmins {
-		if strings.ToLower(u) == n {
-			return true
-		}
-	}
-	return false
-}
 
 // ==================== RSA 凭据解密 ====================
 
@@ -906,7 +893,7 @@ func (h *handler) onLogin(c socketapi.Conn, raw json.RawMessage, ack socketapi.A
 		return
 	}
 	payload["token"] = sessToken
-	payload["serverAdmin"] = isServerAdmin(auth, h.cfg)
+	payload["serverAdmin"] = admin.IsServerAdmin(auth, h.cfg, h.store)
 	ack(util.OK(payload))
 }
 
@@ -956,7 +943,7 @@ func (h *handler) onMe(c socketapi.Conn, _ json.RawMessage, ack socketapi.Ack) {
 		"user":        userView(user),
 		"companies":   companies,
 		"session":     sessionOut,
-		"serverAdmin": isServerAdmin(a, h.cfg),
+		"serverAdmin": admin.IsServerAdmin(a, h.cfg, h.store),
 	}))
 }
 

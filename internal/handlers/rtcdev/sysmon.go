@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/util"
@@ -466,7 +467,7 @@ type sysCameraReq struct {
 
 // RegisterSysmon 注册全部系统监控事件（对标 registerSysmonHandlers）。
 func RegisterSysmon(c Ctx) {
-	srv, cfg := c.Srv, c.Config
+	srv, st, cfg := c.Srv, c.Store, c.Config
 
 	// ---- 系统信息 ----
 	srv.On("sys:info", func(c socketapi.Conn, _ json.RawMessage, ack socketapi.Ack) {
@@ -475,7 +476,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -515,7 +516,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -543,7 +544,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -561,7 +562,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -599,7 +600,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -641,7 +642,7 @@ func RegisterSysmon(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}

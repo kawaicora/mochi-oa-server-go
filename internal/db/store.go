@@ -514,6 +514,12 @@ type Store interface {
 	SaveMailConfig(ctx context.Context, in SaveMailConfigInput) (*types.MailConfig, error)
 	DeleteMailConfig(ctx context.Context, id int64) error
 
+	// ---- SERVER_ADMIN（server_admins 表，持久化，重启保留） ----
+	ListServerAdmins(ctx context.Context) ([]types.ServerAdminRow, error)
+	// UpsertServerAdmin 设某用户为 SERVER_ADMIN（已存在则更新时间）；createdBy 记录创建人用户 id。
+	UpsertServerAdmin(ctx context.Context, username string, createdBy int64) error
+	DeleteServerAdmin(ctx context.Context, username string) error
+
 	// ---- 假期 ----
 	ListHolidays(ctx context.Context, year int64) ([]types.Holiday, error)
 	SaveHoliday(ctx context.Context, in SaveHolidayInput) (*types.Holiday, error)

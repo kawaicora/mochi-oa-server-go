@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"mochi-oa-server-go/internal/config"
+	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/util"
@@ -192,10 +194,10 @@ func isSlave(c socketapi.Conn) bool {
 	return v
 }
 
-// adminOf 判断连接是否 SERVER_ADMIN（对标 isAdminSocket）。
-func adminOf(c socketapi.Conn, cfg *config.ServerConfig) bool {
+// adminOf 判断连接是否 SERVER_ADMIN（转发到 admin.IsServerAdmin 唯一判定，含 store）。
+func adminOf(c socketapi.Conn, cfg *config.ServerConfig, st db.Store) bool {
 	a := authed(c)
-	return a != nil && isServerAdmin(a, cfg)
+	return a != nil && admin.IsServerAdmin(a, cfg, st)
 }
 
 // upsertDev 按 deviceId 幂等登记：已有则更新（含 socket，重连后新 socket 覆盖）；
@@ -289,7 +291,7 @@ func shellOf(p *string) string {
 
 // RegisterDev 注册全部远程设备控制事件（对标 registerDevHandlers）。
 func RegisterDev(c Ctx) {
-	srv, cfg := c.Srv, c.Config
+	srv, st, cfg := c.Srv, c.Store, c.Config
 
 	// 防御性扫表：断线清理的兜底——连接已消失或长时间无心跳的条目剔除。
 	go func() {
@@ -470,7 +472,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -535,7 +537,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -563,7 +565,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -601,7 +603,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -625,7 +627,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -696,7 +698,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -723,7 +725,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -802,7 +804,7 @@ func RegisterDev(c Ctx) {
 			send(connByID(srv, ctrlID), "dev:termClose", map[string]any{"deviceId": deviceID, "code": int64(code)})
 		} else {
 			// 控制端主动关闭终端 → 转发被控端结束会话
-			if !adminOf(c, cfg) {
+			if !adminOf(c, cfg, st) {
 				ack(util.Fail("需要 SERVER_ADMIN 权限"))
 				return
 			}

@@ -190,6 +190,16 @@ type MailConfigRow struct {
 	CreatedAt   time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
+// ServerAdminRow 对应 server_admins 表（SERVER_ADMIN 持久化，重启保留）。
+// 后台 admin:setServerAdmin 增删；判定=环境种子(config.ServerAdmins) ∪ 本表，表为权威。
+type ServerAdminRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	Username  string    `db:"username" gorm:"uniqueIndex;type:varchar(64);not null"` // 小写存储，判定不区分大小写
+	CreatedBy int64     `db:"created_by" gorm:"type:bigint unsigned;not null;default:0"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // HolidayRow 对应 holidays 表。
 type HolidayRow struct {
 	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
@@ -666,6 +676,7 @@ func (SessionRow) TableName() string                { return "sessions" }
 func (MailConfigRow) TableName() string             { return "mail_configs" }
 func (HolidayRow) TableName() string                { return "holidays" }
 func (ProjectRow) TableName() string                { return "projects" }
+func (ServerAdminRow) TableName() string            { return "server_admins" }
 func (ProjectMemberRow) TableName() string          { return "project_members" }
 func (TaskRow) TableName() string                   { return "tasks" }
 func (TaskAssignmentRow) TableName() string         { return "task_assignments" }
