@@ -561,7 +561,10 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			punch := *updated.PunchTime
 			// 目标日期优先（跨天补下班：补 10-27 卡但实际 10-28 02:00 打卡，仍落 10-27）；
 			// 空（独立发起/旧数据）则回退 punch 字面日期。
-			pDate := updated.MakeupDate
+			pDate := ""
+			if updated.MakeupDate != nil {
+				pDate = *updated.MakeupDate
+			}
 			if pDate == "" && len(punch) >= 10 {
 				pDate = punch[:10]
 			}

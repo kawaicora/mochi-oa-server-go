@@ -23,7 +23,7 @@ type attendanceScanRow struct {
 	Type          string     `gorm:"column:type"`
 	Status        string     `gorm:"column:status"`
 	PunchTime     *string    `gorm:"column:punch_time"`
-	MakeupDate    string     `gorm:"column:makeup_date"`
+	MakeupDate    *string    `gorm:"column:makeup_date"`
 	MakeupSlot    string     `gorm:"column:makeup_slot"`
 	LeaveType     *string    `gorm:"column:leave_type"`
 	CompType      *string    `gorm:"column:comp_type"`
@@ -96,12 +96,17 @@ func normPunchTime(p *string) *string {
 // CreateAttendanceRequest 发起考勤申请；审批人/抄送人由调用方按流程快照传入。
 func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
 	now := time.Now().UTC()
+	// 补卡目标日期可空：空→存 NULL（DATE 列拒绝空串 ''）。
+	var makeupDate *string
+	if in.MakeupDate != "" {
+		makeupDate = &in.MakeupDate
+	}
 	row := types.AttendanceRequestRow{
 		CompanyID:     in.CompanyID,
 		UserID:        in.UserID,
 		Type:          in.Type,
 		PunchTime:     normPunchTime(in.PunchTime),
-		MakeupDate:    in.MakeupDate,
+		MakeupDate:    makeupDate,
 		MakeupSlot:    in.MakeupSlot,
 		LeaveType:     in.LeaveType,
 		CompType:      in.CompType,

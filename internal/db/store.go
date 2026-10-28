@@ -839,7 +839,7 @@ type CreateAttendanceRequestInput struct {
 	UserID        int64
 	Type          string     // make_up|leave|comp_time
 	PunchTime     *string    // 补卡实际时刻（可跨天到次日凌晨）
-	MakeupDate    string     // 补卡目标日期（被补那天）
+	MakeupDate    string     // 补卡目标日期（被补那天）；空=无，落库为 NULL（非 ''，DATE 列拒空串）
 	MakeupSlot    string     // 补卡槽位 work|off
 	LeaveType     *string    // 请假类型
 	CompType      *string    // 调休类型
