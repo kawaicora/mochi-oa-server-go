@@ -111,7 +111,7 @@ type MessageRow struct {
 	ID             int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
 	ConversationID int64      `db:"conversation_id" gorm:"index;type:bigint unsigned;not null"`
 	FromID         int64      `db:"from_id" gorm:"type:bigint unsigned;not null"`
-	Kind           string     `db:"kind" gorm:"type:enum('text','image','file','video','audio','folder');not null;default:text"` // text|image|video|audio|file|folder
+	Kind           string     `db:"kind" gorm:"type:enum('text','image','file','video','audio','folder','proxy_card','expense_card','advance_card','attendance_card');not null;default:text"` // text|image|video|audio|file|folder|proxy_card|expense_card|advance_card|attendance_card
 	Content        string     `db:"content" gorm:"type:text;not null"`
 	DeletedAt      *time.Time `db:"deleted_at" gorm:"type:datetime(3)"` // 软删除标记
 	CreatedAt      time.Time  `db:"created_at" gorm:"type:datetime;not null"`

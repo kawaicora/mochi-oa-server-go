@@ -89,10 +89,10 @@ func main() {
 func migrations() []migration {
 	return []migration{
 		{
-			name: "messages.kind 扩展 ENUM（proxy_card/expense_card/advance_card）",
+			name: "messages.kind 扩展 ENUM（proxy_card/expense_card/advance_card/attendance_card）",
 			run: func(ctx context.Context, db *sql.DB) error {
 				_, err := db.ExecContext(ctx,
-					"ALTER TABLE messages MODIFY `kind` ENUM('text','image','file','video','audio','folder','proxy_card','expense_card','advance_card') NOT NULL DEFAULT 'text'")
+					"ALTER TABLE messages MODIFY `kind` ENUM('text','image','file','video','audio','folder','proxy_card','expense_card','advance_card','attendance_card') NOT NULL DEFAULT 'text'")
 				return err
 			},
 		},

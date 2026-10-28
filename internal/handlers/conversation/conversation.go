@@ -162,8 +162,8 @@ func decorateMsg(cfg *config.ServerConfig, msg *types.ChatMessage) {
 	if cfg.File.UseRelativeURL {
 		return
 	}
-	// proxy_card / expense_card / advance_card 等卡片类消息 content 为业务 JSON，原样透传，不做文件 URL 改写。
-	if msg.Kind != "text" && msg.Kind != "folder" && msg.Kind != "proxy_card" && msg.Kind != "expense_card" && msg.Kind != "advance_card" && msg.Content != "" {
+	// proxy_card / expense_card / advance_card / attendance_card 等卡片类消息 content 为业务 JSON，原样透传，不做文件 URL 改写。
+	if msg.Kind != "text" && msg.Kind != "folder" && msg.Kind != "proxy_card" && msg.Kind != "expense_card" && msg.Kind != "advance_card" && msg.Kind != "attendance_card" && msg.Content != "" {
 		msg.Content = pubUrl(cfg, msg.Content)
 	}
 	if msg.Avatar != "" {
@@ -179,7 +179,7 @@ func isText(v string) bool {
 // isKind 校验消息种类。
 func isKind(v string) bool {
 	switch v {
-	case "text", "image", "file", "video", "audio", "folder", "proxy_card", "expense_card", "advance_card":
+	case "text", "image", "file", "video", "audio", "folder", "proxy_card", "expense_card", "advance_card", "attendance_card":
 		return true
 	}
 	return false
@@ -287,6 +287,8 @@ func previewOf(kind string, content string) string {
 		return "[报销申请]"
 	case "advance_card":
 		return "[备用金申请]"
+	case "attendance_card":
+		return "[考勤申请]"
 	default:
 		return "[文件]"
 	}
