@@ -71,7 +71,7 @@
     try {
       const ack = await A.emit('rtc:join', { roomId: r.id, password: undefined, kind: r.kind || R.roomKind })
       if (!ack.ok) { A.toast(ack.error || '加入失败'); return }
-      R.enterCall(ack.room, ack.peers || [], ack.iceServers || [])
+      R.enterCall(ack.room, ack.peers || [], ack.iceServers || [], ack.sfu)
     } catch (e) { A.toast(e instanceof Error ? e.message : '加入失败') }
   }
 
@@ -128,7 +128,7 @@
 
 
   // ─── 进入房间 ───
-  R.enterCall = async function (room, roomPeers, iceServers) {
+  R.enterCall = async function (room, roomPeers, iceServers, sfu) {
     R.currentRoom = room
     R.peers = roomPeers || []
     R.remoteStreams = {}
@@ -153,12 +153,11 @@
 
     R.renderGrid()
     R.engine = new RtcEngine({
-      roomId: room.id, iceServers, localStream: R.localStream,
-      onSignal: (sig) => A.sock.emit('rtc:signal', { roomId: room.id, signal: sig }),
+      roomId: room.id, sfu, localStream: R.localStream,
+      onSignal: () => {}, // LiveKit SFU 无需 P2P 信令
       onRemote: (userId, s) => { R.remoteStreams[userId] = s; R.renderGrid() },
       onDisconnect: (userId) => { delete R.remoteStreams[userId]; R.peers = R.peers.filter((p) => p.userId !== userId); R.renderGrid() }
     })
-    roomPeers.forEach((p) => R.engine.addPeer(p.userId))
 
     R.callSeconds = 0; $('call-timer').textContent = '00:00'
     if (R.callTimer) clearInterval(R.callTimer)
@@ -474,10 +473,9 @@
     if (!inMenu) { $('spec-menu').style.display = 'none'; specMenuShown = false; $('mic-menu').style.display = 'none'; $('cam-menu').style.display = 'none' }
   })
 
-  // 房间事件（由 admin 壳转发）
-  A.room.onPeerJoined = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) { R.upsertPeer(d.peer); R.engine && R.engine.addPeer(d.peer.userId) } }
-  A.room.onPeerLeft = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) { const p = R.peers.find((x) => x.socketId === d.peerId); if (p) { R.engine && R.engine.closePeer(p.userId); delete R.remoteStreams[p.userId]; R.peers = R.peers.filter((x) => x.socketId !== d.peerId); R.renderGrid() } } }
-  A.room.onSignal = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) R.engine && R.engine.handleSignal(d.from.userId, d.signal) }
+  // 房间事件（由 admin 壳转发）。媒体由 LiveKit SFU 自动订阅/转发，无需 P2P 信令。
+  A.room.onPeerJoined = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) { R.upsertPeer(d.peer) } }
+  A.room.onPeerLeft = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) { const p = R.peers.find((x) => x.socketId === d.peerId); if (p) { delete R.remoteStreams[p.userId]; R.peers = R.peers.filter((x) => x.socketId !== d.peerId); R.renderGrid() } } }
   A.room.onEnded = function (d) { if (R.currentRoom && d.room === R.currentRoom.id) { A.toast('会议已结束'); R.leaveCall(true) } }
   A.room.onChatMessage = function (d) { if (R.currentRoom && d.room === R.currentRoom.id && d.from.userId !== A.myUserId) pushChat(d.from.nick || '用户', d.content, false, d.from.avatar) }
 

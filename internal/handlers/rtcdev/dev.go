@@ -129,11 +129,6 @@ type devSysReq struct {
 	Perf     any     `json:"perf"`
 }
 
-type devSignalReq struct {
-	DeviceID *string `json:"deviceId"`
-	Signal   any     `json:"signal"`
-}
-
 type devViewReq struct {
 	DeviceID *string `json:"deviceId"`
 }
@@ -433,53 +428,6 @@ func RegisterDev(c Ctx) {
 			status = "updated"
 		}
 		ack(util.OK(map[string]any{"deviceId": deviceID, "status": status}))
-	})
-
-	// ---- 信令：按角色分发（被控端→控制端 / 控制端→被控端） ----
-	// ---- 信令中继（SDP offer/answer + ICE candidate）→ 对端 ----
-	// [DEPRECATED] SFU 化后远程控制走 LiveKit（被控端发布屏幕/声音、控制端订阅，键鼠走 data 消息），
-	// 新客户端不再调用 dev:signal；本 handler 保留转发以兼容未升级的旧客户端。
-	srv.On("dev:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		var d devSignalReq
-		_ = json.Unmarshal(raw, &d)
-		deviceID := strings.TrimSpace(strVal(d.DeviceID))
-		devMu.Lock()
-		dev := devices[deviceID]
-		devMu.Unlock()
-		if dev == nil {
-			ack(util.Fail("设备不存在"))
-			return
-		}
-		if isSlave(c) {
-			// 被控端：转发给当前控制端
-			devMu.Lock()
-			match := dev.conn == c
-			ctrlID := dev.controller
-			devMu.Unlock()
-			if !match {
-				ack(util.Fail("设备不匹配"))
-				return
-			}
-			if ctrlID != "" {
-				send(connByID(srv, ctrlID), "dev:signal", map[string]any{"deviceId": deviceID, "signal": d.Signal})
-			}
-			ack(util.OK(nil))
-			return
-		}
-		// 控制端：需 SERVER_ADMIN 且为当前控制器
-		if !adminOf(c, cfg) {
-			ack(util.Fail("需要 SERVER_ADMIN 权限"))
-			return
-		}
-		devMu.Lock()
-		ctrlID := dev.controller
-		devMu.Unlock()
-		if ctrlID != c.ID() {
-			ack(util.Fail("你不是该设备的控制器"))
-			return
-		}
-		send(dev.conn, "dev:signal", map[string]any{"deviceId": deviceID, "signal": d.Signal})
-		ack(util.OK(nil))
 	})
 
 	// ---- 断开：清在线表 + 解除控制端绑定 + 广播离线 ----

@@ -441,11 +441,6 @@ type rtcRoomIDReq struct {
 	RoomID *string `json:"roomId"`
 }
 
-type rtcSignalReq struct {
-	RoomID *string `json:"roomId"`
-	Signal any     `json:"signal"`
-}
-
 type rtcChatReq struct {
 	RoomID  *string `json:"roomId"`
 	Content *string `json:"content"`
@@ -732,58 +727,6 @@ func RegisterRtc(c Ctx) {
 			"token":    sfuToken,
 			"roomName": sfuRoomName,
 		}))
-	})
-
-	// ---- 信令中继（SDP offer/answer + ICE candidate）→ 房间内其他参与者 ----
-	// [DEPRECATED] SFU 化后媒体协商改走 LiveKit，新客户端不再调用 rtc:signal；
-	// 本 handler 保留转发以兼容仍在线/未升级的旧客户端，不再承担新链路的媒体协商。
-	srv.On("rtc:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		u := authed(c)
-		if u == nil {
-			ack(util.Fail("未登录"))
-			return
-		}
-		var d rtcSignalReq
-		_ = json.Unmarshal(raw, &d)
-		roomID := ""
-		if d.RoomID != nil {
-			roomID = *d.RoomID
-		}
-		if roomID == "" {
-			ack(util.Fail("缺少房间号"))
-			return
-		}
-		roomsMu.Lock()
-		_, ok := rooms[roomID]
-		roomsMu.Unlock()
-		if !ok {
-			ack(util.Fail("房间不存在"))
-			return
-		}
-		// 仅打信令类型与长度，不打完整 SDP（对标 TS 的 sdpLen 日志）。
-		sigType, sigDetail := "", ""
-		if m, _ := d.Signal.(map[string]any); m != nil {
-			sigType = strOf(m["type"])
-			if sigType == "ice" {
-				sigDetail = "candidateLen=" + strconv.Itoa(len(strOf(m["candidate"])))
-			} else if sigType == "offer" || sigType == "answer" {
-				sigDetail = "sdpLen=" + strconv.Itoa(len(strOf(m["sdp"])))
-			}
-		}
-		targetSize := 0
-		for _, other := range srv.Sockets() {
-			for _, rm := range other.Rooms() {
-				if rm == rtcRoom(roomID) {
-					targetSize++
-					break
-				}
-			}
-		}
-		logger.Info(module, "rtc:signal", "user", u.ID, "room", roomID, "type", sigType,
-			"detail", sigDetail, "转发成员数", targetSize-1)
-		_ = srv.EmitToSkip(rtcRoom(roomID), "rtc:signal",
-			map[string]any{"room": roomID, "from": peerOf(c), "signal": d.Signal}, c.ID())
-		ack(util.OK(nil))
 	})
 
 	// ---- 房间内嵌聊天（与信令分离，广播给房间内其他参与者） ----
