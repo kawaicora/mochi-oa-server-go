@@ -76,7 +76,7 @@ func defaultStandardRules() map[string]any {
 	b, _ := json.Marshal(week)
 	return map[string]any{
 		"mode": "standard", "grace_late_min": 0, "grace_early_min": 0,
-		"week_rules": string(b), "alt_rule": nil, "offwork_deadline": "04:00",
+		"week_rules": string(b), "alt_rule": nil,
 	}
 }
 
@@ -88,35 +88,22 @@ func rulesRowToMap(r *types.CompanyCheckinRulesRow) map[string]any {
 	}
 	return map[string]any{
 		"mode": r.Mode, "grace_late_min": r.GraceLateMin, "grace_early_min": r.GraceEarlyMin,
-		"week_rules": r.WeekRules, "alt_rule": r.AltRule, "offwork_deadline": defaultDeadline(r.OffworkDeadline),
+		"week_rules": r.WeekRules, "alt_rule": r.AltRule,
 	}
 }
 
-// defaultDeadline 下班卡次日截止时刻；空值回退 04:00。
-func defaultDeadline(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "04:00"
-	}
-	if len(s) >= 5 {
-		return s[:5] // TIME 列读回带秒（如 04:00:00）→ 规范为 HH:MM
-	}
-	return s
-}
-
-// loadRules 从行加载（无行则默认），返回解析后的周规则与下班卡截止。
-func loadRules(r *types.CompanyCheckinRulesRow) (mode string, graceLate, graceEarly int64, offworkDeadline string, week []dayRule, alt *dayRule) {
+// loadRules 从行加载（无行则默认），返回解析后的周规则与加班/下班判定所需排班。
+// 下班窗口不依赖固定截止时刻，统一为「下班 +8 小时」（inOffWindow）。
+func loadRules(r *types.CompanyCheckinRulesRow) (mode string, graceLate, graceEarly int64, week []dayRule, alt *dayRule) {
 	if r == nil {
 		d := defaultStandardRules()
 		mode = "standard"
-		offworkDeadline = "04:00"
 		week = parseWeekRules(d["week_rules"].(string))
 		return
 	}
 	mode = r.Mode
 	graceLate = r.GraceLateMin
 	graceEarly = r.GraceEarlyMin
-	offworkDeadline = defaultDeadline(r.OffworkDeadline)
 	week = parseWeekRules(r.WeekRules)
 	if r.AltRule != nil && *r.AltRule != "" && *r.AltRule != "null" {
 		var a struct {
@@ -383,7 +370,7 @@ func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (wor
 	if rule == nil {
 		return "", "", 0, 0
 	}
-	mode, gl, ge, _, week, alt := loadRules(rule)
+	mode, gl, ge, week, alt := loadRules(rule)
 	dt, err := time.ParseInLocation("2006-01-02", dateStr, localTZ)
 	if err != nil {
 		return "", "", 0, 0
@@ -393,23 +380,6 @@ func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (wor
 		return "", "", gl, ge
 	}
 	return ws, we, gl, ge
-}
-
-// decidePunchKind 按当前业务本地时刻判定本次打卡的归属日期与类型。
-// 规则：
-//   - 次日凌晨段 [00:00, offworkDeadline)（默认 04:00）：打的卡归属**前一天**，算前一天下班卡（补下班）；
-//   - 其余时刻：归属**当天**（kind 由当天已打次数决定：0 次=上班卡、≥1=下班卡，第一次打卡永不拒绝，迟到仅作状态标记）。
-//
-// 返回 targetDate（业务本地 YYYY-MM-DD）与 isMidnight（是否处于次日凌晨补下班段）。
-//
-// 注：实时打卡归属已改用 inOffWindow（下班+8h 动态窗口），此函数仅作兼容保留。
-func decidePunchKind(now time.Time, offworkDeadline string) (targetDate string, isMidnight bool) {
-	nowMin := now.Hour()*60 + now.Minute()
-	deadMin := minutesSinceMidnight(defaultDeadline(offworkDeadline))
-	if nowMin < deadMin {
-		return now.AddDate(0, 0, -1).Format("2006-01-02"), true
-	}
-	return now.Format("2006-01-02"), false
 }
 
 // inOffWindow 判断 now 是否处于"下班后 8 小时内"（含跨天到次日）的下班区间。

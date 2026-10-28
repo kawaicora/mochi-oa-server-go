@@ -264,7 +264,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		checkDate := time.Now().In(localTZ).Format("2006-01-02")
 		workStart, workEnd, graceLate, graceEarly := "", "", int64(0), int64(0)
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
-			mode, gl, ge, _, week, alt := loadRules(r)
+			mode, gl, ge, week, alt := loadRules(r)
 			now := time.Now().In(localTZ)
 			// 昨天排班的下班+8h 窗口判定：命中 → 归属昨天，用昨天排班快照。
 			y := now.AddDate(0, 0, -1)
@@ -311,9 +311,9 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			return
 		}
 		// 取规则用于逐日状态判定（迟到/早退/正常/缺卡）。
-		mode, graceLate, graceEarly, _, week, alt := "standard", int64(0), int64(0), "04:00", []dayRule{}, (*dayRule)(nil)
+		mode, graceLate, graceEarly, week, alt := "standard", int64(0), int64(0), []dayRule{}, (*dayRule)(nil)
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
-			mode, graceLate, graceEarly, _, week, alt = loadRules(r)
+			mode, graceLate, graceEarly, week, alt = loadRules(r)
 		}
 		// 当月通过加班申请（approved & type=overtime），按开始日期分组。
 		// 加班展示必须以「申请通过」为准，绝不因打卡时间晚（如 21:00 后）推断加班。
@@ -476,7 +476,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			graceLate, _ := toInt64(def["grace_late_min"])
 			graceEarly, _ := toInt64(def["grace_early_min"])
 			if err := store.SaveCheckinRules(ctx, cid, def["mode"].(string),
-				graceLate, graceEarly, def["week_rules"].(string), nil, def["offwork_deadline"].(string)); err != nil {
+				graceLate, graceEarly, def["week_rules"].(string), nil, ""); err != nil {
 				logger.Error(mod, "checkin:rules:get 懒播种失败", "companyId", cid, "error", err.Error())
 				ack(util.Fail("获取失败"))
 				return
@@ -571,16 +571,8 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			s := string(b)
 			altJSON = &s
 		}
-		// 下班卡次日截止（HH:MM，默认 04:00；管理员可调）。
-		offDeadline := strings.TrimSpace(strField(d, "offwork_deadline"))
-		if offDeadline == "" {
-			offDeadline = "04:00"
-		}
-		if !hhmm(offDeadline) {
-			ack(util.Fail("下班卡截止时间格式不合法（需 HH:MM）"))
-			return
-		}
-		if err := store.SaveCheckinRules(ctx, cid, mode, graceLate, graceEarly, string(weekBytes), altJSON, offDeadline); err != nil {
+		// 下班窗口不依赖固定截止时刻：统一为「下班 +8 小时」（inOffWindow），offwork_deadline 弃用不再接收。
+		if err := store.SaveCheckinRules(ctx, cid, mode, graceLate, graceEarly, string(weekBytes), altJSON, ""); err != nil {
 			logger.Error(mod, "checkin:rules:save 失败", "companyId", cid, "error", err.Error())
 			ack(util.Fail("保存失败"))
 			return
@@ -608,7 +600,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("获取失败"))
 			return
 		}
-		mode, graceLate, graceEarly, _, weekRules, altRule := loadRules(r)
+		mode, graceLate, graceEarly, weekRules, altRule := loadRules(r)
 		// 当天打卡记录（复用 list 同源查询，按月取后过滤当天）。
 		punches, _ := store.ListCheckinsByMonth(ctx, cid, a.ID, dateStr[:7])
 		in, out := punchInOut(punches, dateStr)

@@ -47,7 +47,7 @@ func StartCheckinReminderScheduler(srv socketapi.Server, store db.Store) {
 						logger.Error(mod, "打卡提醒：取排班规则失败", "companyId", comp.ID, "error", err.Error())
 						continue
 					}
-					mode, _, _, _, week, alt := loadRules(rules)
+					mode, _, _, week, alt := loadRules(rules)
 					rest, ws, we := dayScheduleFor(now, mode, week, alt)
 					if rest {
 						continue // 休息日不发提醒

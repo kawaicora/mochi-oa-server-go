@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"mochi-oa-server-go/internal/types"
@@ -27,6 +28,11 @@ func (s *MySqlStore) GetCheckinRules(ctx context.Context, companyID int64) (*typ
 // SaveCheckinRules upsert 公司排班规则。
 func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode string, graceLate, graceEarly int64, weekRulesJSON string, altRuleJSON *string, offworkDeadline string) error {
 	now := time.Now().UTC()
+	// offwork_deadline 已弃用（下班窗口固定为「下班 +8 小时」）；列仍存于表（TIME not null），
+	// 空值统一落 "00:00:00"，避免 TIME 列拒绝空串。
+	if strings.TrimSpace(offworkDeadline) == "" {
+		offworkDeadline = "00:00:00"
+	}
 	existing, err := s.GetCheckinRules(ctx, companyID)
 	if err != nil {
 		return err
@@ -45,7 +51,7 @@ func (s *MySqlStore) SaveCheckinRules(ctx context.Context, companyID int64, mode
 		GraceLateMin: graceLate, GraceEarlyMin: graceEarly,
 		WeekRules: weekRulesJSON, AltRule: altRuleJSON,
 		OffworkDeadline: offworkDeadline,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:       now, UpdatedAt: now,
 	}
 	return s.gorm.WithContext(ctx).Table("company_checkin_rules").Create(&row).Error
 }
