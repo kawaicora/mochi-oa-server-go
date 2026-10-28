@@ -943,7 +943,7 @@ type AfdianOrder struct {
 	BuyerUserID   string `json:"buyerUserId"`
 	BuyerName     string `json:"buyerName"`
 	BuyerAvatar   string `json:"buyerAvatar"`
-	CreateTime    int64  `json:"createTime"`
+	CreateTime    string `json:"createTime"`
 	SkuDetail     string `json:"skuDetail"`
 	Raw           string `json:"raw"`
 	CreatedAt     string `json:"createdAt"`
