@@ -309,6 +309,29 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
 			mode, graceLate, graceEarly, _, week, alt = loadRules(r)
 		}
+		// 当月通过加班申请（approved & type=overtime），按开始日期分组。
+		// 加班展示必须以「申请通过」为准，绝不因打卡时间晚（如 21:00 后）推断加班。
+		overtimeByDate := map[string][]types.OvertimeItem{}
+		if reqs, _, err := store.ListAttendanceRequestsByUser(ctx, cid, a.ID, "", month+"-01", month+"-31", 1, 100); err == nil {
+			for _, r := range reqs {
+				if r.Type != "overtime" || r.Status != "approved" || r.StartTime == nil {
+					continue
+				}
+				d := *r.StartTime
+				if len(d) >= 10 {
+					d = d[:10] // "2026-10-25T21:00:00" → "2026-10-25"
+				}
+				ot := types.OvertimeItem{DurationHours: 0}
+				if r.EndTime != nil {
+					ot.EndTime = *r.EndTime
+				}
+				if r.DurationHours != nil {
+					ot.DurationHours = *r.DurationHours
+				}
+				ot.StartTime = *r.StartTime
+				overtimeByDate[d] = append(overtimeByDate[d], ot)
+			}
+		}
 		// 按 check_date 分组。
 		byDate := map[string][]types.CheckinItem{}
 		for _, it := range items {
@@ -333,13 +356,30 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			// 逐日综合状态：只打一次卡 → 下班未打卡（缺卡类）；迟到/早退如实判定。
 			// 历史判定优先用打卡时固化的规则快照（改规则不影响历史）；老数据无快照回退当前规则。
 			in, out := punchInOut(recs, date)
+			var ws, we string
 			if snap := snapshotFor(recs, date); snap != nil {
+				ws, we = snap.workStart, snap.workEnd
 				if st, ok := computeDayStatusFromTimes(date, snap.graceLate, snap.graceEarly, snap.workStart, snap.workEnd, in, out)["status"].(string); ok {
 					day.Status = st
 				}
 			} else if st, ok := computeDayStatus(date, mode, graceLate, graceEarly, week, alt, in, out)["status"].(string); ok {
 				day.Status = st
 			}
+			// 逐条类型标签（迟到/早退复用判定口径，无快照则不判迟到早退）。
+			for i := range recs {
+				recs[i].Label = labelForItem(recs[i], ws, we)
+				if recs[i].Label == "" { // state==0 老数据：首→上班、末→下班
+					if i == 0 {
+						recs[i].Label = "上班"
+					} else if i == len(recs)-1 {
+						recs[i].Label = "下班"
+					} else {
+						recs[i].Label = "上班"
+					}
+				}
+			}
+			day.Records = recs
+			day.Overtimes = overtimeByDate[date]
 			days = append(days, day)
 		}
 		ack(util.OK(map[string]any{"days": days}))

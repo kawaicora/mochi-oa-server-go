@@ -30,6 +30,7 @@ var attendanceTypes = map[string]struct{}{
 	"make_up":   {}, // 补卡
 	"leave":     {}, // 请假
 	"comp_time": {}, // 调休
+	"overtime":  {}, // 加班（申请通过才在打卡记录显示，绝不因打卡时间晚推断）
 }
 
 // attendanceTypeLabel 申请类型中文显示名（业务通知标题/正文用）。
@@ -41,6 +42,8 @@ func attendanceTypeLabel(typ string) string {
 		return "调休"
 	case "make_up":
 		return "补卡"
+	case "overtime":
+		return "加班"
 	default:
 		return "考勤"
 	}
@@ -238,7 +241,19 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			return
 		}
 		var dur *float64
-		if v, present := d["durationHours"]; present && v != nil {
+		if typ == "overtime" {
+			// 加班时长由服务端按开始~结束时间段计算（申请通过才显示，时长准确，不信任客户端）。
+			if startT == nil || endT == nil {
+				ack(util.Fail("加班申请必须选择开始与结束时间"))
+				return
+			}
+			h := endT.Sub(*startT).Hours()
+			if h <= 0 {
+				ack(util.Fail("加班结束时间必须晚于开始时间"))
+				return
+			}
+			dur = &h
+		} else if v, present := d["durationHours"]; present && v != nil {
 			f, ok := toFloat64(v)
 			if !ok {
 				ack(util.Fail("时长不合法"))
@@ -312,7 +327,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 			_ = srv.EmitTo(util.UserRoom(uid), "attendance:request:notification", map[string]any{
 				"kind": "company", "type": "attendance_request_created", "companyId": cid,
 				"requestId": req.ID, "title": "新的" + typeLabel + "申请",
-				"body":  req.Nick + " 提交了" + typeLabel + "申请，等待您审批",
+				"body":     req.Nick + " 提交了" + typeLabel + "申请，等待您审批",
 				"byUserId": a.ID, "byNick": req.Nick, "note": reason,
 			})
 		}
@@ -580,7 +595,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
 			"kind": "company", "type": "attendance_request_approved", "companyId": cid,
 			"requestId": updated.ID, "title": typeLabel + "申请已通过",
-			"body":  "您的" + typeLabel + "申请已被 " + a.Nick + " 通过",
+			"body":     "您的" + typeLabel + "申请已被 " + a.Nick + " 通过",
 			"byUserId": a.ID, "byNick": a.Nick, "note": "",
 		})
 		ack(util.OK(map[string]any{"request": updated}))
@@ -630,7 +645,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "attendance:request:notification", map[string]any{
 			"kind": "company", "type": "attendance_request_rejected", "companyId": cid,
 			"requestId": updated.ID, "title": typeLabel + "申请被拒绝",
-			"body":  "您的" + typeLabel + "申请被 " + a.Nick + " 拒绝",
+			"body":     "您的" + typeLabel + "申请被 " + a.Nick + " 拒绝",
 			"byUserId": a.ID, "byNick": a.Nick, "note": note,
 		})
 		ack(util.OK(map[string]any{"request": updated}))

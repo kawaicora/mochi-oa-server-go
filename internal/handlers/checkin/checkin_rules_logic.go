@@ -341,6 +341,42 @@ func minutesSinceMidnight(s string) int {
 	return h*60 + m
 }
 
+// labelForItem 计算单条打卡记录的类型标签（展示用，迟到/早退复用现有判定口径）。
+// workStart/workEnd 为该日排班上下班时间（"HH:MM" 或完整 datetime，minutesSinceMidnight 均兼容）。
+// state 位掩码：1=上班 2=下班 8=补卡 16=请假 32=调休（与 checkins.state 一致）。
+// state==0 的老数据返回空串，由调用方按当天首末位置兜底（首→上班、末→下班）。
+func labelForItem(it types.CheckinItem, workStart, workEnd string) string {
+	st := it.State
+	if st&16 != 0 {
+		return "请假"
+	}
+	if st&32 != 0 {
+		return "调休"
+	}
+	if st&8 != 0 { // 补卡：补上班(9) / 补下班(10)
+		if st&1 != 0 {
+			return "补上班"
+		}
+		if st&2 != 0 {
+			return "补下班"
+		}
+	}
+	checkMin := minutesSinceMidnight(it.CheckTime)
+	switch {
+	case st&1 != 0: // 上班卡
+		if workStart != "" && checkMin > minutesSinceMidnight(workStart)+int(it.GraceLateMin) {
+			return "迟到"
+		}
+		return "上班"
+	case st&2 != 0: // 下班卡
+		if workEnd != "" && checkMin < minutesSinceMidnight(workEnd)-int(it.GraceEarlyMin) {
+			return "早退"
+		}
+		return "下班"
+	}
+	return ""
+}
+
 // RuleSnapshotForDay 计算某日期在公司当前规则下的排班快照（供补卡等写入 checkins 用）。
 // 返回该日 workStart/workEnd/graceLate/graceEarly；休息日或无规则 → workStart/WorkEnd 为空。
 func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (workStart, workEnd string, graceLate, graceEarly int64) {

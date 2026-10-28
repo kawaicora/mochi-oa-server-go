@@ -1386,20 +1386,30 @@ type CheckinItem struct {
 	GraceLateMin  int64  `json:"graceLateMin"`
 	GraceEarlyMin int64  `json:"graceEarlyMin"`
 	// state 位掩码（单条记录类型）：1=上班 2=下班 4=缺卡 8=补卡 16=请假 32=调休。
-	State     int64  `json:"state"`
+	State int64 `json:"state"`
+	// label 逐条类型标签（展示用）：上班/下班/迟到/早退/补上班/补下班/请假/调休；老数据按当天位置兜底。
+	Label     string `json:"label"`
 	CreatedAt string `json:"createdAt"`
 	Nick      string `json:"nick"`
 	Username  string `json:"username"`
 }
 
+// OvertimeItem 某天已通过的加班申请（仅 approved 显示，绝不靠打卡时间晚推断加班）。
+type OvertimeItem struct {
+	StartTime     string  `json:"startTime"` // 完整 "YYYY-MM-DD HH:MM:SS"
+	EndTime       string  `json:"endTime"`
+	DurationHours float64 `json:"durationHours"`
+}
+
 // CheckinDay 某用户某一天的打卡聚合：date 倒序、组内按 check_time 升序。
 type CheckinDay struct {
-	Date      string        `json:"date"`
-	Count     int64         `json:"count"`
-	FirstTime string        `json:"firstTime"`
-	LastTime  string        `json:"lastTime"`
-	Status    string        `json:"status"` // rest|none|normal|late|early|late_early（服务端 computeDayStatus）
-	Records   []CheckinItem `json:"records"`
+	Date      string         `json:"date"`
+	Count     int64          `json:"count"`
+	FirstTime string         `json:"firstTime"`
+	LastTime  string         `json:"lastTime"`
+	Status    string         `json:"status"` // rest|none|normal|late|early|late_early（服务端 computeDayStatus）
+	Records   []CheckinItem  `json:"records"`
+	Overtimes []OvertimeItem `json:"overtimes"` // 当天通过加班申请（approved & type=overtime）
 }
 
 // CheckinSettings 公司打卡白名单配置。
