@@ -30,6 +30,7 @@ import (
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/handlers/asset"
 	"mochi-oa-server-go/internal/handlers/advance"
+	"mochi-oa-server-go/internal/handlers/approval"
 	"mochi-oa-server-go/internal/handlers/attendance"
 	"mochi-oa-server-go/internal/handlers/auth"
 	"mochi-oa-server-go/internal/handlers/checkin"
@@ -162,6 +163,7 @@ func main() {
 	attendance.RegisterAttendanceHandlers(srv, store)
 	expense.RegisterExpenseHandlers(srv, store)
 	advance.RegisterAdvanceHandlers(srv, store)
+	approval.RegisterApprovalHandlers(srv, store)
 	checkin.RegisterCheckinHandlers(srv, store)
 	checkin.RegisterStatHandlers(srv, store, cfg)
 	checkin.StartMonthlyStatScheduler(srv, store, cfg)

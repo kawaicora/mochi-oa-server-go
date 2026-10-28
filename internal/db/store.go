@@ -410,6 +410,8 @@ type Store interface {
 	RemoveMember(ctx context.Context, companyID, userID int64) error
 	SetRole(ctx context.Context, companyID, userID int64, role string) error
 	GetMemberRole(ctx context.Context, companyID, userID int64) (string, error)
+	GetApprovalCc(ctx context.Context, companyID int64) ([]int64, error)
+	SetApprovalCc(ctx context.Context, companyID int64, userIDs []int64) error
 	GetMembers(ctx context.Context, companyID int64) ([]types.Member, error)
 	GetUserCompanies(ctx context.Context, userID int64) ([]types.Membership, error)
 	UpdateCompanyLogo(ctx context.Context, companyID int64, avatar string) error

@@ -91,25 +91,28 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  mochi-oa-server-go-mysql-c54f8e4:
-    image: mysql:8.0
-    container_name: mochi-oa-server-go-mysql-c54f8e4
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
-      # 故意不设 MYSQL_DATABASE：库不存在，交给服务端自己创建（全新服务器场景）。
-      # 若想让镜像先建空库，放开下一行；服务端 AutoMigrate 仍会补表。
-      # MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
-    # ports:
-    #   - "${MYSQL_HOST_PORT:-3306}:3306"
-    volumes:
-      - ./data/mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-    restart: unless-stopped
+
+
+  #直接使用服务器数据库
+  # mochi-oa-server-go-mysql-c54f8e4:
+  #   image: mysql:8.0
+  #   container_name: mochi-oa-server-go-mysql-c54f8e4
+  #   command:
+  #     - --character-set-server=utf8mb4
+  #     - --collation-server=utf8mb4_unicode_ci
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
+  #     # 故意不设 MYSQL_DATABASE：库不存在，交给服务端自己创建（全新服务器场景）。
+  #     # 若想让镜像先建空库，放开下一行；服务端 AutoMigrate 仍会补表。
+  #     # MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+  #   # ports:
+  #   #   - "${MYSQL_HOST_PORT:-3306}:3306"
+  #   volumes:
+  #     - ./data/mysql-data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 30
+  #     start_period: 30s
+  #   restart: unless-stopped

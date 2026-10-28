@@ -564,6 +564,15 @@ type CompanyCheckinRulesRow struct {
 	UpdatedAt     time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
+// CompanyApprovalCcRow 对应 company_approval_cc 表：公司默认审批抄送人（一公司可多条，user_id 唯一）。
+// 发起审批时默认带出（可在审批页替换/清空，非强制）；仅公司 owner/admin 可增删改。
+type CompanyApprovalCcRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	CompanyID int64     `db:"company_id" gorm:"type:bigint unsigned;not null;uniqueIndex:uk_company_user"`
+	UserID    int64     `db:"user_id" gorm:"type:bigint unsigned;not null;uniqueIndex:uk_company_user"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+}
+
 // username 全局唯一；secret 仅批准/创建时返回一次，列表/详情视图绝不带出。
 // ProxyAccountRow 对应 proxy_accounts 表（出网代理账号，公司隔离）。
 // username 全局唯一；secret 仅批准/创建时返回一次，列表/详情视图绝不带出。
