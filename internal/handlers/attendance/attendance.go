@@ -557,66 +557,81 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		// 补卡也算打卡：make_up 批准后把补卡时间写入 checkins（解析失败仅记日志，不影响审批）。
 		// 同步固化排班快照：优先当天已有打卡记录的快照（同一天历史判定一致），否则用当前公司规则。
 		if updated.Type == "make_up" && updated.PunchTime != nil && *updated.PunchTime != "" {
-			workStart, workEnd, gl, ge := "", "", int64(0), int64(0)
 			punch := *updated.PunchTime
-			// 目标日期优先（跨天补下班：补 10-27 卡但实际 10-28 02:00 打卡，仍落 10-27）；
-			// 空（独立发起/旧数据）则回退 punch 字面日期。
+			// 被补日：客户端已传 MakeupDate（从打卡页补卡预填）则直接采用；
+			// 未传（单独发起）则用 PunchTime 自动推断被补日与槽位。
 			pDate := ""
 			if updated.MakeupDate != nil {
 				pDate = *updated.MakeupDate
 			}
-			if pDate == "" && len(punch) >= 10 {
-				pDate = punch[:10]
-			}
-			if pDate != "" {
-				if existing, e := store.ListCheckinsByMonth(ctx, cid, req.UserID, pDate[:7]); e == nil {
+			// 查某日排班快照/规则的闭包（优先当天已有打卡快照，历史判定一致；否则用当前公司规则）。
+			ruleOfDay := func(d string) (ws, we string, gl, ge int64) {
+				if d == "" {
+					return "", "", 0, 0
+				}
+				if existing, e := store.ListCheckinsByMonth(ctx, cid, req.UserID, d[:7]); e == nil {
 					for _, it := range existing {
-						if it.CheckDate == pDate && it.StdStart != "" && it.StdEnd != "" {
-							workStart, workEnd, gl, ge = it.StdStart, it.StdEnd, it.GraceLateMin, it.GraceEarlyMin
-							break
+						if it.CheckDate == d && it.StdStart != "" && it.StdEnd != "" {
+							return it.StdStart, it.StdEnd, it.GraceLateMin, it.GraceEarlyMin
 						}
 					}
 				}
-				if workStart == "" || workEnd == "" {
-					if rule, e := store.GetCheckinRules(ctx, cid); e == nil {
-						workStart, workEnd, gl, ge = checkin.RuleSnapshotForDay(rule, pDate)
+				if rule, e := store.GetCheckinRules(ctx, cid); e == nil {
+					return checkin.RuleSnapshotForDay(rule, d)
+				}
+				return "", "", 0, 0
+			}
+			workStart, workEnd, gl, ge := "", "", int64(0), int64(0)
+			inferredSlot := int64(0)
+			// 单独申请（无被补日）：PunchTime 落在「某日下班 ~ 下班+8h」区间 → 补该日下班卡
+			// （跨天补下班也算，如 26 号下班补到次日 02:00 → 补 26 号下班）；更贴近某日上班 → 补该日上班卡。
+			// 先试 punch 前一工作日（跨天补下班场景），再试 punch 当日。
+			if pDate == "" && len(punch) >= 10 {
+				d := punch[:10]
+				for _, cand := range []string{prevDateStr(d), d} {
+					if cand == "" {
+						continue
+					}
+					ws, we, g2, e2 := ruleOfDay(cand)
+					if ws == "" || we == "" {
+						continue
+					}
+					slotC := makeupSlotForDay(punch, cand, ws, we)
+					if slotC == 2 {
+						pDate = cand
+						inferredSlot = 2
+						workStart, workEnd, gl, ge = ws, we, g2, e2
+						break
+					}
+					if inferredSlot == 0 {
+						pDate = cand
+						inferredSlot = slotC
+						workStart, workEnd, gl, ge = ws, we, g2, e2
 					}
 				}
 			}
-			// 补卡槽位：客户端已明确补上班/补下班（MakeupSlot）则直接采用——
-			// 补下班卡即使跨天到次日凌晨也算下班（下班区间 = 当天下班 ~ 次日 4 点）。
-			// 无槽位（独立发起/旧数据）才按 PunchTime 距 workStart/workEnd 邻近兜底判定。
+			if pDate == "" && len(punch) >= 10 {
+				pDate = punch[:10]
+			}
+			if workStart == "" {
+				workStart, workEnd, gl, ge = ruleOfDay(pDate)
+			}
+			// 槽位最终判定：客户端已明确 MakeupSlot（补上班/补下班）则直接采用；
+			// 否则用单独申请的推断结果，或按 PunchTime 距上下班邻近兜底。
 			slot := int64(1)
 			if updated.MakeupSlot == "off" {
 				slot = 2
-			} else if updated.MakeupSlot != "work" && workStart != "" && workEnd != "" {
-				wsMin := clockMinutes(workStart)
-				weMin := clockMinutes(workEnd)
-				pm := punchMinutesOf(*updated.PunchTime)
-				// 无槽位（独立发起/旧数据）按 PunchTime 判定槽位。
-				// 跨天判定：punch 日期晚于排班下班日期 → 次日凌晨补下班。
-				stdEndDate, punchDate := "", ""
-				if len(workEnd) >= 10 {
-					stdEndDate = workEnd[:10]
-				}
-				if len(punch) >= 10 {
-					punchDate = punch[:10]
-				}
-				crossOff := stdEndDate != "" && punchDate > stdEndDate
-				if wsMin >= 0 && weMin >= 0 && pm >= 0 {
-					// 下班区间 = 当天下班 ~ 下班 +8 小时（三班倒也适用；如 12:00-23:00 班 → 23:00 起 8h 内即次日 7:00 前都可打/补下班卡）。
-					// punch 相对下班时刻偏移（跨天 +24h），落在 [0, 8h] → 补下班；否则距下班更近 → 补下班，距上班更近 → 补上班。
-					offMin := pm - weMin
-					if crossOff {
-						offMin += 24 * 60
-					}
-					if (offMin >= 0 && offMin <= 8*60) || absInt(pm-weMin) < absInt(pm-wsMin) {
-						slot = 2
+			} else if updated.MakeupSlot != "work" {
+				if inferredSlot == 1 || inferredSlot == 2 {
+					slot = inferredSlot
+				} else if workStart != "" && workEnd != "" {
+					if s := makeupSlotForDay(punch, pDate, workStart, workEnd); s == 1 || s == 2 {
+						slot = s
 					}
 				}
 			}
-			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, pDate, *updated.PunchTime, workStart, workEnd, gl, ge, slot); err != nil {
-				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", *updated.PunchTime, "error", err.Error())
+			if err := store.InsertMakeupCheckin(ctx, cid, req.UserID, pDate, punch, workStart, workEnd, gl, ge, slot); err != nil {
+				logger.Error(mod, "attendance:approve 补卡写入 checkins 失败", "id", id, "punchTime", punch, "error", err.Error())
 			}
 		}
 		// 业务通知：审批通过 → 推给申请人本人。
@@ -735,4 +750,42 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+// prevDateStr 返回 dateStr（YYYY-MM-DD）的前一天；格式不合法返回空串。
+func prevDateStr(dateStr string) string {
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return ""
+	}
+	return t.AddDate(0, 0, -1).Format("2006-01-02")
+}
+
+// makeupSlotForDay 判定 punch（实际打卡时刻，含日期）相对候选被补日 dateStr 的槽位。
+// 下班区间 = 该日下班 ~ 下班+8 小时（含跨天到次日凌晨，如 26 号下班补到次日 02:00 仍算补 26 号下班）。
+// 返回 2=补下班、1=补上班、-1=排班不可用无法判定。
+func makeupSlotForDay(punch, dateStr, workStart, workEnd string) int64 {
+	ws, we := clockMinutes(workStart), clockMinutes(workEnd)
+	pm := punchMinutesOf(punch)
+	if ws < 0 || we < 0 || pm < 0 {
+		return -1
+	}
+	// punch 相对候选日按天偏移（punch 属次日 → +24h，跨天补下班）。
+	off := pm
+	if len(punch) >= 10 {
+		if pt, e1 := time.Parse("2006-01-02", punch[:10]); e1 == nil {
+			if dt, e2 := time.Parse("2006-01-02", dateStr); e2 == nil {
+				off += int(pt.Sub(dt).Hours()/24) * 24 * 60
+			}
+		}
+	}
+	// 落在「下班 ~ 下班+8h」区间 → 补下班。
+	if off >= we && off <= we+8*60 {
+		return 2
+	}
+	// 距下班更近 → 补下班；距上班更近 → 补上班。
+	if absInt(off-we) < absInt(off-ws) {
+		return 2
+	}
+	return 1
 }
