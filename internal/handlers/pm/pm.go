@@ -91,15 +91,15 @@ func Register(srv socketapi.Server, store db.Store) {
 		}
 		requirement, err := store.CreateRequirement(context.Background(), db.CreateRequirementInput{
 			CompanyID:   companyID,
-			ProjectID:    projectFilter(m),
-			Title:        title,
-			Description:  asStr(m["description"], 8000),
-			Category:     asStr(m["category"], 32),
-			Priority:     asStr(m["priority"], 32),
-			HandlerID:    intPtr(asInt(m["handlerId"])), // TS: int(d.handlerId) || null
-			StartTime:    st,
-			DueTime:      dt,
-			CreatorID:    uid,
+			ProjectID:   projectFilter(m),
+			Title:       title,
+			Description: asStr(m["description"], 8000),
+			Category:    asStr(m["category"], 32),
+			Priority:    asStr(m["priority"], 32),
+			HandlerID:   intPtr(asInt(m["handlerId"])), // TS: int(d.handlerId) || null
+			StartTime:   st,
+			DueTime:     dt,
+			CreatorID:   uid,
 		})
 		if err != nil {
 			logger.Error(mod, "req:create 失败", "companyId", companyID, "error", err.Error())
@@ -1025,7 +1025,7 @@ func asIso(v any) string {
 	}
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC().Format("2006-01-02T15:04:05.000Z")
+			return util.LocalTimeFormat(t)
 		}
 	}
 	return ""

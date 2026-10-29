@@ -50,6 +50,7 @@ func (s *MySqlStore) GetOrCreateGroupConversation(ctx context.Context, groupID, 
 }
 
 // GetOrCreateDmConversation 取两人私信对话（无序），不存在则创建并双向入列。
+// 支持自己与自己（a==b，如"发消息给自己"）：会话仅入列一次成员，避免唯一键冲突。
 func (s *MySqlStore) GetOrCreateDmConversation(ctx context.Context, a, b int64) (*types.Conversation, error) {
 	x, y := a, b
 	if x > y {
@@ -74,8 +75,11 @@ func (s *MySqlStore) GetOrCreateDmConversation(ctx context.Context, a, b int64) 
 	if err := s.AddConversationMember(ctx, nr.ID, x); err != nil {
 		return nil, err
 	}
-	if err := s.AddConversationMember(ctx, nr.ID, y); err != nil {
-		return nil, err
+	// 自己对自己：同一用户只入列一次，避免重复唯一键冲突。
+	if y != x {
+		if err := s.AddConversationMember(ctx, nr.ID, y); err != nil {
+			return nil, err
+		}
 	}
 	return s.GetConversationByID(ctx, nr.ID)
 }

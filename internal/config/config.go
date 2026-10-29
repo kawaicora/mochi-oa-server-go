@@ -122,6 +122,73 @@ type ServerConfig struct {
 	ServerAdmins  []string
 	Mail          *ServerMailConfig // nil=未配置环境级主邮件
 	Afdian        *AfdianConfig     // nil=未启用
+	// LiveKit SFU 配置（视频会议/远程查看统一走 SFU）。nil=未配置（相关功能明确报不可用，不影响其他功能）。
+	LiveKit *LiveKitConfig
+	// ReportRemindDaily 日报未交提醒时刻（"HH:MM"，当地时间），默认 18:00。
+	ReportRemindDaily string
+	// ReportRemindWeekly 周报未交提醒时刻（"HH:MM"，当地时间；仅周五触发），默认 18:00。
+	ReportRemindWeekly string
+	// Proxy 出网代理配置（默认全部不启用，不影响现有服务）。
+	Proxy ProxyConfig
+}
+
+// ProxyServerEntry 是 .env PROXY_SERVERS 里配置的一个附加出网代理服务器（host:port:user:pass）。
+// 服务端自身出网代理（HTTP/SOCKS5 监听）总是作为代理列表第一项，其余来自 PROXY_SERVERS。
+type ProxyServerEntry struct {
+	Host string
+	Port int
+	User string
+	Pass string // 仅服务端内部/校验用；下发客户端列表时绝不带出明文密码
+}
+
+// Label 返回展示名 "host:port"（如 "proxy.example.com:3128"），供客户端代理列表下拉显示。
+func (e ProxyServerEntry) Label() string {
+	return e.Host + ":" + strconv.Itoa(e.Port)
+}
+
+// ProxyConfig 是无外网员工出网代理（HTTP 隧道 + SOCKS5）配置。
+// 默认全部关闭；PROXY_ENABLED=true 时 main.go 才起代理监听（失败降级打日志继续主服务）。
+type ProxyConfig struct {
+	Enabled    bool               // PROXY_ENABLED，默认 false
+	HTTPPort   int                // PROXY_HTTP_PORT，默认 8080
+	SOCKS5Port int                // PROXY_SOCKS5_PORT，默认 1080
+	Servers    []ProxyServerEntry // PROXY_SERVERS，逗号分隔 host:port:user:pass（服务端自身出网代理外的附加项）
+}
+
+// parseProxyServers 解析 PROXY_SERVERS（逗号分隔，每项 host:port:user:pass）。
+// 空串/非法项静默跳过；合法项按序返回。
+func parseProxyServers(s string) []ProxyServerEntry {
+	var out []ProxyServerEntry
+	for _, item := range strings.Split(s, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.Split(item, ":")
+		if len(parts) != 4 {
+			continue
+		}
+		port, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || port <= 0 || port > 65535 {
+			continue
+		}
+		out = append(out, ProxyServerEntry{
+			Host: strings.TrimSpace(parts[0]),
+			Port: port,
+			User: strings.TrimSpace(parts[2]),
+			Pass: strings.TrimSpace(parts[3]),
+		})
+	}
+	return out
+}
+
+// LiveKitConfig 是 SFU 媒体服务器配置（视频会议 / 远程设备查看统一走 LiveKit）。
+// 来自 .env 的 LIVEKIT_* 系列；APIKey/APISecret 为服务端签发 access token 用，绝不下发给客户端。
+type LiveKitConfig struct {
+	URL        string // wss://live.kawaimoe.org
+	APIKey     string
+	APISecret  string
+	RoomPrefix string // 业务房间前缀，默认 "oa"
 }
 
 var (
@@ -313,6 +380,21 @@ func orDefault(v, dft string) string {
 	return v
 }
 
+// liveKitConfig 构造 LiveKit SFU 配置：URL 与 API_SECRET 同时存在才启用（缺密钥无法签发 token）。
+func liveKitConfig() *LiveKitConfig {
+	url := strings.TrimSpace(os.Getenv("LIVEKIT_URL"))
+	secret := os.Getenv("LIVEKIT_API_SECRET")
+	if url == "" || secret == "" {
+		return nil
+	}
+	return &LiveKitConfig{
+		URL:        url,
+		APIKey:     os.Getenv("LIVEKIT_API_KEY"),
+		APISecret:  secret,
+		RoomPrefix: orDefault(strings.TrimSpace(os.Getenv("LIVEKIT_ROOM_PREFIX")), "oa"),
+	}
+}
+
 // build 组装完整配置（对应 loadConfig）。
 func build() *ServerConfig {
 	host := strEnv("HOST", "0.0.0.0")
@@ -394,5 +476,16 @@ func build() *ServerConfig {
 		ServerAdmins: serverAdmins(),
 		Mail:         serverMail(),
 		Afdian:       afdianConfig(),
+		LiveKit:      liveKitConfig(),
+		// 日报/周报未交提醒时刻（HH:MM，当地时间；周报仅周五触发）。
+		ReportRemindDaily:  strEnv("REPORT_REMIND_DAILY", "18:00"),
+		ReportRemindWeekly: strEnv("REPORT_REMIND_WEEKLY", "18:00"),
+		// 出网代理：默认关闭，不影响现有服务。
+		Proxy: ProxyConfig{
+			Enabled:    boolEnv("PROXY_ENABLED", false),
+			HTTPPort:   intEnv("PROXY_HTTP_PORT", 8080),
+			SOCKS5Port: intEnv("PROXY_SOCKS5_PORT", 1080),
+			Servers:    parseProxyServers(strEnv("PROXY_SERVERS", "")),
+		},
 	}
 }

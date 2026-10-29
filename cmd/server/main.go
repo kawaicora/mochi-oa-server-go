@@ -28,11 +28,20 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/asset"
+	"mochi-oa-server-go/internal/handlers/advance"
+	"mochi-oa-server-go/internal/handlers/approval"
+	"mochi-oa-server-go/internal/handlers/attendance"
 	"mochi-oa-server-go/internal/handlers/auth"
+	"mochi-oa-server-go/internal/handlers/checkin"
 	"mochi-oa-server-go/internal/handlers/conversation"
+	"mochi-oa-server-go/internal/handlers/expense"
+	"mochi-oa-server-go/internal/handlers/job"
 	"mochi-oa-server-go/internal/handlers/mailholiday"
 	"mochi-oa-server-go/internal/handlers/org"
 	"mochi-oa-server-go/internal/handlers/pm"
+	proxyh "mochi-oa-server-go/internal/handlers/proxy"
+	"mochi-oa-server-go/internal/handlers/report"
 	"mochi-oa-server-go/internal/handlers/rtcdev"
 	"mochi-oa-server-go/internal/handlers/task"
 	apphttp "mochi-oa-server-go/internal/http"
@@ -41,6 +50,7 @@ import (
 	"mochi-oa-server-go/internal/mailer"
 	"mochi-oa-server-go/internal/password"
 	"mochi-oa-server-go/internal/presence"
+	proxypkg "mochi-oa-server-go/internal/proxy"
 	"mochi-oa-server-go/internal/socket"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/token"
@@ -126,6 +136,7 @@ func main() {
 	apphttp.RegisterResetPwd(mux, store, srv, cfg)
 	apphttp.RegisterAdminWeb(mux, cfg)
 	apphttp.RegisterAfdianRoutes(mux, store, cfg)
+	apphttp.RegisterAssetQRRoute(mux, store)
 
 	// ---- 8. io.use 认证中间件（对标 index.ts io.use 逐行语义） ----
 	srv.Use(authMiddleware(store, cfg))
@@ -148,6 +159,26 @@ func main() {
 	mailholiday.RegisterMail(srv, store, cfg)
 	mailholiday.RegisterHoliday(srv, store)
 	mailholiday.RegisterAdminUsers(srv, store, cfg)
+	report.RegisterReportHandlers(srv, store, cfg)
+	attendance.RegisterAttendanceHandlers(srv, store)
+	expense.RegisterExpenseHandlers(srv, store)
+	advance.RegisterAdvanceHandlers(srv, store)
+	approval.RegisterApprovalHandlers(srv, store)
+	checkin.RegisterCheckinHandlers(srv, store)
+	checkin.RegisterStatHandlers(srv, store, cfg)
+	checkin.StartMonthlyStatScheduler(srv, store, cfg)
+	checkin.StartCheckinReminderScheduler(srv, store)
+	proxyh.RegisterProxyHandlers(srv, store)
+	asset.RegisterAssetHandlers(srv, store)
+	job.RegisterJobHandlers(srv, store)
+
+	// ---- 出网代理（默认关闭；PROXY_ENABLED=true 才起 HTTP+SOCKS5 监听，失败降级打日志继续主服务） ----
+	var proxySrv *proxypkg.Server
+	if cfg.Proxy.Enabled {
+		proxySrv = proxypkg.New(store, cfg.Proxy.HTTPPort, cfg.Proxy.SOCKS5Port)
+		proxySrv.Start()
+		logger.Info("mochioa-server", "出网代理已启用", "httpPort", cfg.Proxy.HTTPPort, "socks5Port", cfg.Proxy.SOCKS5Port)
+	}
 
 	// ---- 10. presence 接线（对标 io.on('connection') / io.on('disconnect')） ----
 	srv.OnConnection(onConnection(srv, store))
@@ -197,6 +228,7 @@ func main() {
 type handshakeHolder interface {
 	HandshakeAuth() json.RawMessage
 	Headers() http.Header
+	Host() string
 	Query() url.Values
 }
 
@@ -238,6 +270,10 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 			// auth.go headerGet 支持 string / []string，http.Header 直接传 []string 值。
 			for k, v := range hh.Headers() {
 				headers[k] = v
+			}
+			// req.Host 不在 r.Header 里，单独补一份供业务侧推断服务器对外地址。
+			if hh.Host() != "" {
+				headers["Host"] = []string{hh.Host()}
 			}
 		}
 		c.Set("handshakeHeaders", headers)
@@ -304,11 +340,12 @@ func authMiddleware(store db.Store, cfg *config.ServerConfig) socketapi.Middlewa
 	}
 }
 
-// sessionValid 会话未过期（ExpiresAt 是 ISO 字符串；与 auth.go sessionView 同格式解析）。
+// sessionValid 会话未过期（ExpiresAt 为本地空格完整时间或旧 ISO；util.ParseLocalTime 两者皆收）。
 func sessionValid(expiresAt string) bool {
-	t, err := time.Parse("2006-01-02T15:04:05.000Z", expiresAt)
-	if err != nil {
-		return false
+	t, ok := util.ParseLocalTime(expiresAt)
+	if !ok {
+		logger.Warn("auth", "会话过期时间解析失败，按未过期兜底放行", "expiresAt", expiresAt)
+		return true
 	}
 	return t.After(time.Now())
 }

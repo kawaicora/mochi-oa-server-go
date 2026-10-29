@@ -890,6 +890,47 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		ack(util.OK(map[string]any{"company": company}))
 	})
 
+	// ---- 公司 logo 修改（owner/admin；上传的图片 URL） ----
+	srv.On("company:updateLogo", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		cid, ok := toInt64(d["companyId"])
+		if !ok || cid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		logo := strings.TrimSpace(d["logo"].(string))
+		if logo == "" {
+			ack(util.Fail("logo 不能为空"))
+			return
+		}
+		if !strings.HasPrefix(logo, "/files/") && !strings.HasPrefix(logo, "http://") && !strings.HasPrefix(logo, "https://") {
+			ack(util.Fail("logo 地址不合法"))
+			return
+		}
+		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
+		if myRole == "" {
+			ack(util.Fail("不在公司中"))
+			return
+		}
+		if roleRank(myRole) < roleRank("admin") {
+			ack(util.Fail("仅管理员可修改公司 logo"))
+			return
+		}
+		if err := store.UpdateCompanyLogo(ctx, cid, logo); err != nil {
+			logger.Error(mod, "更新公司logo失败", "error", err.Error())
+			ack(util.Fail("操作失败"))
+			return
+		}
+		company, _ := store.GetCompanyByID(ctx, cid)
+		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"company": company})
+		ack(util.OK(map[string]any{"company": company}))
+	})
+
 	// ---- 删除部门（owner/admin；级联移除成员归属） ----
 	srv.On("company:deleteDepartment", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		a := getAuth(c)
@@ -1062,17 +1103,12 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		if eaVal, hasEA := d["expiresAt"]; hasEA && eaVal != nil {
 			eaStr := strings.TrimSpace(fmt.Sprintf("%v", eaVal))
 			if eaStr != "" && eaStr != "<nil>" {
-				t, err := time.Parse(time.RFC3339, eaStr)
-				if err != nil {
-					// 尝试宽松解析
-					t2, err2 := time.Parse("2006-01-02T15:04:05", eaStr)
-					if err2 != nil {
-						ack(util.Fail("过期时间不合法"))
-						return
-					}
-					t = t2
+				t, ok := util.ParseLocalTime(eaStr)
+				if !ok {
+					ack(util.Fail("过期时间不合法"))
+					return
 				}
-				s := t.UTC().Format(time.RFC3339)
+				s := util.LocalTimeFormat(t)
 				expiresAt = &s
 			}
 		}
@@ -1177,7 +1213,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		}
 		// 过期检查
 		if inv.ExpiresAt != nil {
-			if t, err := time.Parse(time.RFC3339, *inv.ExpiresAt); err == nil && t.Before(time.Now()) {
+			if t, ok := util.ParseLocalTime(*inv.ExpiresAt); ok && t.Before(time.Now()) {
 				_ = store.SetCompanyInvitationStatus(ctx, inv.ID, "expired")
 				ack(util.Fail("邀请已过期"))
 				return

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"mochi-oa-server-go/internal/config"
+	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/util"
@@ -129,11 +131,6 @@ type devSysReq struct {
 	Perf     any     `json:"perf"`
 }
 
-type devSignalReq struct {
-	DeviceID *string `json:"deviceId"`
-	Signal   any     `json:"signal"`
-}
-
 type devViewReq struct {
 	DeviceID *string `json:"deviceId"`
 }
@@ -197,10 +194,10 @@ func isSlave(c socketapi.Conn) bool {
 	return v
 }
 
-// adminOf 判断连接是否 SERVER_ADMIN（对标 isAdminSocket）。
-func adminOf(c socketapi.Conn, cfg *config.ServerConfig) bool {
+// adminOf 判断连接是否 SERVER_ADMIN（转发到 admin.IsServerAdmin 唯一判定，含 store）。
+func adminOf(c socketapi.Conn, cfg *config.ServerConfig, st db.Store) bool {
 	a := authed(c)
-	return a != nil && isServerAdmin(a, cfg)
+	return a != nil && admin.IsServerAdmin(a, cfg, st)
 }
 
 // upsertDev 按 deviceId 幂等登记：已有则更新（含 socket，重连后新 socket 覆盖）；
@@ -294,7 +291,7 @@ func shellOf(p *string) string {
 
 // RegisterDev 注册全部远程设备控制事件（对标 registerDevHandlers）。
 func RegisterDev(c Ctx) {
-	srv, cfg := c.Srv, c.Config
+	srv, st, cfg := c.Srv, c.Store, c.Config
 
 	// 防御性扫表：断线清理的兜底——连接已消失或长时间无心跳的条目剔除。
 	go func() {
@@ -435,50 +432,6 @@ func RegisterDev(c Ctx) {
 		ack(util.OK(map[string]any{"deviceId": deviceID, "status": status}))
 	})
 
-	// ---- 信令：按角色分发（被控端→控制端 / 控制端→被控端） ----
-	srv.On("dev:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		var d devSignalReq
-		_ = json.Unmarshal(raw, &d)
-		deviceID := strings.TrimSpace(strVal(d.DeviceID))
-		devMu.Lock()
-		dev := devices[deviceID]
-		devMu.Unlock()
-		if dev == nil {
-			ack(util.Fail("设备不存在"))
-			return
-		}
-		if isSlave(c) {
-			// 被控端：转发给当前控制端
-			devMu.Lock()
-			match := dev.conn == c
-			ctrlID := dev.controller
-			devMu.Unlock()
-			if !match {
-				ack(util.Fail("设备不匹配"))
-				return
-			}
-			if ctrlID != "" {
-				send(connByID(srv, ctrlID), "dev:signal", map[string]any{"deviceId": deviceID, "signal": d.Signal})
-			}
-			ack(util.OK(nil))
-			return
-		}
-		// 控制端：需 SERVER_ADMIN 且为当前控制器
-		if !adminOf(c, cfg) {
-			ack(util.Fail("需要 SERVER_ADMIN 权限"))
-			return
-		}
-		devMu.Lock()
-		ctrlID := dev.controller
-		devMu.Unlock()
-		if ctrlID != c.ID() {
-			ack(util.Fail("你不是该设备的控制器"))
-			return
-		}
-		send(dev.conn, "dev:signal", map[string]any{"deviceId": deviceID, "signal": d.Signal})
-		ack(util.OK(nil))
-	})
-
 	// ---- 断开：清在线表 + 解除控制端绑定 + 广播离线 ----
 	//
 	// 这是设备离线的主判定路径：被控端进程被强杀时，操作系统会关闭它的 fd 并发出 FIN，
@@ -519,7 +472,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -537,7 +490,31 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("该设备已离线"))
 			return
 		}
-		send(dev.conn, "dev:view", map[string]any{"deviceId": deviceID})
+		// SFU：控制端/被控端进同一 LiveKit room；被控端发布屏幕+声音，控制端订阅；键鼠走 LiveKit data。
+		sfuURL, sfuToken, sfuRoomName := "", "", ""
+		var slaveToken string
+		if liveKitEnabled(cfg.LiveKit) {
+			lk := cfg.LiveKit
+			sfuRoomName = liveKitRoomName(lk, "remote:"+deviceID)
+			ctrlTok, err1 := signLiveKitToken(lk, "ctrl-"+c.ID(), sfuRoomName)
+			slaveTok, err2 := signLiveKitToken(lk, "slave-"+deviceID, sfuRoomName)
+			if err1 != nil || err2 != nil {
+				logger.Warn(module, "dev:view 签发 LiveKit token 失败", "deviceId", deviceID,
+					"ctrlErr", err1, "slaveErr", err2)
+			} else {
+				sfuURL = lk.URL
+				sfuToken = ctrlTok
+				slaveToken = slaveTok
+			}
+		}
+		// 通知被控端连接同一 SFU room 并准备发布屏幕（携带被控端 token）。
+		viewMsg := map[string]any{"deviceId": deviceID}
+		if sfuRoomName != "" {
+			viewMsg["url"] = sfuURL
+			viewMsg["token"] = slaveToken
+			viewMsg["roomName"] = sfuRoomName
+		}
+		send(dev.conn, "dev:view", viewMsg)
 		logger.Info(module, "控制端查看设备", "deviceId", deviceID, "name", dev.name)
 		ack(util.OK(map[string]any{
 			"deviceId":   deviceID,
@@ -545,8 +522,12 @@ func RegisterDev(c Ctx) {
 			"username":   dev.username,
 			"os":         dev.osName,
 			"ip":         dev.ip,
-			"iceServers": cfg.IceServers, // 控制端信令用静态 ICE（照 TS dev.ts，不走 CF 动态）
+			"iceServers": cfg.IceServers, // 旧 P2P 信令用静态 ICE（新链路走 SFU，仅兼容旧客户端保留）
 			"sys":        dev.sys,
+			// SFU：控制端连接信息。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
 	})
 
@@ -556,7 +537,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -584,7 +565,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -606,6 +587,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("采集类型不合法"))
 			return
 		}
+		// SFU：dev:view 已向双方下发同一 room 的 token；被控端收到 dev:start 后在该 room publish 对应轨道（camera/screen/mic）。
 		send(dev.conn, "dev:start", map[string]any{
 			"deviceId":   deviceID,
 			"kind":       kind,
@@ -621,7 +603,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -645,7 +627,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -716,7 +698,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -743,7 +725,7 @@ func RegisterDev(c Ctx) {
 			ack(util.Fail("被控端连接不可控制设备"))
 			return
 		}
-		if !adminOf(c, cfg) {
+		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -822,7 +804,7 @@ func RegisterDev(c Ctx) {
 			send(connByID(srv, ctrlID), "dev:termClose", map[string]any{"deviceId": deviceID, "code": int64(code)})
 		} else {
 			// 控制端主动关闭终端 → 转发被控端结束会话
-			if !adminOf(c, cfg) {
+			if !adminOf(c, cfg, st) {
 				ack(util.Fail("需要 SERVER_ADMIN 权限"))
 				return
 			}

@@ -53,9 +53,9 @@ type chatSendReq struct {
 }
 
 type chatHistoryReq struct {
-	GroupID  *int64  `json:"groupId"`
-	BeforeTs *int64  `json:"beforeTs"`
-	Limit    *int64  `json:"limit"`
+	GroupID  *int64 `json:"groupId"`
+	BeforeTs *int64 `json:"beforeTs"`
+	Limit    *int64 `json:"limit"`
 }
 
 type dmSendReq struct {
@@ -76,8 +76,8 @@ type conversationListReq struct {
 }
 
 type conversationPinReq struct {
-	ConversationID *int64  `json:"conversationId"`
-	Pinned         *bool   `json:"pinned"`
+	ConversationID *int64 `json:"conversationId"`
+	Pinned         *bool  `json:"pinned"`
 }
 
 type conversationReadReq struct {
@@ -162,7 +162,8 @@ func decorateMsg(cfg *config.ServerConfig, msg *types.ChatMessage) {
 	if cfg.File.UseRelativeURL {
 		return
 	}
-	if msg.Kind != "text" && msg.Kind != "folder" && msg.Content != "" {
+	// proxy_card / expense_card / advance_card / attendance_card 等卡片类消息 content 为业务 JSON，原样透传，不做文件 URL 改写。
+	if msg.Kind != "text" && msg.Kind != "folder" && msg.Kind != "proxy_card" && msg.Kind != "expense_card" && msg.Kind != "advance_card" && msg.Kind != "attendance_card" && msg.Content != "" {
 		msg.Content = pubUrl(cfg, msg.Content)
 	}
 	if msg.Avatar != "" {
@@ -178,7 +179,7 @@ func isText(v string) bool {
 // isKind 校验消息种类。
 func isKind(v string) bool {
 	switch v {
-	case "text", "image", "file", "video", "audio", "folder":
+	case "text", "image", "file", "video", "audio", "folder", "proxy_card", "expense_card", "advance_card", "attendance_card":
 		return true
 	}
 	return false
@@ -280,6 +281,14 @@ func previewOf(kind string, content string) string {
 		return "[音频]"
 	case "folder":
 		return "[文件夹]"
+	case "proxy_card":
+		return "[上网申请]"
+	case "expense_card":
+		return "[报销申请]"
+	case "advance_card":
+		return "[备用金申请]"
+	case "attendance_card":
+		return "[考勤申请]"
 	default:
 		return "[文件]"
 	}
@@ -417,7 +426,7 @@ func Register(c Ctx) {
 			}
 			if mutedUntil != nil && *mutedUntil != "" {
 				// TS: me.mutedUntil.getTime() > Date.now() → 禁言未过则拒绝
-				if t, err := time.Parse(time.RFC3339Nano, *mutedUntil); err == nil && t.After(time.Now()) {
+				if t, ok := util.ParseLocalTime(*mutedUntil); ok && t.After(time.Now()) {
 					ack(util.Fail("您已被禁言"))
 					return
 				}
@@ -562,7 +571,7 @@ func Register(c Ctx) {
 			if kind0 == "text" && isAudioRef(raw) {
 				kind = "audio"
 			}
-			if toUserID <= 0 || toUserID == auth.ID {
+			if toUserID <= 0 {
 				ack(util.Fail("参数不合法"))
 				return
 			}
@@ -624,7 +633,10 @@ func Register(c Ctx) {
 
 			decorateMsg(cfg, msg)
 			_ = srv.EmitTo(util.UserRoom(auth.ID), "dm:message", msg)
-			_ = srv.EmitTo(util.UserRoom(toUserID), "dm:message", msg)
+			// 发给本人：两个房间相同，只推送一次，避免客户端收到重复消息。
+			if toUserID != auth.ID {
+				_ = srv.EmitTo(util.UserRoom(toUserID), "dm:message", msg)
+			}
 			ack(util.OK(map[string]any{"id": msg.ID}))
 		})
 
@@ -1011,4 +1023,3 @@ func Register(c Ctx) {
 		return nil
 	})
 }
-

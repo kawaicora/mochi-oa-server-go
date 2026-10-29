@@ -26,6 +26,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/ice"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
@@ -104,21 +105,6 @@ func authed(c socketapi.Conn) *types.Auth {
 		return &a
 	}
 	return nil
-}
-
-// isServerAdmin 判定 SERVER_ADMIN：用户名大小写不敏感匹配 config.ServerAdmins。
-// （TS mail.ts 另有运行时 serverAdminOverrides 集合，属 admin handler 移植范围，此处不实现。）
-func isServerAdmin(a *types.Auth, cfg *config.ServerConfig) bool {
-	if a == nil || cfg == nil {
-		return false
-	}
-	n := strings.ToLower(a.Username)
-	for _, u := range cfg.ServerAdmins {
-		if strings.ToLower(u) == n {
-			return true
-		}
-	}
-	return false
 }
 
 // connByID 按连接 id 找连接（对标 io.sockets.sockets.get(sid)）。找不到返回 nil。
@@ -441,11 +427,6 @@ type rtcRoomIDReq struct {
 	RoomID *string `json:"roomId"`
 }
 
-type rtcSignalReq struct {
-	RoomID *string `json:"roomId"`
-	Signal any     `json:"signal"`
-}
-
 type rtcChatReq struct {
 	RoomID  *string `json:"roomId"`
 	Content *string `json:"content"`
@@ -526,7 +507,13 @@ func RegisterRtc(c Ctx) {
 		// 预约会议：不立即开始，保留会议号，由首个加入者开始。
 		scheduled := d.StartAt != nil && d.StartAt != ""
 		if scheduled {
-			ack(util.OK(map[string]any{"meeting": sess.view(), "scheduled": true}))
+			res := map[string]any{"meeting": sess.view(), "scheduled": true}
+			if liveKitEnabled(cfg.LiveKit) {
+				// 预约不签发 token（token 有效期 2h 可能盖不住预约时长）；先下发 url，token 由 rtc:join 时签发。
+				res["url"] = cfg.LiveKit.URL
+				res["roomName"] = liveKitRoomName(cfg.LiveKit, meetingNo)
+			}
+			ack(util.OK(res))
 			return
 		}
 		// 直接开始：主持人加入房间
@@ -534,11 +521,16 @@ func RegisterRtc(c Ctx) {
 		sess.startedAt = &ts
 		addSocket(srv, st, c, meetingNo, u)
 		broadcastRoomsChanged(srv)
+		// SFU：主持人为首个加入者，一并下发连接信息。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, meetingNo, u.ID)
 		ack(util.OK(map[string]any{
 			"meeting":    sess.view(),
 			"scheduled":  false,
 			"peers":      filterPeers(srv, meetingNo, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
+			"url":        sfuURL,
+			"token":      sfuToken,
+			"roomName":   sfuRoomName,
 		}))
 	})
 
@@ -549,7 +541,7 @@ func RegisterRtc(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -659,7 +651,7 @@ func RegisterRtc(c Ctx) {
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdmin(u, cfg) {
+		if !admin.IsServerAdmin(u, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
@@ -709,62 +701,18 @@ func RegisterRtc(c Ctx) {
 		broadcastRoomsChanged(srv)
 		logger.Info(module, "rtc:join", "user", u.ID, "room", roomID, "type", r.typ,
 			"已有成员", len(peersInfo(srv, roomID))-1)
+		// SFU：启用 LiveKit 时为加入者签发 access token（客户端据此连 SFU，不再走 rtc:signal P2P 媒体信令）。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, roomID, u.ID)
 		ack(util.OK(map[string]any{
 			"room":       r.view(),
 			"peers":      filterPeers(srv, roomID, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
 			"started":    wasStarted,
+			// SFU 化：启用 LiveKit 时下发连接信息，客户端据此连 SFU（不再走 rtc:signal P2P 媒体信令）。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
-	})
-
-	// ---- 信令中继（SDP offer/answer + ICE candidate）→ 房间内其他参与者 ----
-	srv.On("rtc:signal", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		u := authed(c)
-		if u == nil {
-			ack(util.Fail("未登录"))
-			return
-		}
-		var d rtcSignalReq
-		_ = json.Unmarshal(raw, &d)
-		roomID := ""
-		if d.RoomID != nil {
-			roomID = *d.RoomID
-		}
-		if roomID == "" {
-			ack(util.Fail("缺少房间号"))
-			return
-		}
-		roomsMu.Lock()
-		_, ok := rooms[roomID]
-		roomsMu.Unlock()
-		if !ok {
-			ack(util.Fail("房间不存在"))
-			return
-		}
-		// 仅打信令类型与长度，不打完整 SDP（对标 TS 的 sdpLen 日志）。
-		sigType, sigDetail := "", ""
-		if m, _ := d.Signal.(map[string]any); m != nil {
-			sigType = strOf(m["type"])
-			if sigType == "ice" {
-				sigDetail = "candidateLen=" + strconv.Itoa(len(strOf(m["candidate"])))
-			} else if sigType == "offer" || sigType == "answer" {
-				sigDetail = "sdpLen=" + strconv.Itoa(len(strOf(m["sdp"])))
-			}
-		}
-		targetSize := 0
-		for _, other := range srv.Sockets() {
-			for _, rm := range other.Rooms() {
-				if rm == rtcRoom(roomID) {
-					targetSize++
-					break
-				}
-			}
-		}
-		logger.Info(module, "rtc:signal", "user", u.ID, "room", roomID, "type", sigType,
-			"detail", sigDetail, "转发成员数", targetSize-1)
-		_ = srv.EmitToSkip(rtcRoom(roomID), "rtc:signal",
-			map[string]any{"room": roomID, "from": peerOf(c), "signal": d.Signal}, c.ID())
-		ack(util.OK(nil))
 	})
 
 	// ---- 房间内嵌聊天（与信令分离，广播给房间内其他参与者） ----
@@ -924,14 +872,30 @@ func RegisterRtc(c Ctx) {
 		}
 		roomsMu.Unlock()
 		addSocket(srv, st, c, rtcID, u)
+		// SFU：为双方签发同一 room 的 token；控制端（发起方）从 ack 拿，被控端从 rtc:dmIncoming 拿。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, rtcID, u.ID)
+		dmIncoming := map[string]any{"room": rtcID, "kind": kind, "from": peerOf(c), "ts": nowMs()}
+		if sfuRoomName != "" {
+			slaveTok, err := signLiveKitToken(cfg.LiveKit, strconv.FormatInt(targetID, 10), sfuRoomName)
+			if err == nil {
+				dmIncoming["url"] = sfuURL
+				dmIncoming["token"] = slaveTok
+				dmIncoming["roomName"] = sfuRoomName
+			} else {
+				logger.Warn(module, "rtc:dmCall 签被控端 LiveKit token 失败", "user", targetID, "room", rtcID, "error", err)
+			}
+		}
 		// 通知对方所有在线端
-		_ = srv.EmitTo(util.UserRoom(targetID), "rtc:dmIncoming",
-			map[string]any{"room": rtcID, "kind": kind, "from": peerOf(c), "ts": nowMs()})
+		_ = srv.EmitTo(util.UserRoom(targetID), "rtc:dmIncoming", dmIncoming)
 		broadcastRoomsChanged(srv)
 		ack(util.OK(map[string]any{
 			"room":       sess.view(),
 			"kind":       kind,
 			"iceServers": ice.GetIceServers(cfg),
+			// SFU：发起方进入房间，一并下发连接信息。
+			"url":      sfuURL,
+			"token":    sfuToken,
+			"roomName": sfuRoomName,
 		}))
 	})
 
@@ -961,10 +925,15 @@ func RegisterRtc(c Ctx) {
 			_ = srv.EmitToSkip(rtcRoom(roomID), "rtc:peerJoined",
 				map[string]any{"room": roomID, "peer": peerOf(c)}, c.ID())
 			broadcastRoomsChanged(srv)
+			// SFU：被叫方接受并进入房间，一并下发连接信息。
+			sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, roomID, u.ID)
 			ack(util.OK(map[string]any{
 				"room":       sess.view(),
 				"peers":      filterPeers(srv, roomID, c.ID()),
 				"iceServers": ice.GetIceServers(cfg),
+				"url":        sfuURL,
+				"token":      sfuToken,
+				"roomName":   sfuRoomName,
 			}))
 			return
 		}
@@ -1031,10 +1000,15 @@ func RegisterRtc(c Ctx) {
 		_ = srv.EmitToSkip(util.GroupRoom(gid), "rtc:groupCall",
 			map[string]any{"room": rtcID, "kind": kind, "groupId": gid, "from": peerOf(c), "ts": nowMs()}, c.ID())
 		broadcastRoomsChanged(srv)
+		// SFU：群通话发起方进入房间，一并下发连接信息。
+		sfuURL, sfuToken, sfuRoomName := joinSfuFields(cfg, rtcID, u.ID)
 		ack(util.OK(map[string]any{
 			"room":       sess.view(),
 			"peers":      filterPeers(srv, rtcID, c.ID()),
 			"iceServers": ice.GetIceServers(cfg),
+			"url":        sfuURL,
+			"token":      sfuToken,
+			"roomName":   sfuRoomName,
 		}))
 	})
 

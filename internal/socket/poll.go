@@ -42,7 +42,7 @@ func (s *Server) handlePolling(w http.ResponseWriter, r *http.Request, sid strin
 
 // handshakeGET 新连接握手：回 OPEN 报文。
 func (s *Server) handshakeGET(w http.ResponseWriter, r *http.Request) {
-	conn := newConn(newSID(), s, r.Header, r.URL.Query())
+	conn := newConn(newSID(), s, r.Header, r.URL.Query(), r.Host)
 	s.addSession(conn)
 
 	upgrades := []string{}

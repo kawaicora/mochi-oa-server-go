@@ -17,10 +17,9 @@
   RV.deviceId = ''
   RV.cams = []
   RV.mics = []
-  RV._pc = null
+  RV._sfu = null // dev:view 返回的 LiveKit 连接信息
+  RV._room = null // LiveKit Room
   RV._kind = ''
-  RV._ice = null
-  RV._pendCands = []
   RV._bound = false
   RV.cpuHist = []
   RV.memHist = []
@@ -203,7 +202,7 @@
     $('rv-stop').disabled = false
     const ack = await A.emit('dev:view', { deviceId: RV.deviceId }).catch(() => ({ ok: false }))
     if (!ack.ok) { $('rv-state').textContent = '查看失败：' + (ack.error || ''); return }
-    RV._ice = ack.iceServers || [{ urls: 'stun:stun.l.google.com:19302' }]
+    RV._sfu = ack.sfu || null // 服务端为控制端/被控端签发同一 LiveKit room 的 token
     $('rv-state').textContent = ack.name + '（' + ack.ip + '）在线'
     // 初始系统信息快照（dev:view 随 ack 返回的缓存）；无缓存时先用 ack 基础信息填充，
     // 避免残留服务器本机的旧值，等待 dev:sys 实时上报补齐
@@ -228,69 +227,56 @@
     A.emit('dev:enumerate', { deviceId: RV.deviceId })
   }
 
-  RV._buildPC = function () {
-    try {
-      RV._pc = new RTCPeerConnection({ iceServers: RV._ice })
-    } catch (e) { log('pc 创建失败 ' + e); return null }
-    RV._pc.onicecandidate = (ev) => {
-      if (ev.candidate) A.sock.emit('dev:signal', { deviceId: RV.deviceId, signal: { type: 'candidate', sdp: undefined, candidate: ev.candidate.toJSON() } })
+  // ─── SFU 连接：控制端连 LiveKit room，订阅被控端发布的屏幕/摄像头/麦克风轨道 ───
+  RV._connectSfu = async function () {
+    if (RV._room) return RV._room
+    if (!RV._sfu || !RV._sfu.url || !RV._sfu.token) {
+      $('rv-state').textContent = '查看失败：未获得 SFU 连接信息（服务端未启用 LiveKit）'
+      return null
     }
-    RV._pc.onconnectionstatechange = () => log('connectionState=' + (RV._pc && RV._pc.connectionState))
-    RV._pc.ontrack = (ev) => {
+    const LK = window.LivekitClient
+    const room = new LK.Room()
+    RV._room = room
+    room.on(LK.RoomEvent.TrackSubscribed, (track, _pub, _participant) => {
+      const mt = track.mediaStreamTrack
+      if (!mt) return
       const vid = $('rv-video')
-      vid.srcObject = ev.streams[0] || new MediaStream([ev.track])
-      // 摄像头静音；麦克风放音
-      vid.muted = RV._kind !== 'mic'
+      // 被控端每条轨道单独发布；切 kind 时被控端 publish/replace，这里取最新轨道重建流
+      vid.srcObject = new MediaStream([mt])
+      vid.muted = RV._kind !== 'mic' // 摄像头静音；麦克风放音
       void vid.play().catch(() => {})
       $('rv-empty').style.display = 'none'
       $('rv-state').textContent = '正在查看' + (RV._kind === 'screen' ? '屏幕' : RV._kind === 'mic' ? '麦克风' : '摄像头')
-    }
-    return RV._pc
-  }
-
-  RV._handleSignal = async function (signal) {
-    if (!RV._pc) { log('收到信令但 pc 未建立：' + (signal.type || 'candidate')); return }
+    })
+    room.on(LK.RoomEvent.ParticipantDisconnected, () => { RV._closeRoom() })
     try {
-      if (signal.type === 'offer' && signal.sdp) {
-        await RV._pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp })
-        // 补投缓冲的 ICE
-        for (const c of RV._pendCands) { try { await RV._pc.addIceCandidate(c) } catch {} }
-        RV._pendCands = []
-        const ans = await RV._pc.createAnswer()
-        await RV._pc.setLocalDescription(ans)
-        A.sock.emit('dev:signal', { deviceId: RV.deviceId, signal: { type: 'answer', sdp: ans.sdp, candidate: undefined } })
-        log('已回复 answer')
-      } else if (signal.candidate) {
-        const cand = signal.candidate
-        if (RV._pc.remoteDescription && RV._pc.remoteDescription.type) {
-          try { await RV._pc.addIceCandidate(cand) } catch (e) { log('addIceCandidate 失败 ' + e) }
-        } else {
-          RV._pendCands.push(cand)
-        }
-      } else if (signal.type === 'error') {
-        $('rv-state').textContent = '远程错误：' + String(signal.candidate || '')
-      }
+      await room.connect(RV._sfu.url, RV._sfu.token)
     } catch (e) {
-      log('信令处理失败 ' + e)
+      try { room.disconnect() } catch {}
+      RV._room = null
+      $('rv-state').textContent = 'SFU 连接失败：' + (e instanceof Error ? e.message : String(e))
+      return null
+    }
+    return room
+  }
+  RV._closeRoom = function () {
+    if (RV._room) {
+      try { RV._room.disconnect() } catch {}
+      RV._room = null
     }
   }
 
   RV.start = async function (kind, device) {
     if (!RV.deviceId) { A.toast('请先在上方设备列表里选择一台在线电脑'); return }
-    RV._pendCands = []
     RV._kind = kind
     $('rv-empty').style.display = ''
     $('rv-state').textContent = '正在请求' + (kind === 'screen' ? '屏幕' : kind === 'mic' ? '麦克风' : '摄像头') + '…'
     const ack = await A.emit('dev:start', { deviceId: RV.deviceId, kind, device }).catch(() => ({ ok: false }))
     if (!ack.ok) { $('rv-state').textContent = '启动失败：' + (ack.error || ''); return }
-    // 首次建立连接；已连接则复用（被控端 replaceTrack 把新轨推送到同一连接，无需重建）
-    if (!RV._pc) {
-      if (!RV._buildPC()) return
-      // 被控端将作为 sender 发 offer；我们等待其 offer
-      setTimeout(() => { if (!RV._pc || !RV._pc.remoteDescription) log('等待被控端 offer…') }, 2000)
-    } else {
-      log('复用连接，切换 ' + kind + '（被控端 replaceTrack）')
-    }
+    // 连接 LiveKit room（首次建立；已连接则复用，被控端 replaceTrack/publish 新轨后 TrackSubscribed 更新画面）
+    const room = await RV._connectSfu()
+    if (!room) return
+    log('SFU 已连接，等待被控端发布 ' + kind + ' 轨道…')
   }
 
   RV.cam = function () { RV._menu(RV.cams, 'camera', '选择摄像头') }
@@ -361,16 +347,6 @@
   }
   RV.hideMenu = function () { $('rv-menu').style.display = 'none' }
 
-  RV._teardownPC = function () {
-    if (RV._pc) {
-      RV._pc.onicecandidate = null
-      RV._pc.onconnectionstatechange = null
-      RV._pc.ontrack = null
-      try { RV._pc.close() } catch {}
-      RV._pc = null
-    }
-  }
-
   // 独立前置窗口（画中画 PiP）：把远程视频弹到系统级置顶小窗，独立于页面
   RV.pip = function () {
     const vid = $('rv-video')
@@ -398,8 +374,7 @@
   RV.stop = function () {
     if (document.pictureInPictureElement) { try { void document.exitPictureInPicture() } catch {} }
     if (RV.deviceId) A.emit('dev:stop', { deviceId: RV.deviceId }).catch(() => {})
-    RV._teardownPC()
-    RV._pendCands = []
+    RV._closeRoom()
     RV._kind = ''
     const vid = $('rv-video')
     if (vid) vid.srcObject = null

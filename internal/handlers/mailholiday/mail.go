@@ -2,20 +2,20 @@
 // 1:1 复刻自源仓库 server/src/handlers/mail.ts、holiday.ts、admin-users.ts。
 //
 // 本分三个文件：
-//   - mail.go：主邮件配置读取/设置（mail:getMainConfig / mail:setMainConfig）+
-//     SERVER_ADMIN 判定与运行时覆盖注册表 serverAdminOverrides；
+//   - mail.go：主邮件配置读取/设置（mail:getMainConfig / mail:setMainConfig，库为权威）+ 首启播种；
+//     SERVER_ADMIN 判定收敛到唯一入口 admin.IsServerAdminByUsername（见 admin/perm.go）；
 //   - holiday.go：假期 CRUD（holiday:list/add/remove/addMany/removeMany/reset，变更广播 holiday:updated）
 //   - 导出 SeedHolidays 播种内置法定假期；
 //   - admin.go：/view/admin 后台用户/公司/设备管理（admin:listUsers/updateUser/setServerAdmin/listCompanies/listDevices）。
 //
 // 行为对齐要点：
 //   - 事件名、字段名（camelCase）、ack 信封（util.OK/Fail 扁平）与 TS 逐字一致；
-//   - SERVER_ADMIN 基于用户名（大小写不敏感）判定，名单来自 config.ServerAdmins
-//     （空时已由 config 回退播种管理员 ADMIN_USER），叠加运行时覆盖 serverAdminOverrides；
+//   - SERVER_ADMIN 基于用户名（大小写不敏感）判定，判据 = config.ServerAdmins ∪ server_admins 表，
+//     表为权威、重启保留（admin:setServerAdmin 写表，见 admin.go）；
 //   - 错误文案与 TS 逐字一致；存储层意外错误必打日志、绝不吞掉；邮件密码绝不进日志、绝不外泄。
 //
 // 注册方式：RegisterMail / RegisterHoliday / RegisterAdminUsers；store 必须是基础层 db 单例，
-// 本包不新建连接；唯一进程内注册表为 serverAdminOverrides（并发安全）。
+// 本包不新建连接。
 package mailholiday
 
 import (
@@ -26,10 +26,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/types"
@@ -39,46 +39,11 @@ import (
 // 日志模块前缀（硬性约束：统一 internal/logger）。
 const mod = "handlers/mailholiday"
 
-// ==================== SERVER_ADMIN 判定与运行时覆盖（对标 mail.ts） ====================
+// ==================== SERVER_ADMIN 判定 ====================
 
-// serverAdminOverrides 运行时 SERVER_ADMIN 覆盖集合（对标 mail.ts: export const serverAdminOverrides = new Set<string>()）。
-// 由 /view/admin 用户管理面板动态增删（admin:setServerAdmin）；重启后回退 config.ServerAdmins。
-// key 一律为小写用户名（与 TS 的 set/add(target.username.toLowerCase()) 对齐）。
-// 包级并发安全注册表：admin 面板多连接并发操作时用 RWMutex 保护。
-var serverAdminOverrides = struct {
-	sync.RWMutex
-	names map[string]struct{}
-}{names: map[string]struct{}{}}
-
-// isServerAdminUsername 判定用户名是否 SERVER_ADMIN（对标 mail.ts: isServerAdmin）。
-// 判定规则：config.ServerAdmins 名单（大小写不敏感）命中，或运行时覆盖集合命中，二者其一即可；
-// 与公司/群角色无关。config.ServerAdmins 为空的回退语义已由 config 层处理（回退 ADMIN_USER）。
-func isServerAdminUsername(username string, cfg *config.ServerConfig) bool {
-	n := strings.ToLower(username)
-	for _, u := range cfg.ServerAdmins {
-		if strings.ToLower(u) == n {
-			return true
-		}
-	}
-	serverAdminOverrides.RLock()
-	_, ok := serverAdminOverrides.names[n]
-	serverAdminOverrides.RUnlock()
-	return ok
-}
-
-// addOverride 把用户名加入运行时管理员覆盖集合（小写存储）。
-func addOverride(username string) {
-	serverAdminOverrides.Lock()
-	serverAdminOverrides.names[strings.ToLower(username)] = struct{}{}
-	serverAdminOverrides.Unlock()
-}
-
-// deleteOverride 从运行时覆盖集合移除用户名；config 里的保留不动（对标 TS 注释：取消管理员仅移除运行时覆盖）。
-func deleteOverride(username string) {
-	serverAdminOverrides.Lock()
-	delete(serverAdminOverrides.names, strings.ToLower(username))
-	serverAdminOverrides.Unlock()
-}
+// SERVER_ADMIN 判定收敛到唯一入口 admin.IsServerAdminByUsername（需求 8/9/10）：
+// 判据 = 环境种子 config.ServerAdmins ∪ server_admins 表，表为权威、重启保留。
+// 本包不再维护运行时内存集合（setServerAdmin 写表，见 admin.go）。
 
 // ==================== 内部小工具 ====================
 
@@ -178,32 +143,32 @@ func RegisterMail(srv socketapi.Server, store db.Store, cfg *config.ServerConfig
 			ack(util.Fail("未登录"))
 			return
 		}
-		isAdmin := isServerAdminUsername(auth.Username, cfg)
+		isAdmin := admin.IsServerAdminByUsername(auth.Username, cfg, store)
 
-		// 对标 mailer.ts: getMainMail()：环境级主邮件（.env/Docker）第一优先级；否则读 DB 默认配置。
+		// 库为权威（需求确认）：先读 DB 默认主配置；读不到才回退 .env 种子（source=env）。
+		// 一旦首启播种 .env 进 mail_configs，之后以库为准、后台可改、重启保留。
 		var source string
 		var view any
-		if cfg.Mail != nil && cfg.Mail.Enabled {
+		mc, err := store.GetDefaultMailConfig(context.Background(), db.MailConfigScope{})
+		if err != nil {
+			logger.Error(mod, "mail:getMainConfig 查询主邮件配置失败", "error", err.Error())
+			ack(util.Fail(err.Error()))
+			return
+		}
+		if mc != nil {
+			source = "db"
+			view = viewMailConfig(mc)
+		} else if cfg.Mail != nil && cfg.Mail.Enabled {
 			source = "env"
 			view = envConfigToView(cfg.Mail)
 		} else {
-			source = "db"
-			mc, err := store.GetDefaultMailConfig(context.Background(), db.MailConfigScope{})
-			if err != nil {
-				logger.Error(mod, "mail:getMainConfig 查询主邮件配置失败", "error", err.Error())
-				ack(util.Fail(err.Error()))
-				return
-			}
-			if mc != nil {
-				view = viewMailConfig(mc)
-			} else {
-				view = nil
-			}
+			source = "none"
+			view = nil
 		}
 		ack(util.OK(map[string]any{
 			"serverAdmin": isAdmin,
-			"source":      source, // 'env' | 'db'
-			// 仅环境未配置（source=db）时才允许客户端设置
+			"source":      source, // 'db' | 'env' | 'none'
+			// 仅库配置（source=db）时才允许客户端设置；环境种子不可在后台改。
 			"canEdit": isAdmin && source == "db",
 			"config":  view,
 		}))
@@ -216,16 +181,12 @@ func RegisterMail(srv socketapi.Server, store db.Store, cfg *config.ServerConfig
 			ack(util.Fail("未登录"))
 			return
 		}
-		if !isServerAdminUsername(auth.Username, cfg) {
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
 		}
 
-		// 环境已配置主邮件：客户端设置不生效（第一优先级是环境配置）。
-		if cfg.Mail != nil && cfg.Mail.Enabled {
-			ack(util.Fail("主邮件已由服务器环境配置，请在 .env / Docker 中修改"))
-			return
-		}
+		// 库为权威：SERVER_ADMIN 直接写入 mail_configs 主配置（覆盖 .env 种子，重启保留）。
 
 		d := parseData(raw)
 		email := strings.TrimSpace(str(d["email"]))

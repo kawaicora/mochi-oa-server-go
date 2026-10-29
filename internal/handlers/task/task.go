@@ -37,12 +37,12 @@ var (
 
 // transitions 任务状态合法流转表（与 TS TRANSITIONS 逐字一致）。
 var transitions = map[string][]string{
-	"created":          {"in_progress", "completed", "pending_extension"},
-	"in_progress":      {"completed", "pending_extension"},
-	"completed":        {},
+	"created":           {"in_progress", "completed", "pending_extension"},
+	"in_progress":       {"completed", "pending_extension"},
+	"completed":         {},
 	"pending_extension": {"extended", "in_progress"},
-	"extended":         {"in_progress", "completed"},
-	"overdue":          {"in_progress", "completed", "pending_extension"},
+	"extended":          {"in_progress", "completed"},
+	"overdue":           {"in_progress", "completed", "pending_extension"},
 }
 
 // attachmentKinds 留言附件合法 kind 白名单（TS: ['image','video','audio','folder','file']）。
@@ -931,7 +931,7 @@ func asIso(v any) string {
 	}
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC().Format("2006-01-02T15:04:05.000Z")
+			return util.LocalTimeFormat(t)
 		}
 	}
 	return ""

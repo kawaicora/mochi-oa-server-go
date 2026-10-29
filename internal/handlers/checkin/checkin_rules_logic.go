@@ -1,0 +1,412 @@
+package checkin
+
+// 本文件实现打卡排班规则的默认值、校验与当天状态判断逻辑（纯函数，便于单测）。
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"mochi-oa-server-go/internal/types"
+	"mochi-oa-server-go/internal/util"
+)
+
+var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+var hhmmRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
+
+// localTZ 业务本地时区：打卡日期/上下班时间一律按本地口径，避免 UTC 与规则时间错位。
+// 可用 TIMEZONE 环境变量覆盖，缺省 Asia/Shanghai。
+var localTZ = mustLocalTZ()
+
+func mustLocalTZ() *time.Location {
+	name := os.Getenv("TIMEZONE")
+	if name == "" {
+		name = "Asia/Shanghai"
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		loc = time.Local
+	}
+	return loc
+}
+
+func hhmm(s string) bool { return hhmmRe.MatchString(s) }
+
+func toString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return fmt.Sprintf("%.0f", t)
+	}
+	return ""
+}
+
+// validRuleMode 排班模式白名单。
+func validRuleMode(m string) bool {
+	switch m {
+	case "standard", "sixday", "nosleep", "bigsmall":
+		return true
+	}
+	return false
+}
+
+// dayRule 解析后的单日规则。
+type dayRule struct {
+	dow   int
+	start string // HH:MM
+	end   string // HH:MM
+	rest  bool
+}
+
+// defaultStandardRules 默认双休规则（懒播种用）：周一~五 09:30-18:30，周六日休息。
+func defaultStandardRules() map[string]any {
+	week := []map[string]any{
+		{"dow": 0, "start": "", "end": "", "rest": true}, // 周日
+		{"dow": 1, "start": "09:30", "end": "18:30", "rest": false},
+		{"dow": 2, "start": "09:30", "end": "18:30", "rest": false},
+		{"dow": 3, "start": "09:30", "end": "18:30", "rest": false},
+		{"dow": 4, "start": "09:30", "end": "18:30", "rest": false},
+		{"dow": 5, "start": "09:30", "end": "18:30", "rest": false},
+		{"dow": 6, "start": "", "end": "", "rest": true}, // 周六
+	}
+	b, _ := json.Marshal(week)
+	return map[string]any{
+		"mode": "standard", "grace_late_min": 0, "grace_early_min": 0,
+		"week_rules": string(b), "alt_rule": nil,
+	}
+}
+
+// rulesRowToMap 把行转成契约 JSON（snake 字段名）。
+func rulesRowToMap(r *types.CompanyCheckinRulesRow) map[string]any {
+	if r == nil {
+		d := defaultStandardRules()
+		return d
+	}
+	return map[string]any{
+		"mode": r.Mode, "grace_late_min": r.GraceLateMin, "grace_early_min": r.GraceEarlyMin,
+		"week_rules": r.WeekRules, "alt_rule": r.AltRule,
+	}
+}
+
+// loadRules 从行加载（无行则默认），返回解析后的周规则与加班/下班判定所需排班。
+// 下班窗口不依赖固定截止时刻，统一为「下班 +8 小时」（inOffWindow）。
+func loadRules(r *types.CompanyCheckinRulesRow) (mode string, graceLate, graceEarly int64, week []dayRule, alt *dayRule) {
+	if r == nil {
+		d := defaultStandardRules()
+		mode = "standard"
+		week = parseWeekRules(d["week_rules"].(string))
+		return
+	}
+	mode = r.Mode
+	graceLate = r.GraceLateMin
+	graceEarly = r.GraceEarlyMin
+	week = parseWeekRules(r.WeekRules)
+	if r.AltRule != nil && *r.AltRule != "" && *r.AltRule != "null" {
+		var a struct {
+			Dow      int    `json:"dow"`
+			AltStart string `json:"altStart"`
+			AltEnd   string `json:"altEnd"`
+		}
+		if json.Unmarshal([]byte(*r.AltRule), &a) == nil {
+			alt = &dayRule{dow: a.Dow, start: a.AltStart, end: a.AltEnd}
+		}
+	}
+	return
+}
+
+func parseWeekRules(s string) []dayRule {
+	var raw []struct {
+		Dow   int    `json:"dow"`
+		Start string `json:"start"`
+		End   string `json:"end"`
+		Rest  bool   `json:"rest"`
+	}
+	_ = json.Unmarshal([]byte(s), &raw)
+	out := make([]dayRule, 0, len(raw))
+	for _, w := range raw {
+		out = append(out, dayRule{dow: w.Dow, start: w.Start, end: w.End, rest: w.Rest})
+	}
+	return out
+}
+
+// state 位掩码（与 checkins.state 一致）：1=上班卡 2=下班卡 4=缺卡。
+const (
+	stateWork = 1
+	stateOff  = 2
+	stateMiss = 4
+)
+
+// punchInOut 从当月记录中取当天首末打卡（复用 list 同源数据）。
+// in/out 为当天"完整时间"字符串（YYYY-MM-DD HH:MM:SS）；无记录则为空串。
+// 按 state 位区分上下班：in=所有上班卡(state&1)最早、out=所有下班卡(state&2)最晚；
+// 这样补上班卡+实时上班卡都算上班，不会把末次上班卡误判成下班(早退)。
+// 老数据(state=0)回退首末；仅一条(上班卡)时 out 为空(下班未打卡)。
+func punchInOut(items []types.CheckinItem, dateStr string) (in, out string) {
+	var workMin, offMax time.Time
+	var fallback []time.Time
+	hasState := false
+	for _, it := range items {
+		if it.CheckDate != dateStr {
+			continue
+		}
+		t, ok := util.ParseLocalTime(it.CheckTime)
+		if !ok {
+			continue
+		}
+		t = t.In(localTZ)
+		if it.State != 0 {
+			hasState = true
+		}
+		switch {
+		case it.State&stateWork != 0:
+			if workMin.IsZero() || t.Before(workMin) {
+				workMin = t
+			}
+		case it.State&stateOff != 0:
+			if offMax.IsZero() || t.After(offMax) {
+				offMax = t
+			}
+		default:
+			fallback = append(fallback, t) // 老数据无 state
+		}
+	}
+	if hasState {
+		// 有 state：按位取上下班；无标记记录按序兜底空缺槽。
+		if workMin.IsZero() && len(fallback) > 0 {
+			workMin = fallback[0]
+		}
+		if offMax.IsZero() && len(fallback) > 0 {
+			offMax = fallback[len(fallback)-1]
+		}
+		if !workMin.IsZero() {
+			in = workMin.Format("2006-01-02 15:04:05")
+		}
+		if !offMax.IsZero() {
+			out = offMax.Format("2006-01-02 15:04:05")
+		}
+		return in, out
+	}
+	// 全为老数据(无 state)：回退首末。
+	if len(fallback) == 0 {
+		return "", ""
+	}
+	if len(fallback) == 1 {
+		return fallback[0].Format("2006-01-02 15:04:05"), ""
+	}
+	return fallback[0].Format("2006-01-02 15:04:05"), fallback[len(fallback)-1].Format("2006-01-02 15:04:05")
+}
+
+// computeDayStatus 内聚的当天状态判断。
+//   - bigsmall 模式：交替日（alt.dow）按 ISO 周序号奇偶选择——week%2==0 用 alt 时间，否则用主规则。
+//   - 休息日 → rest；无打卡 → none；
+//   - punchIn > start+graceLate → late；punchOut < end-graceEarly → early；两者都超 → late_early；否则 normal。
+func computeDayStatus(dateStr, mode string, graceLate, graceEarly int64, week []dayRule, alt *dayRule, in, out string) map[string]any {
+	resp := map[string]any{
+		"date": dateStr, "mode": mode, "punchIn": emptyNil(in), "punchOut": emptyNil(out),
+	}
+	t, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		resp["status"] = "none"
+		resp["rest"] = false
+		return resp
+	}
+	dow := int(t.Weekday()) // Sunday=0
+	// 找当天主规则。
+	dr := dayRule{dow: dow, rest: true}
+	for _, w := range week {
+		if w.dow == dow {
+			dr = w
+			break
+		}
+	}
+	// bigsmall 交替日按 ISO 周奇偶切换时间。
+	workStart, workEnd := dr.start, dr.end
+	if mode == "bigsmall" && alt != nil && !alt.rest && dow == alt.dow {
+		_, weekISO := t.ISOWeek()
+		if weekISO%2 == 0 {
+			workStart, workEnd = alt.start, alt.end
+		}
+	}
+	resp["rest"] = dr.rest
+	resp["stdStart"] = workStart
+	resp["stdEnd"] = workEnd
+
+	if dr.rest {
+		resp["status"] = "rest"
+		return resp
+	}
+	if in == "" && out == "" {
+		resp["status"] = "none"
+		return resp
+	}
+
+	late, early := false, false
+	// 迟到：punchIn 晚于 start+豁免（in 必须落在当天，跨天凌晨归前一天的卡不判迟到）。
+	if in != "" && sameDayAs(in, dateStr) {
+		if minutesSinceMidnight(in) > minutesSinceMidnight(workStart)+int(graceLate) {
+			late = true
+		}
+	}
+	// 早退：punchOut 早于 end-豁免（out 必须落在当天；跨天凌晨的下班卡已跨过当天时段，绝不早退）。
+	if out != "" && workEnd != "" && sameDayAs(out, dateStr) {
+		if minutesSinceMidnight(out) < minutesSinceMidnight(workEnd)-int(graceEarly) {
+			early = true
+		}
+	}
+	switch {
+	case late && early:
+		resp["status"] = "late_early"
+	case late:
+		resp["status"] = "late"
+	case early:
+		resp["status"] = "early"
+	default:
+		resp["status"] = "normal"
+	}
+	return resp
+}
+
+// computeDayStatusFromTimes 用打卡时固化的排班快照判定当天状态（改规则不影响历史）。
+// workStart/workEnd 为该打卡日排班上下班时间；快照为空（老数据）返回 none，由调用方回退当前规则。
+// 迟到：punchIn 晚于 workStart+豁免；早退：punchOut 早于 workEnd-豁免。
+func computeDayStatusFromTimes(dateStr string, graceLate, graceEarly int64, workStart, workEnd, in, out string) map[string]any {
+	resp := map[string]any{
+		"date": dateStr, "mode": "snapshot", "punchIn": emptyNil(in), "punchOut": emptyNil(out),
+		"rest": false,
+	}
+	if workStart == "" || workEnd == "" {
+		resp["status"] = "none"
+		return resp
+	}
+	if in == "" && out == "" {
+		resp["status"] = "none"
+		return resp
+	}
+	late, early := false, false
+	// 迟到：punchIn 晚于 workStart+豁免（in 必须落在当天）。
+	if in != "" && sameDayAs(in, dateStr) {
+		if minutesSinceMidnight(in) > minutesSinceMidnight(workStart)+int(graceLate) {
+			late = true
+		}
+	}
+	// 早退：punchOut 早于 workEnd-豁免（out 必须落在当天；跨天凌晨的下班卡绝不早退）。
+	if out != "" && sameDayAs(out, dateStr) {
+		if minutesSinceMidnight(out) < minutesSinceMidnight(workEnd)-int(graceEarly) {
+			early = true
+		}
+	}
+	switch {
+	case late && early:
+		resp["status"] = "late_early"
+	case late:
+		resp["status"] = "late"
+	case early:
+		resp["status"] = "early"
+	default:
+		resp["status"] = "normal"
+	}
+	return resp
+}
+
+func emptyNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// minutesSinceMidnight 时间字符串 → 当天分钟数。兼容 "HH:MM" 与完整 "YYYY-MM-DD HH:MM:SS"（取空格后时段）。
+func minutesSinceMidnight(s string) int {
+	var h, m int
+	seg := s
+	if idx := strings.LastIndex(s, " "); idx >= 0 {
+		seg = s[idx+1:]
+	}
+	fmt.Sscanf(seg, "%d:%d", &h, &m)
+	return h*60 + m
+}
+
+// sameDayAs 判断完整打卡时间是否落在 dateStr 当天。
+// 跨天凌晨打卡（如 10-30 02:00）经「前天下班+8h 窗口」归到前一天 check_date，但 check_time 仍是次日时刻；
+// 若用 minutesSinceMidnight 只取 HH:MM 判早退，02:00 < 18:00 会被误判成早退。因此早退/迟到判定先做同天保护：
+// 下班卡不在当天 → 已跨过当天上班时段，绝不早退；"HH:MM" 无日期部分时视作当天。
+func sameDayAs(s, dateStr string) bool {
+	if len(s) < 10 {
+		return true
+	}
+	return s[:10] == dateStr
+}
+
+// labelForItem 计算单条打卡记录的类型标签（展示用，迟到/早退复用现有判定口径）。
+// workStart/workEnd 为该日排班上下班时间（"HH:MM" 或完整 datetime，minutesSinceMidnight 均兼容）。
+// state 位掩码：1=上班 2=下班 8=补卡 16=请假 32=调休（与 checkins.state 一致）。
+// state==0 的老数据返回空串，由调用方按当天首末位置兜底（首→上班、末→下班）。
+func labelForItem(it types.CheckinItem, workStart, workEnd string) string {
+	st := it.State
+	if st&16 != 0 {
+		return "请假"
+	}
+	if st&32 != 0 {
+		return "调休"
+	}
+	if st&8 != 0 { // 补卡：补上班(9) / 补下班(10)
+		if st&1 != 0 {
+			return "补上班"
+		}
+		if st&2 != 0 {
+			return "补下班"
+		}
+	}
+	checkMin := minutesSinceMidnight(it.CheckTime)
+	switch {
+	case st&1 != 0: // 上班卡
+		if workStart != "" && checkMin > minutesSinceMidnight(workStart)+int(it.GraceLateMin) {
+			return "迟到"
+		}
+		return "上班"
+	case st&2 != 0: // 下班卡
+		// 跨天凌晨的下班卡（CheckTime 已是次日，如 10-30 02:00 归到 check_date=10-29）已跨过当天时段，标"下班"而非"早退"。
+		if workEnd != "" && sameDayAs(it.CheckTime, it.CheckDate) && checkMin < minutesSinceMidnight(workEnd)-int(it.GraceEarlyMin) {
+			return "早退"
+		}
+		return "下班"
+	}
+	return ""
+}
+
+// RuleSnapshotForDay 计算某日期在公司当前规则下的排班快照（供补卡等写入 checkins 用）。
+// 返回该日 workStart/workEnd/graceLate/graceEarly；休息日或无规则 → workStart/WorkEnd 为空。
+func RuleSnapshotForDay(rule *types.CompanyCheckinRulesRow, dateStr string) (workStart, workEnd string, graceLate, graceEarly int64) {
+	if rule == nil {
+		return "", "", 0, 0
+	}
+	mode, gl, ge, week, alt := loadRules(rule)
+	dt, err := time.ParseInLocation("2006-01-02", dateStr, localTZ)
+	if err != nil {
+		return "", "", 0, 0
+	}
+	rest, ws, we := dayScheduleFor(dt, mode, week, alt)
+	if rest {
+		return "", "", gl, ge
+	}
+	return ws, we, gl, ge
+}
+
+// inOffWindow 判断 now 是否处于"下班后 8 小时内"（含跨天到次日）的下班区间。
+// 下班区间 = 当天下班 ~ 下班 +8 小时，三班倒也适用（如 12:00-23:00 班 → 23:00 起 8h 内即次日 7:00 前）。
+func inOffWindow(now time.Time, workEnd string) bool {
+	weMin := minutesSinceMidnight(workEnd)
+	if weMin < 0 {
+		return false
+	}
+	nm := now.Hour()*60 + now.Minute()
+	off := nm - weMin
+	if off < 0 {
+		off += 24 * 60
+	}
+	return off >= 0 && off <= 8*60
+}

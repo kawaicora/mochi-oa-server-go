@@ -265,14 +265,37 @@ func (s *MySqlStore) GetMemberRole(ctx context.Context, companyID, userID int64)
 
 // GetMembers 列公司成员（联用户，joined_at 升序）。
 func (s *MySqlStore) GetMembers(ctx context.Context, companyID int64) ([]types.Member, error) {
-	out := []types.Member{}
+	// joined_at 先扫成 time.Time，再统一走 toIso 输出 +08:00（禁止裸 time.Time/UTC 透传带 Z）。
+	type memberRow struct {
+		CompanyID int64     `gorm:"column:company_id"`
+		UserID    int64     `gorm:"column:user_id"`
+		Role      string    `gorm:"column:role"`
+		JoinedAt  time.Time `gorm:"column:joined_at"`
+		Username  string    `gorm:"column:username"`
+		Nick      string    `gorm:"column:nick"`
+	}
+	rows := []memberRow{}
 	if err := s.gorm.WithContext(ctx).Table("company_members m").
 		Select("m.company_id, m.user_id, m.role, m.joined_at, u.username, u.nick").
 		Joins("LEFT JOIN users u ON u.id = m.user_id").
 		Where("m.company_id = ?", companyID).
 		Order("m.joined_at ASC").
-		Scan(&out).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	out := []types.Member{}
+	for _, r := range rows {
+		un := r.Username
+		nk := r.Nick
+		m := types.Member{
+			CompanyID: r.CompanyID,
+			UserID:    r.UserID,
+			Role:      r.Role,
+			JoinedAt:  toIso(r.JoinedAt),
+			Username:  &un,
+			Nick:      &nk,
+		}
+		out = append(out, m)
 	}
 	return out, nil
 }
@@ -283,6 +306,7 @@ type membershipRow struct {
 	Name      string    `gorm:"column:name"`
 	Code      string    `gorm:"column:code"`
 	OwnerID   int64     `gorm:"column:owner_id"`
+	Avatar    string    `gorm:"column:avatar"`
 	CreatedAt time.Time `gorm:"column:created_at"`
 	Role      string    `gorm:"column:role"`
 }
@@ -291,7 +315,7 @@ type membershipRow struct {
 func (s *MySqlStore) GetUserCompanies(ctx context.Context, userID int64) ([]types.Membership, error) {
 	rows := []membershipRow{}
 	if err := s.gorm.WithContext(ctx).Table("company_members m").
-		Select("c.id, c.name, c.code, c.owner_id, c.created_at, m.role").
+		Select("c.id, c.name, c.code, c.owner_id, c.avatar, c.created_at, m.role").
 		Joins("JOIN companies c ON c.id = m.company_id").
 		Where("m.user_id = ?", userID).
 		Order("m.company_id ASC").
@@ -300,7 +324,7 @@ func (s *MySqlStore) GetUserCompanies(ctx context.Context, userID int64) ([]type
 	}
 	out := []types.Membership{}
 	for _, r := range rows {
-		cr := types.CompanyRow{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, CreatedAt: r.CreatedAt}
+		cr := types.CompanyRow{ID: r.ID, Name: r.Name, Code: r.Code, OwnerID: r.OwnerID, Avatar: r.Avatar, CreatedAt: r.CreatedAt}
 		out = append(out, types.Membership{Company: rowToCompany(&cr), Role: r.Role})
 	}
 	return out, nil
@@ -318,6 +342,13 @@ func (s *MySqlStore) RenameCompany(ctx context.Context, companyID int64, name st
 		return &NotFoundError{Msg: "company not found"}
 	}
 	return nil
+}
+
+// UpdateCompanyLogo 更新公司 logo（avatar URL）。
+func (s *MySqlStore) UpdateCompanyLogo(ctx context.Context, companyID int64, avatar string) error {
+	return s.gorm.WithContext(ctx).Table("companies").
+		Where("id = ?", companyID).
+		Updates(map[string]any{"avatar": avatar}).Error
 }
 
 // SetCompanyOwner 转让公司（更新 owner_id）。
@@ -454,14 +485,33 @@ func (s *MySqlStore) RemoveDepartmentMember(ctx context.Context, departmentID, u
 
 // GetDepartmentMembers 列部门成员（联用户）。
 func (s *MySqlStore) GetDepartmentMembers(ctx context.Context, departmentID int64) ([]types.DepartmentMember, error) {
-	out := []types.DepartmentMember{}
+	type deptRow struct {
+		DepartmentID int64     `gorm:"column:department_id"`
+		UserID       int64     `gorm:"column:user_id"`
+		JoinedAt     time.Time `gorm:"column:joined_at"`
+		Username     string    `gorm:"column:username"`
+		Nick         string    `gorm:"column:nick"`
+	}
+	rows := []deptRow{}
 	if err := s.gorm.WithContext(ctx).Table("department_members m").
 		Select("m.department_id, m.user_id, m.joined_at, u.username, u.nick").
 		Joins("LEFT JOIN users u ON u.id = m.user_id").
 		Where("m.department_id = ?", departmentID).
 		Order("m.joined_at ASC").
-		Scan(&out).Error; err != nil {
+		Scan(&rows).Error; err != nil {
 		return nil, err
+	}
+	out := []types.DepartmentMember{}
+	for _, r := range rows {
+		un := r.Username
+		nk := r.Nick
+		out = append(out, types.DepartmentMember{
+			DepartmentID: r.DepartmentID,
+			UserID:       r.UserID,
+			JoinedAt:     toIso(r.JoinedAt),
+			Username:     &un,
+			Nick:         &nk,
+		})
 	}
 	return out, nil
 }
@@ -717,7 +767,7 @@ type groupMemberListRow struct {
 	GroupID    int64      `gorm:"column:group_id"`
 	UserID     int64      `gorm:"column:user_id"`
 	Role       string     `gorm:"column:role"`
-	JoinedAt   string     `gorm:"column:joined_at"`
+	JoinedAt   time.Time  `gorm:"column:joined_at"`
 	MutedUntil *time.Time `gorm:"column:muted_until"`
 	Username   *string    `gorm:"column:username"`
 	Nick       *string    `gorm:"column:nick"`
@@ -737,7 +787,7 @@ func (s *MySqlStore) GetGroupMembers(ctx context.Context, groupID int64) ([]type
 	out := []types.GroupMember{}
 	for _, r := range rows {
 		m := types.GroupMember{
-			GroupID: r.GroupID, UserID: r.UserID, Role: r.Role, JoinedAt: r.JoinedAt,
+			GroupID: r.GroupID, UserID: r.UserID, Role: r.Role, JoinedAt: toIso(r.JoinedAt),
 			Username: r.Username, Nick: r.Nick,
 		}
 		if r.MutedUntil != nil && !r.MutedUntil.IsZero() {

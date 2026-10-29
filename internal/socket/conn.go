@@ -46,6 +46,7 @@ type Conn struct {
 	// 握手期 HTTP 上下文（供集成中间件取 headers/query/auth raw）。
 	handshakeAuth json.RawMessage // CONNECT 报文 body（auth）
 	headers       http.Header
+	handshakeHost string // 握手请求的 Host（req.Host，含端口），用于推断服务器对外地址
 	query         urlQuery
 
 	// 出站：等待被长轮询 GET 取走的报文队列。
@@ -70,7 +71,7 @@ type urlQuery = map[string][]string
 var _ socketapi.Conn = (*Conn)(nil)
 
 // newConn 创建一条连接（尚未握手完成）。
-func newConn(id string, srv *Server, h http.Header, q urlQuery) *Conn {
+func newConn(id string, srv *Server, h http.Header, q urlQuery, host string) *Conn {
 	return &Conn{
 		id:          id,
 		srv:         srv,
@@ -79,6 +80,7 @@ func newConn(id string, srv *Server, h http.Header, q urlQuery) *Conn {
 		rooms:       map[string]struct{}{},
 		transport:   "polling",
 		headers:     h,
+		handshakeHost: host,
 		query:       q,
 		pollNotify:  make(chan struct{}, 1),
 		pingInterval: defaultPingInterval,
@@ -418,6 +420,9 @@ func (c *Conn) HandshakeAuth() json.RawMessage { return c.handshakeAuth }
 
 // Headers 返回握手请求的 HTTP 头。
 func (c *Conn) Headers() http.Header { return c.headers }
+
+// Host 返回握手请求的 Host（req.Host，可能含端口）。
+func (c *Conn) Host() string { return c.handshakeHost }
 
 // Query 返回握手请求的 query 参数。
 //

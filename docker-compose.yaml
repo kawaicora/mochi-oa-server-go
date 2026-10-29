@@ -34,11 +34,11 @@ services:
       PORT: ${PORT:-80}
       STORAGE: mysql
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
-      MYSQL_HOST: mochi-oa-server-go-mysql-c54f8e4
-      MYSQL_PORT: "3306"
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_PORT: ${MYSQL_PORT}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
-      MYSQL_USER: ${MYSQL_USER:-root}
+      MYSQL_USER: ${MYSQL_USER:-}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
       FILE_DIR: /app/data
       TZ: Asia/Shanghai
@@ -66,35 +66,53 @@ services:
       CLOUDFLARE_TURN_TOKEN: ${CLOUDFLARE_TURN_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       ICE_SERVERS_TOKEN_SECOND: ${ICE_SERVERS_TOKEN_SECOND:-86400}
+
+      # 出网代理（HTTP+SOCKS5）监听与对外地址
+      PROXY_ENABLED: ${PROXY_ENABLED:-false}
+      PROXY_HTTP_PORT: ${PROXY_HTTP_PORT:-8080}
+      PROXY_SOCKS5_PORT: ${PROXY_SOCKS5_PORT:-1080}
+      PROXY_HOST: ${PROXY_HOST:-}
+
+      # LiveKit SFU（视频会议/远程查看统一走 SFU；密钥只存服务端，绝不下发给客户端）
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_ROOM_PREFIX: ${LIVEKIT_ROOM_PREFIX:-oa}
     ports:
       - "${SERVER_PORT:-3000}:${PORT:-80}"
+      # 出网代理映射到宿主机（默认 HTTP 8080 / SOCKS5 1080）
+      - "${PROXY_HTTP_PORT:-8080}:${PROXY_HTTP_PORT:-8080}"
+      - "${PROXY_SOCKS5_PORT:-1080}:${PROXY_SOCKS5_PORT:-1080}"
     volumes:
       - ./dist:/app
       - ./data/oa-data:/app/data
-    depends_on:
-      mochi-oa-server-go-mysql-c54f8e4:
-        condition: service_healthy
+    # depends_on:
+    #   mochi-oa-server-go-mysql-c54f8e4:
+    #     condition: service_healthy
     restart: unless-stopped
 
-  mochi-oa-server-go-mysql-c54f8e4:
-    image: mysql:8.0
-    container_name: mochi-oa-server-go-mysql-c54f8e4
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
-      # 故意不设 MYSQL_DATABASE：库不存在，交给服务端自己创建（全新服务器场景）。
-      # 若想让镜像先建空库，放开下一行；服务端 AutoMigrate 仍会补表。
-      # MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
-    ports:
-      - "${MYSQL_HOST_PORT:-3306}:3306"
-    volumes:
-      - ./data/mysql-data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-    restart: unless-stopped
+
+
+  #直接使用服务器数据库
+  # mochi-oa-server-go-mysql-c54f8e4:
+  #   image: mysql:8.0
+  #   container_name: mochi-oa-server-go-mysql-c54f8e4
+  #   command:
+  #     - --character-set-server=utf8mb4
+  #     - --collation-server=utf8mb4_unicode_ci
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
+  #     # 故意不设 MYSQL_DATABASE：库不存在，交给服务端自己创建（全新服务器场景）。
+  #     # 若想让镜像先建空库，放开下一行；服务端 AutoMigrate 仍会补表。
+  #     # MYSQL_DATABASE: ${MYSQL_DATABASE:-mochioa}
+  #   # ports:
+  #   #   - "${MYSQL_HOST_PORT:-3306}:3306"
+  #   volumes:
+  #     - ./data/mysql-data:/var/lib/mysql
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 30
+  #     start_period: 30s
+  #   restart: unless-stopped

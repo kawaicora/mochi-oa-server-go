@@ -13,6 +13,18 @@
     U.list = ack.users || []
     $('users-count').textContent = U.list.length
     U.render()
+    U.loadAdmins() // 并行拉取持久化 SERVER_ADMIN 名单（admin:listServerAdmins）
+  }
+
+  // 展示 server_admins 表持久化管理员名单（环境种子 .env 成员不在表内，不在此列）。
+  U.loadAdmins = async function () {
+    const box = $('sa-list')
+    if (!box) return
+    const ack = await A.emit('admin:listServerAdmins', {}).catch(() => ({ ok: false }))
+    if (!ack.ok) { box.innerHTML = '<span class="sa-none">' + A.esc(ack.error || '获取失败') + '</span>'; return }
+    const list = ack.admins || []
+    if (!list.length) { box.innerHTML = '<span class="sa-none">暂无持久化管理员（.env 环境种子不在此列）</span>'; return }
+    box.innerHTML = list.map((a) => '<span class="sa-badge sa-on" title="创建人#' + a.createdBy + ' · ' + A.esc(a.createdAt || '') + '">' + A.esc(a.username) + '</span>').join(' ')
   }
 
   U.render = function () {
