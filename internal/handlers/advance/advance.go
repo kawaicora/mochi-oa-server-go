@@ -103,7 +103,11 @@ func requireMember(c socketapi.Conn, d map[string]any, st db.Store, ack socketap
 		ack(util.Fail("未登录"))
 		return nil, 0, "", false
 	}
-	cid, ok := toInt64(d["companyId"])
+	v, ok := toFloat64(d["companyId"])
+	if !ok {
+		return nil, 0, "", false
+	}
+	cid, ok := toInt64(v)
 	if !ok || cid <= 0 {
 		ack(util.Fail("参数不合法"))
 		return nil, 0, "", false
@@ -181,6 +185,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		category := strField(d, "category")
@@ -265,8 +270,8 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 			_ = srv.EmitTo(util.UserRoom(uid), "advance:request:notification", map[string]any{
 				"kind": "company", "type": "advance_request_created", "companyId": cid,
 				"requestId": req.ID, "title": "备用金申请",
-				"body":      "您有一条待审批的备用金申请",
-				"byUserId":  a.ID, "byNick": req.Nick,
+				"body":     "您有一条待审批的备用金申请",
+				"byUserId": a.ID, "byNick": req.Nick,
 			})
 		}
 		ack(util.OK(map[string]any{"request": req}))
@@ -277,6 +282,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		category := strField(d, "category")
@@ -318,6 +324,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		rows, err := store.ListReceivedAdvance(ctx, cid, a.ID)
@@ -343,6 +350,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		rows, err := store.ListReceivedAdvanceCC(ctx, cid, a.ID)
@@ -380,9 +388,16 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
-		id, ok := toInt64(d["requestId"])
+		v, ok := toFloat64(d["id"])
+		if !ok {
+
+			ack(util.Fail("id 转换错误"))
+			return
+		}
+		id, ok := toInt64(v)
 		if !ok || id <= 0 {
 			ack(util.Fail("参数不合法"))
 			return
@@ -421,9 +436,16 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, role, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
-		id, ok := toInt64(d["id"])
+
+		v, ok := toFloat64(d["id"])
+		if !ok {
+			ack(util.Fail("id 解析失败"))
+			return
+		}
+		id, ok := toInt64(v)
 		if !ok || id <= 0 {
 			ack(util.Fail("参数不合法"))
 			return
@@ -456,8 +478,8 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "advance:request:notification", map[string]any{
 			"kind": "company", "type": "advance_request_approved", "companyId": cid,
 			"requestId": updated.ID, "title": "备用金申请",
-			"body":      "您的备用金申请已通过",
-			"byUserId":  a.ID, "byNick": a.Nick,
+			"body":     "您的备用金申请已通过",
+			"byUserId": a.ID, "byNick": a.Nick,
 		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
@@ -467,6 +489,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, role, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["id"])
@@ -507,8 +530,8 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		_ = srv.EmitTo(util.UserRoom(req.UserID), "advance:request:notification", map[string]any{
 			"kind": "company", "type": "advance_request_rejected", "companyId": cid,
 			"requestId": updated.ID, "title": "备用金申请",
-			"body":      "您的备用金申请已被拒绝",
-			"byUserId":  a.ID, "byNick": a.Nick, "note":      note,
+			"body":     "您的备用金申请已被拒绝",
+			"byUserId": a.ID, "byNick": a.Nick, "note": note,
 		})
 		ack(util.OK(map[string]any{"request": updated}))
 	})
@@ -518,6 +541,7 @@ func RegisterAdvanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["requestId"])

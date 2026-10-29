@@ -131,7 +131,12 @@ func requireMember(c socketapi.Conn, d map[string]any, st db.Store, ack socketap
 		ack(util.Fail("未登录"))
 		return nil, 0, "", false
 	}
-	cid, ok := toInt64(d["companyId"])
+	v, ok := toFloat64(d["companyId"])
+	if !ok {
+
+		return nil, 0, "", false
+	}
+	cid, ok := toInt64(v)
 	if !ok || cid <= 0 {
 		ack(util.Fail("参数不合法"))
 		return nil, 0, "", false
@@ -214,6 +219,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		typ := strField(d, "type")
@@ -341,6 +347,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		typ := strField(d, "type")
@@ -385,6 +392,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		rows, err := store.ListReceivedAttendance(ctx, cid, a.ID)
@@ -410,6 +418,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		rows, err := store.ListReceivedCC(ctx, cid, a.ID)
@@ -441,6 +450,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["requestId"])
@@ -483,6 +493,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, _, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["requestId"])
@@ -521,6 +532,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, role, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["id"])
@@ -650,6 +662,7 @@ func RegisterAttendanceHandlers(srv socketapi.Server, store db.Store) {
 		d := parseData(data)
 		a, cid, role, ok := requireMember(c, d, store, ack)
 		if !ok {
+			ack(util.Fail("requireMember 失败"))
 			return
 		}
 		id, ok := toInt64(d["id"])
