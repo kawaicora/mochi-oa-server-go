@@ -16,13 +16,13 @@ import (
 
 // Server 是 socket.io v4 服务端（默认命名空间 "/"）。完整实现 socketapi.Server。
 type Server struct {
-	cfg   *config.ServerConfig
-	path  string // config.Path，默认 /socket.io
-	cors  corsPolicy
+	cfg      *config.ServerConfig
+	path     string // config.Path，默认 /socket.io
+	cors     corsPolicy
 	upgrader websocketUpgrader
 
-	mu         sync.RWMutex
-	handlers   map[string]socketapi.HandlerFunc
+	mu          sync.RWMutex
+	handlers    map[string]socketapi.HandlerFunc
 	binHandlers map[string]socketapi.BinaryHandlerFunc
 	middlewares []socketapi.MiddlewareFunc
 	// 多监听者列表（对标 socket.io EventEmitter：io.on('connection') 允许多个 handler 共存，
@@ -32,7 +32,7 @@ type Server struct {
 	onDisconnects []func(socketapi.Conn, string)
 
 	sessions map[string]*Conn            // sid -> conn
-	rooms    map[string]map[string]*Conn  // room -> sid -> conn
+	rooms    map[string]map[string]*Conn // room -> sid -> conn
 }
 
 // 编译期断言：*Server 实现 socketapi.Server。
@@ -49,13 +49,13 @@ func New(cfg *config.ServerConfig) (*Server, error) {
 		path = "/" + path
 	}
 	s := &Server{
-		cfg:      cfg,
-		path:     path,
-		cors:     newCORSPolicy(cfg.CORSStar, cfg.CORSList),
-		handlers: map[string]socketapi.HandlerFunc{},
+		cfg:         cfg,
+		path:        path,
+		cors:        newCORSPolicy(cfg.CORSStar, cfg.CORSList),
+		handlers:    map[string]socketapi.HandlerFunc{},
 		binHandlers: map[string]socketapi.BinaryHandlerFunc{},
-		sessions: map[string]*Conn{},
-		rooms:    map[string]map[string]*Conn{},
+		sessions:    map[string]*Conn{},
+		rooms:       map[string]map[string]*Conn{},
 	}
 	s.upgrader = newUpgrader(cfg, path)
 	logger.Info("socket", "server created", "path", path,

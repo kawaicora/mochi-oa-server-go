@@ -431,10 +431,10 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			noPunchList = s.NoPunchUserIds
 		}
 		ack(util.OK(map[string]any{"settings": map[string]any{
-			"macEnabled":      s != nil && s.MacEnabled,
-			"macWhitelist":    macList,
-			"ipWhitelist":     ipList,
-			"noPunchUserIds":  noPunchList,
+			"macEnabled":     s != nil && s.MacEnabled,
+			"macWhitelist":   macList,
+			"ipWhitelist":    ipList,
+			"noPunchUserIds": noPunchList,
 		}}))
 	})
 
@@ -577,11 +577,21 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		// alt_rule 校验（可选）。
 		var altJSON *string
 		if altRaw, has := d["alt_rule"]; has && altRaw != nil {
-			am, ok := altRaw.(map[string]any)
-			if !ok {
-				ack(util.Fail("交替规则格式不合法"))
+
+			var am map[string]any
+			if str, ok := altRaw.(string); ok {
+				err := json.Unmarshal([]byte(str), &am)
+				if err != nil {
+					ack(util.Fail("解析失败"))
+					return
+				}
+			} else if am, ok := altRaw.(map[string]any); ok {
+				_ = am
+			} else {
+				ack(util.Fail("交替规则不是string 也不是 map[string]any"))
 				return
 			}
+
 			dow, ok := toInt64(am["dow"])
 			if !ok || dow < 0 || dow > 6 {
 				ack(util.Fail("交替规则 dow 不合法"))
