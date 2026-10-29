@@ -559,8 +559,11 @@ type CompanyCheckinSettingsRow struct {
 	MacEnabled   bool      `db:"mac_enabled" gorm:"type:tinyint;not null;default:0"` // 只允许指定 MAC 打卡开关
 	MacWhitelist string    `db:"mac_whitelist" gorm:"type:json"`
 	IpWhitelist  string    `db:"ip_whitelist" gorm:"type:json"`
-	CreatedAt    time.Time `db:"created_at" gorm:"type:datetime;not null"`
-	UpdatedAt    time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+	// NoPunchUserIds 免打卡用户 id 列表（JSON 字符串数组，元素为 user id 的十进制字符串）。
+	// 被列入的用户 checkin:list 逐日状态按正常打卡算，不判迟到/早退/缺卡异常。
+	NoPunchUserIds string    `db:"no_punch_user_ids" gorm:"type:json"`
+	CreatedAt      time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt      time.Time `db:"updated_at" gorm:"type:datetime;not null"`
 }
 
 // CompanyCheckinRulesRow 对应 company_checkin_rules 表（公司打卡排班规则，一公司一行）。
@@ -1418,13 +1421,14 @@ type CheckinDay struct {
 
 // CheckinSettings 公司打卡白名单配置。
 type CheckinSettings struct {
-	ID           int64    `json:"id"`
-	CompanyID    int64    `json:"companyId"`
-	MacEnabled   bool     `json:"macEnabled"` // 只允许指定 MAC 打卡开关
-	MacWhitelist []string `json:"macWhitelist"`
-	IpWhitelist  []string `json:"ipWhitelist"`
-	CreatedAt    string   `json:"createdAt"`
-	UpdatedAt    string   `json:"updatedAt"`
+	ID             int64    `json:"id"`
+	CompanyID      int64    `json:"companyId"`
+	MacEnabled     bool     `json:"macEnabled"` // 只允许指定 MAC 打卡开关
+	MacWhitelist   []string `json:"macWhitelist"`
+	IpWhitelist    []string `json:"ipWhitelist"`
+	NoPunchUserIds []string `json:"noPunchUserIds"` // 免打卡用户 id 列表
+	CreatedAt      string   `json:"createdAt"`
+	UpdatedAt      string   `json:"updatedAt"`
 }
 
 // ProxyAccountItem 代理账号列表/视图项；绝不含 secret（secret 仅批准/创建时一次性返回）。

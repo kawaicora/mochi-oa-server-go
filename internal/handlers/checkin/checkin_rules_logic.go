@@ -245,14 +245,14 @@ func computeDayStatus(dateStr, mode string, graceLate, graceEarly int64, week []
 	}
 
 	late, early := false, false
-	// 迟到：punchIn 晚于 start+豁免。
-	if in != "" {
+	// 迟到：punchIn 晚于 start+豁免（in 必须落在当天，跨天凌晨归前一天的卡不判迟到）。
+	if in != "" && sameDayAs(in, dateStr) {
 		if minutesSinceMidnight(in) > minutesSinceMidnight(workStart)+int(graceLate) {
 			late = true
 		}
 	}
-	// 早退：punchOut 早于 end-豁免。
-	if out != "" && workEnd != "" {
+	// 早退：punchOut 早于 end-豁免（out 必须落在当天；跨天凌晨的下班卡已跨过当天时段，绝不早退）。
+	if out != "" && workEnd != "" && sameDayAs(out, dateStr) {
 		if minutesSinceMidnight(out) < minutesSinceMidnight(workEnd)-int(graceEarly) {
 			early = true
 		}
@@ -287,12 +287,14 @@ func computeDayStatusFromTimes(dateStr string, graceLate, graceEarly int64, work
 		return resp
 	}
 	late, early := false, false
-	if in != "" {
+	// 迟到：punchIn 晚于 workStart+豁免（in 必须落在当天）。
+	if in != "" && sameDayAs(in, dateStr) {
 		if minutesSinceMidnight(in) > minutesSinceMidnight(workStart)+int(graceLate) {
 			late = true
 		}
 	}
-	if out != "" {
+	// 早退：punchOut 早于 workEnd-豁免（out 必须落在当天；跨天凌晨的下班卡绝不早退）。
+	if out != "" && sameDayAs(out, dateStr) {
 		if minutesSinceMidnight(out) < minutesSinceMidnight(workEnd)-int(graceEarly) {
 			early = true
 		}
@@ -328,6 +330,17 @@ func minutesSinceMidnight(s string) int {
 	return h*60 + m
 }
 
+// sameDayAs 判断完整打卡时间是否落在 dateStr 当天。
+// 跨天凌晨打卡（如 10-30 02:00）经「前天下班+8h 窗口」归到前一天 check_date，但 check_time 仍是次日时刻；
+// 若用 minutesSinceMidnight 只取 HH:MM 判早退，02:00 < 18:00 会被误判成早退。因此早退/迟到判定先做同天保护：
+// 下班卡不在当天 → 已跨过当天上班时段，绝不早退；"HH:MM" 无日期部分时视作当天。
+func sameDayAs(s, dateStr string) bool {
+	if len(s) < 10 {
+		return true
+	}
+	return s[:10] == dateStr
+}
+
 // labelForItem 计算单条打卡记录的类型标签（展示用，迟到/早退复用现有判定口径）。
 // workStart/workEnd 为该日排班上下班时间（"HH:MM" 或完整 datetime，minutesSinceMidnight 均兼容）。
 // state 位掩码：1=上班 2=下班 8=补卡 16=请假 32=调休（与 checkins.state 一致）。
@@ -356,7 +369,8 @@ func labelForItem(it types.CheckinItem, workStart, workEnd string) string {
 		}
 		return "上班"
 	case st&2 != 0: // 下班卡
-		if workEnd != "" && checkMin < minutesSinceMidnight(workEnd)-int(it.GraceEarlyMin) {
+		// 跨天凌晨的下班卡（CheckTime 已是次日，如 10-30 02:00 归到 check_date=10-29）已跨过当天时段，标"下班"而非"早退"。
+		if workEnd != "" && sameDayAs(it.CheckTime, it.CheckDate) && checkMin < minutesSinceMidnight(workEnd)-int(it.GraceEarlyMin) {
 			return "早退"
 		}
 		return "下班"

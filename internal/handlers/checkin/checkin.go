@@ -263,6 +263,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		// 同时固化打卡时的排班规则快照（workStart/workEnd/grace），历史判定用快照，改规则不影响历史。
 		checkDate := time.Now().In(localTZ).Format("2006-01-02")
 		workStart, workEnd, graceLate, graceEarly := "", "", int64(0), int64(0)
+		offWindow := false // 命中「前天下班+8h 窗口」→ 归前一天且按下班卡
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
 			mode, gl, ge, week, alt := loadRules(r)
 			now := time.Now().In(localTZ)
@@ -271,6 +272,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			if yRest, yWs, yWe := dayScheduleFor(y, mode, week, alt); !yRest && inOffWindow(now, yWe) {
 				checkDate = y.Format("2006-01-02")
 				workStart, workEnd, graceLate, graceEarly = yWs, yWe, gl, ge
+				offWindow = true
 			} else if dt, err := time.ParseInLocation("2006-01-02", checkDate, localTZ); err == nil {
 				// 归属当天 → 当天排班快照。
 				if rest, ws, we := dayScheduleFor(dt, mode, week, alt); !rest {
@@ -282,7 +284,7 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		if mac != "" {
 			macPtr = &mac
 		}
-		item, kind, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr, workStart, workEnd, graceLate, graceEarly)
+		item, kind, err := store.CreateCheckin(ctx, cid, a.ID, checkDate, ip, macPtr, workStart, workEnd, graceLate, graceEarly, offWindow)
 		if err != nil {
 			logger.Error(mod, "checkin:create 写入失败", "companyId", cid, "userId", a.ID, "error", err.Error())
 			ack(util.Fail("打卡失败"))
@@ -314,6 +316,17 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		mode, graceLate, graceEarly, week, alt := "standard", int64(0), int64(0), []dayRule{}, (*dayRule)(nil)
 		if r, e := store.GetCheckinRules(ctx, cid); e == nil {
 			mode, graceLate, graceEarly, week, alt = loadRules(r)
+		}
+		// 免打卡人员：当前用户在公司免打卡名单中 → 所有工作日按正常打卡算（不判迟到/早退/缺卡异常）。
+		isNoPunch := false
+		if cs, e := store.GetCheckinSettings(ctx, cid); e == nil && cs != nil {
+			uidStr := strconv.FormatInt(a.ID, 10)
+			for _, v := range cs.NoPunchUserIds {
+				if v == uidStr {
+					isNoPunch = true
+					break
+				}
+			}
 		}
 		// 当月通过加班申请（approved & type=overtime），按开始日期分组。
 		// 加班展示必须以「申请通过」为准，绝不因打卡时间晚（如 21:00 后）推断加班。
@@ -371,6 +384,10 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			} else if st, ok := computeDayStatus(date, mode, graceLate, graceEarly, week, alt, in, out)["status"].(string); ok {
 				day.Status = st
 			}
+			// 免打卡人员：非休息日一律按 normal 处理（不产生 late/early/late_early/none 异常）。
+			if isNoPunch && day.Status != "rest" {
+				day.Status = "normal"
+			}
 			// 逐条类型标签（迟到/早退复用判定口径，无快照则不判迟到早退）。
 			for i := range recs {
 				recs[i].Label = labelForItem(recs[i], ws, we)
@@ -407,14 +424,17 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		// 未配置返回空白名单结构。
 		macList := []string{}
 		ipList := []string{}
+		noPunchList := []string{}
 		if s != nil {
 			macList = s.MacWhitelist
 			ipList = s.IpWhitelist
+			noPunchList = s.NoPunchUserIds
 		}
 		ack(util.OK(map[string]any{"settings": map[string]any{
-			"macEnabled":   s != nil && s.MacEnabled,
-			"macWhitelist": macList,
-			"ipWhitelist":  ipList,
+			"macEnabled":      s != nil && s.MacEnabled,
+			"macWhitelist":    macList,
+			"ipWhitelist":     ipList,
+			"noPunchUserIds":  noPunchList,
 		}}))
 	})
 
@@ -435,6 +455,11 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 			ack(util.Fail("IP 白名单格式不合法"))
 			return
 		}
+		noPunchRaw, ok := strList(d, "noPunchUserIds")
+		if !ok {
+			ack(util.Fail("免打卡人员格式不合法"))
+			return
+		}
 		macEnabled := false
 		if v, ok := d["macEnabled"]; ok {
 			switch t := v.(type) {
@@ -448,7 +473,8 @@ func RegisterCheckinHandlers(srv socketapi.Server, store db.Store) {
 		}
 		macList := dedupMac(macRaw)
 		ipList := dedupPlain(ipRaw)
-		s, err := store.SaveCheckinSettings(ctx, cid, macEnabled, macList, ipList)
+		noPunchList := dedupPlain(noPunchRaw)
+		s, err := store.SaveCheckinSettings(ctx, cid, macEnabled, macList, ipList, noPunchList)
 		if err != nil {
 			logger.Error(mod, "checkin:settings:save 失败", "companyId", cid, "error", err.Error())
 			ack(util.Fail("保存失败"))

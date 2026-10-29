@@ -5,9 +5,10 @@
 // 建表/补列，所有显式 DDL 迁移统一由本工具执行。
 //
 // 用法（编译产物：cmd/dbmigrate，见 build.ps1 / build.sh 输出 dist/mochi-oa-dbmigrate_*）：
-//   ./mochi-oa-dbmigrate_linux_amd64            # 读 .env 连接 MySQL，按清单幂等执行迁移
-//   ./mochi-oa-dbmigrate_linux_amd64 --list     # 仅列出迁移清单，不执行
-//   ./mochi-oa-dbmigrate_linux_amd64 --dry-run  # 只打印将要执行的迁移名，不真正执行
+//
+//	./mochi-oa-dbmigrate_linux_amd64            # 读 .env 连接 MySQL，按清单幂等执行迁移
+//	./mochi-oa-dbmigrate_linux_amd64 --list     # 仅列出迁移清单，不执行
+//	./mochi-oa-dbmigrate_linux_amd64 --dry-run  # 只打印将要执行的迁移名，不真正执行
 //
 // 幂等原则：每步都先查 information_schema（列是否存在 / 当前类型）再决定是否执行；
 // 已满足目标结构的步骤直接跳过；单个步骤失败只记日志、不中断后续步骤，
@@ -100,6 +101,13 @@ func migrations() []migration {
 			name: "attendance_requests.cc_viewed_ids 补列",
 			run: func(ctx context.Context, db *sql.DB) error {
 				_, err := db.ExecContext(ctx, "ALTER TABLE attendance_requests ADD COLUMN cc_viewed_ids JSON NULL")
+				return err
+			},
+		},
+		{
+			name: "company_checkin_settings.no_punch_user_ids 补列",
+			run: func(ctx context.Context, db *sql.DB) error {
+				_, err := db.ExecContext(ctx, "ALTER TABLE company_checkin_settings ADD COLUMN no_punch_user_ids JSON NULL")
 				return err
 			},
 		},
@@ -197,6 +205,30 @@ func migrations() []migration {
 					"UPDATE attendance_requests SET punch_time = REPLACE(punch_time, 'T', ' ') WHERE punch_time LIKE '%T%'",
 					"UPDATE attendance_requests SET punch_time = NULL WHERE punch_time = ''",
 					"ALTER TABLE attendance_requests MODIFY `punch_time` DATETIME NULL",
+				} {
+					if _, err := db.ExecContext(ctx, q); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			// 补卡目标日期统一为纯 "YYYY-MM-DD"：旧库 varchar 可能存了 ISO 时间戳（如 "2026-10-26T00:00:00Z"），
+			// 落到 DATE 列会报 1292。先截取日期部分、清空串，再 MODIFY 为 DATE。
+			name: "attendance_requests.makeup_date varchar→date",
+			run: func(ctx context.Context, db *sql.DB) error {
+				t, err := colType(ctx, db, "attendance_requests", "makeup_date")
+				if err != nil {
+					return err
+				}
+				if t != "varchar" {
+					return nil // 已 date，跳过
+				}
+				for _, q := range []string{
+					"UPDATE attendance_requests SET makeup_date = LEFT(makeup_date, 10) WHERE makeup_date LIKE '%T%'",
+					"UPDATE attendance_requests SET makeup_date = NULL WHERE makeup_date = '' OR makeup_date IS NULL OR makeup_date NOT REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'",
+					"ALTER TABLE attendance_requests MODIFY `makeup_date` DATE NULL",
 				} {
 					if _, err := db.ExecContext(ctx, q); err != nil {
 						return err

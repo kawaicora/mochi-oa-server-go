@@ -571,7 +571,7 @@ func Register(c Ctx) {
 			if kind0 == "text" && isAudioRef(raw) {
 				kind = "audio"
 			}
-			if toUserID <= 0 || toUserID == auth.ID {
+			if toUserID <= 0 {
 				ack(util.Fail("参数不合法"))
 				return
 			}
@@ -633,7 +633,10 @@ func Register(c Ctx) {
 
 			decorateMsg(cfg, msg)
 			_ = srv.EmitTo(util.UserRoom(auth.ID), "dm:message", msg)
-			_ = srv.EmitTo(util.UserRoom(toUserID), "dm:message", msg)
+			// 发给本人：两个房间相同，只推送一次，避免客户端收到重复消息。
+			if toUserID != auth.ID {
+				_ = srv.EmitTo(util.UserRoom(toUserID), "dm:message", msg)
+			}
 			ack(util.OK(map[string]any{"id": msg.ID}))
 		})
 

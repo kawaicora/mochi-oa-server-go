@@ -97,9 +97,11 @@ func normPunchTime(p *string) *string {
 func (s *MySqlStore) CreateAttendanceRequest(ctx context.Context, in CreateAttendanceRequestInput) (*types.AttendanceRequest, error) {
 	now := time.Now().UTC()
 	// 补卡目标日期可空：空→存 NULL（DATE 列拒绝空串 ''）。
+	// 非空则归一化为纯 "YYYY-MM-DD"（兼容客户端可能传入的 ISO 时间戳，如 "2026-10-26T00:00:00Z"）。
 	var makeupDate *string
 	if in.MakeupDate != "" {
-		makeupDate = &in.MakeupDate
+		md := normalizeDate(in.MakeupDate)
+		makeupDate = &md
 	}
 	row := types.AttendanceRequestRow{
 		CompanyID:     in.CompanyID,

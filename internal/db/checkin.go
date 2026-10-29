@@ -62,6 +62,27 @@ func normHHMM(s string) string {
 	return s
 }
 
+// normalizeDate 把任意常见的日期/时间戳字符串归一化为纯 "YYYY-MM-DD"（check_date 列为 date 类型）。
+// 兼容：纯日期 "2026-10-26"、空格分隔 "2026-10-26 18:00"、ISO "2026-10-26T18:00:00"、
+// UTC "2026-10-26T00:00:00Z" 等；解析失败原样返回（交由 SQL 层报错，不吞错误）。
+func normalizeDate(v string) string {
+	if v == "" {
+		return v
+	}
+	s := strings.Replace(v, "T", " ", 1) // ISO → 空格分隔，统一格式
+	s = strings.Replace(s, "Z", "", 1)
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, s, localTZ); err == nil {
+			return t.In(localTZ).Format("2006-01-02")
+		}
+	}
+	// 兜底：截取前 10 位（形如 "2026-10-26..."）
+	if len(v) >= 10 {
+		return v[:10]
+	}
+	return v
+}
+
 // fullDT 把排班时间（"09:30" 或 "09:30:00"）+ 当天日期拼成完整 datetime "2026-10-28 09:30:00"。
 // 生产库 checkins.std_start/std_end 为 datetime 列，只写时间会报 1292；空返回 nil（落 NULL）。
 func fullDT(checkDate, v string) *string {
@@ -120,9 +141,10 @@ func decodeStrings(s string) []string {
 //   - 当天 ≥2 条 → UPDATE 当天 check_time 升序最后一条的 check_time=now（覆盖下班时间，不新增行），kind=override。
 //
 // workStart/workEnd/graceLate/graceEarly 为打卡时的排班规则快照，随记录落库供历史判定（改规则不影响历史）。
-func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string, workStart, workEnd string, graceLate, graceEarly int64) (*types.CheckinItem, string, error) {
+func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64, checkDate, ip string, mac *string, workStart, workEnd string, graceLate, graceEarly int64, offWindow ...bool) (*types.CheckinItem, string, error) {
 	now := time.Now().UTC()
 	tx := s.gorm.WithContext(ctx).Begin()
+	isOffWindow := len(offWindow) > 0 && offWindow[0]
 
 	// 数当天已有记录条数。
 	var cnt int64
@@ -158,8 +180,10 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 	}
 
 	// 0 或 1 条：INSERT 新记录。
+	// isOffWindow=true 表示本次打卡命中「前一天下班 +8h 窗口」：归前一天，语义为补前天下班卡，
+	// 因此即使当天 0 条也按下班卡（state=off）写入，而非上班卡。
 	state := int64(stateWork)
-	if cnt == 1 {
+	if cnt == 1 || isOffWindow {
 		state = int64(stateOff)
 	}
 	row := types.CheckinRow{
@@ -184,7 +208,7 @@ func (s *MySqlStore) CreateCheckin(ctx context.Context, companyID, userID int64,
 		return nil, "", err
 	}
 	kind := "first"
-	if cnt == 1 {
+	if cnt == 1 || isOffWindow {
 		kind = "second"
 	}
 	item, err := s.getCheckinByID(ctx, row.ID)
@@ -244,8 +268,12 @@ func (s *MySqlStore) InsertMakeupCheckin(ctx context.Context, companyID, userID 
 			return err
 		}
 	}
+	// checkDate 归一化为纯 "YYYY-MM-DD"：无论调用方传纯日期还是完整时间戳（如 "2026-10-26T00:00:00Z"）
+	// 都能正确落 date 列，避免 Error 1292。
 	if checkDate == "" {
 		checkDate = t.In(localTZ).Format("2006-01-02")
+	} else {
+		checkDate = normalizeDate(checkDate)
 	}
 	checkTime := t.UTC()
 	var cnt int64
@@ -300,18 +328,19 @@ func (s *MySqlStore) GetCheckinSettings(ctx context.Context, companyID int64) (*
 		return nil, err
 	}
 	return &types.CheckinSettings{
-		ID:           r.ID,
-		CompanyID:    r.CompanyID,
-		MacEnabled:   r.MacEnabled,
-		MacWhitelist: decodeStrings(r.MacWhitelist),
-		IpWhitelist:  decodeStrings(r.IpWhitelist),
-		CreatedAt:    toIso(r.CreatedAt),
-		UpdatedAt:    toIso(r.UpdatedAt),
+		ID:             r.ID,
+		CompanyID:      r.CompanyID,
+		MacEnabled:     r.MacEnabled,
+		MacWhitelist:   decodeStrings(r.MacWhitelist),
+		IpWhitelist:    decodeStrings(r.IpWhitelist),
+		NoPunchUserIds: decodeStrings(r.NoPunchUserIds),
+		CreatedAt:      toIso(r.CreatedAt),
+		UpdatedAt:      toIso(r.UpdatedAt),
 	}, nil
 }
 
 // SaveCheckinSettings upsert 公司打卡白名单（一公司一条）。macEnabled 控制是否启用 MAC 限制。
-func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, macEnabled bool, macWhitelist, ipWhitelist []string) (*types.CheckinSettings, error) {
+func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, macEnabled bool, macWhitelist, ipWhitelist, noPunchUserIds []string) (*types.CheckinSettings, error) {
 	now := time.Now().UTC()
 	var existing types.CompanyCheckinSettingsRow
 	err := s.gorm.WithContext(ctx).Table("company_checkin_settings").
@@ -323,10 +352,11 @@ func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, m
 		res := s.gorm.WithContext(ctx).Table("company_checkin_settings").
 			Where("id = ?", existing.ID).
 			Updates(map[string]any{
-				"mac_enabled":   macEnabled,
-				"mac_whitelist": encodeStrings(macWhitelist),
-				"ip_whitelist":  encodeStrings(ipWhitelist),
-				"updated_at":    now,
+				"mac_enabled":       macEnabled,
+				"mac_whitelist":     encodeStrings(macWhitelist),
+				"ip_whitelist":      encodeStrings(ipWhitelist),
+				"no_punch_user_ids": encodeStrings(noPunchUserIds),
+				"updated_at":        now,
 			})
 		if res.Error != nil {
 			return nil, res.Error
@@ -334,12 +364,13 @@ func (s *MySqlStore) SaveCheckinSettings(ctx context.Context, companyID int64, m
 		return s.GetCheckinSettings(ctx, companyID)
 	}
 	row := types.CompanyCheckinSettingsRow{
-		CompanyID:    companyID,
-		MacEnabled:   macEnabled,
-		MacWhitelist: encodeStrings(macWhitelist),
-		IpWhitelist:  encodeStrings(ipWhitelist),
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		CompanyID:      companyID,
+		MacEnabled:     macEnabled,
+		MacWhitelist:   encodeStrings(macWhitelist),
+		IpWhitelist:    encodeStrings(ipWhitelist),
+		NoPunchUserIds: encodeStrings(noPunchUserIds),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := s.gorm.WithContext(ctx).Table("company_checkin_settings").Create(&row).Error; err != nil {
 		return nil, err
