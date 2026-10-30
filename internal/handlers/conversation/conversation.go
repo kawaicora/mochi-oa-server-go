@@ -27,6 +27,7 @@ import (
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/types"
@@ -92,6 +93,11 @@ type messageDeleteReq struct {
 }
 
 type messageHardDeleteReq struct {
+	ConversationID *int64  `json:"conversationId"`
+	MessageID      *string `json:"messageId"`
+}
+
+type messageReq struct {
 	ConversationID *int64  `json:"conversationId"`
 	MessageID      *string `json:"messageId"`
 }
@@ -911,23 +917,26 @@ func Register(c Ctx) {
 				ack(util.OK(nil))
 				return
 			}
+
 			// 权限：本人可删自己的；公司管理员可删群内任意
 			own := msg.FromID == auth.ID
-			admin := false
+			canManage := false
+
 			if conv.Type == "group" && conv.GroupID != nil {
 				g, err := store.GetGroupByID(ctx, *conv.GroupID)
 				if err != nil {
 					logger.Error(module, "GetGroupByID 失败", "error", err)
 				}
 				if g != nil && g.CompanyID > 0 {
-					admin, err = isCompanyAdmin(ctx, store, g.CompanyID, auth.ID)
-					if err != nil {
-						logger.Error(module, "isCompanyAdmin 失败", "error", err)
-					}
+
+					role, _, _ := store.GetGroupMember(ctx, *conv.GroupID, auth.ID)
+					canManage = role == "owner" || role == "admin"
+
 				}
 			}
-			if !own && !admin {
-				ack(util.Fail("仅可删除自己的消息"))
+			isServerAdmin := admin.IsServerAdmin(auth, cfg, store)
+			if !own && !canManage && !isServerAdmin {
+				ack(util.Fail("非管理员或者群主以及服务器管理员仅可删除自己的消息"))
 				return
 			}
 			ok, err := store.SoftDeleteMessage(ctx, conversationID, msg.ID)
@@ -943,7 +952,38 @@ func Register(c Ctx) {
 			broadcastDeleted(srv, conv, conversationID, msg.ID)
 			ack(util.OK(nil))
 		})
+		// 判断消息是不是来自组
+		srv.On("message:fromType", func(conn socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+			ctx := context.Background()
+			auth := authed(conn)
+			if auth == nil {
+				ack(util.Fail("未登录"))
+				return
+			}
 
+			var req messageHardDeleteReq
+			_ = json.Unmarshal(data, &req)
+			conversationID := int64(0)
+			if req.ConversationID != nil {
+				conversationID = *req.ConversationID
+			}
+			messageID := ""
+			if req.MessageID != nil {
+				messageID = *req.MessageID
+			}
+			if conversationID <= 0 || messageID == "" {
+				ack(util.Fail("参数不合法"))
+				return
+			}
+			conv, err := store.GetConversationByID(ctx, conversationID)
+			if err != nil {
+				logger.Error(module, "GetConversationByID 失败", "error", err)
+				ack(util.Fail("服务器错误"))
+				return
+			}
+
+			ack(util.OK(map[string]any{"type": conv.Type}))
+		})
 		// ---- 真正删除（仅公司管理员；私信仅发送者本人） ----
 		srv.On("message:hardDelete", func(conn socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 			ctx := context.Background()
