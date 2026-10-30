@@ -525,9 +525,11 @@ func RegisterDev(c Ctx) {
 			"iceServers": cfg.IceServers, // 旧 P2P 信令用静态 ICE（新链路走 SFU，仅兼容旧客户端保留）
 			"sys":        dev.sys,
 			// SFU：控制端连接信息。
-			"url":      sfuURL,
-			"token":    sfuToken,
-			"roomName": sfuRoomName,
+			"sfu": map[string]any{
+				"url":      sfuURL,
+				"token":    sfuToken,
+				"roomName": sfuRoomName,
+			},
 		}))
 	})
 
