@@ -952,38 +952,6 @@ func Register(c Ctx) {
 			broadcastDeleted(srv, conv, conversationID, msg.ID)
 			ack(util.OK(nil))
 		})
-		// 判断消息是不是来自组
-		srv.On("message:fromType", func(conn socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
-			ctx := context.Background()
-			auth := authed(conn)
-			if auth == nil {
-				ack(util.Fail("未登录"))
-				return
-			}
-
-			var req messageHardDeleteReq
-			_ = json.Unmarshal(data, &req)
-			conversationID := int64(0)
-			if req.ConversationID != nil {
-				conversationID = *req.ConversationID
-			}
-			messageID := ""
-			if req.MessageID != nil {
-				messageID = *req.MessageID
-			}
-			if conversationID <= 0 || messageID == "" {
-				ack(util.Fail("参数不合法"))
-				return
-			}
-			conv, err := store.GetConversationByID(ctx, conversationID)
-			if err != nil {
-				logger.Error(module, "GetConversationByID 失败", "error", err)
-				ack(util.Fail("服务器错误"))
-				return
-			}
-
-			ack(util.OK(map[string]any{"type": conv.Type}))
-		})
 		// ---- 真正删除（仅公司管理员；私信仅发送者本人） ----
 		srv.On("message:hardDelete", func(conn socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 			ctx := context.Background()
