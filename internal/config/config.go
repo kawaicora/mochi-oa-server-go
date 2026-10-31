@@ -103,25 +103,26 @@ type AfdianConfig struct {
 
 // ServerConfig 是全局配置根结构（对应 config.ts 的 ServerConfig）。
 type ServerConfig struct {
-	Host          string
-	Port          int
-	HTTPS         *HTTPSConfig // nil=HTTP
-	CORSStar      bool         // true=CORSOrigin 为 '*'；false 时用 CORSList
-	CORSList      []string     // 逗号分隔的来源列表（CORSStar=false 时有效）
-	Transports    []Transport
-	TrustProxy    bool
-	Path          string
-	Storage       string // "mysql" | "memory"
-	MySQL         MySQLConfig
-	JWTSecret     string
-	JWTExpiresIn  string
-	IceServers    []IceServer
-	IceCloudflare *CloudflareTURNConfig // nil=未启用
-	File          FileConfig
-	Admin         AdminConfig
-	ServerAdmins  []string
-	Mail          *ServerMailConfig // nil=未配置环境级主邮件
-	Afdian        *AfdianConfig     // nil=未启用
+	Host               string
+	Port               int
+	HTTPS              *HTTPSConfig // nil=HTTP
+	CORSStar           bool         // true=CORSOrigin 为 '*'；false 时用 CORSList
+	CORSList           []string     // 逗号分隔的来源列表（CORSStar=false 时有效）
+	Transports         []Transport
+	TrustProxy         bool
+	Path               string
+	LogSocketIODetails bool
+	Storage            string // "mysql" | "memory"
+	MySQL              MySQLConfig
+	JWTSecret          string
+	JWTExpiresIn       string
+	IceServers         []IceServer
+	IceCloudflare      *CloudflareTURNConfig // nil=未启用
+	File               FileConfig
+	Admin              AdminConfig
+	ServerAdmins       []string
+	Mail               *ServerMailConfig // nil=未配置环境级主邮件
+	Afdian             *AfdianConfig     // nil=未启用
 	// LiveKit SFU 配置（视频会议/远程查看统一走 SFU）。nil=未配置（相关功能明确报不可用，不影响其他功能）。
 	LiveKit *LiveKitConfig
 	// ReportRemindDaily 日报未交提醒时刻（"HH:MM"，当地时间），默认 18:00。
@@ -441,15 +442,16 @@ func build() *ServerConfig {
 	storage := "mysql"
 
 	return &ServerConfig{
-		Host:       host,
-		Port:       port,
-		HTTPS:      httpsCfg,
-		CORSStar:   corsStar,
-		CORSList:   corsList,
-		Transports: transports(),
-		TrustProxy: boolEnv("TRUST_PROXY", false),
-		Path:       strEnv("SOCKET_PATH", "/socket.io"),
-		Storage:    storage,
+		Host:               host,
+		Port:               port,
+		HTTPS:              httpsCfg,
+		CORSStar:           corsStar,
+		CORSList:           corsList,
+		Transports:         transports(),
+		TrustProxy:         boolEnv("TRUST_PROXY", false),
+		Path:               strEnv("SOCKET_PATH", "/socket.io"),
+		LogSocketIODetails: boolEnv("LOG_SOCKETIO_DETAILS", false),
+		Storage:            storage,
 		MySQL: MySQLConfig{
 			Host:               strEnv("MYSQL_HOST", "127.0.0.1"),
 			Port:               intEnv("MYSQL_PORT", 3306),

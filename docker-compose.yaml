@@ -16,6 +16,7 @@ services:
       HOST: ${HOST:-0.0.0.0}
       PORT: ${PORT:-80}
       STORAGE: mysql
+      LOG_SOCKETIO_DETAILS: ${LOG_SOCKETIO_DETAILS:-false}
       # 容器内必须用服务名/容器名，不能写 127.0.0.1
       MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: ${MYSQL_PORT}
@@ -28,7 +29,7 @@ services:
       # 全新服务器：库不存在就建库，表按 GORM 模型自动建/补
       AUTO_CREATE_DATABASE: "true"
       AUTO_MIGRATE: "true"
-       
+      
       ADMIN_USER: ${ADMIN_USER:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # 服务器管理员（SERVER_ADMIN）：逗号分隔用户名，基于用户、与公司/群角色无关；留空回退 ADMIN_USER

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/logger"
@@ -392,6 +393,7 @@ func (s *Server) handleConnect(c *Conn, p sioPacket) {
 }
 
 // handleEvent 分发 EVENT/BINARY_EVENT 到注册的处理器。
+// handleEvent 分发 EVENT/BINARY_EVENT 到注册的处理器。
 func (s *Server) handleEvent(c *Conn, p sioPacket) {
 	event, args, err := p.eventNameAndArgs()
 	if err != nil {
@@ -399,7 +401,17 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 		return
 	}
 
-	// ack 回调：客户端带了 ack id，则构造一个把结果编码成 ACK 包的回调。
+	// 记录事件请求
+	start := time.Now()
+	if s.cfg.LogSocketIODetails {
+		logger.Info(
+			"socket",
+			"event request",
+			"sid", c.idShort(),
+			"event", event,
+			"args", args,
+		)
+	}
 	var ack socketapi.Ack
 	if p.hasAck {
 		ack = func(result any) {
@@ -411,7 +423,7 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 			c.sendEIO(eioMESSAGE, frame)
 		}
 	} else {
-		ack = func(any) {} // no-op
+		ack = func(any) {}
 	}
 
 	s.mu.RLock()
@@ -419,8 +431,6 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 	binH, binOK := s.binHandlers[event]
 	s.mu.RUnlock()
 
-	// 对齐 TS handler：socket.emit('event', obj) 的 server handler 直接拿到 obj，
-	// 而非整个 args 数组。这里取 args 数组首元素作为 data；无参则为 null。
 	data := firstArg(args)
 
 	switch {
@@ -428,22 +438,61 @@ func (s *Server) handleEvent(c *Conn, p sioPacket) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("socket", "event handler panic", "event", event, "err", r)
+					logger.Error(
+						"socket",
+						"event handler panic",
+						"event", event,
+						"sid", c.idShort(),
+						"err", r,
+					)
+				}
+				if s.cfg.LogSocketIODetails {
+					logger.Info(
+						"socket",
+						"event completed",
+						"sid", c.idShort(),
+						"event", event,
+						"cost", time.Since(start),
+					)
 				}
 			}()
+
 			h(c, data, ack)
 		}()
+
 	case binOK:
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					logger.Error("socket", "binary handler panic", "event", event, "err", r)
+					logger.Error(
+						"socket",
+						"binary handler panic",
+						"event", event,
+						"sid", c.idShort(),
+						"err", r,
+					)
 				}
+				if s.cfg.LogSocketIODetails {
+					logger.Info(
+						"socket",
+						"binary event completed",
+						"sid", c.idShort(),
+						"event", event,
+						"cost", time.Since(start),
+					)
+				}
+
 			}()
-			// 二进制事件的 data 取首个附件（本实现按 1 附件约定）。
+
 			binH(c, nil)
 		}()
+
 	default:
-		logger.Info("socket", "no handler for event", "event", event, "sid", c.idShort())
+		logger.Info(
+			"socket",
+			"no handler for event",
+			"event", event,
+			"sid", c.idShort(),
+		)
 	}
 }
