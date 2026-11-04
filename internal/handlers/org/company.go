@@ -421,9 +421,27 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		d := parseData(data)
-		cid, ok := toInt64(d["companyId"])
-		if !ok || cid <= 0 {
-			ack(util.Fail("参数不合法"))
+		cid, _ := toInt64(d["companyId"])
+		if cid <= 0 {
+			// 未指定公司：直接列出服务器全部用户（用于"新的好友"列出所有人，与公司无关）
+			all, err := store.ListUsers(ctx)
+			if err != nil {
+				logger.Error(mod, "列出用户失败", "error", err.Error())
+				ack(util.Fail("获取失败"))
+				return
+			}
+			type memberItem struct {
+				UserID   int64  `json:"userId"`
+				Username string `json:"username"`
+				Nick     string `json:"nick"`
+				Avatar   string `json:"avatar"`
+				Phone    string `json:"phone"`
+			}
+			members := make([]memberItem, 0, len(all))
+			for _, u := range all {
+				members = append(members, memberItem{UserID: u.ID, Username: u.Username, Nick: u.Nick, Avatar: u.Avatar, Phone: u.Phone})
+			}
+			ack(util.OK(map[string]any{"members": members}))
 			return
 		}
 		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
