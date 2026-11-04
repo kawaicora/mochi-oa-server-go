@@ -155,6 +155,43 @@ func leaveUserSockets(srv socketapi.Server, userID int64, room string) {
 	}
 }
 
+// ensureUserInMainGroup 确保用户在公司总群中（总群缺失则自动补建）。
+// 对标 company:acceptInvite 中的入总群逻辑：AddGroupMember + AddConversationMember + 广播。
+func ensureUserInMainGroup(srv socketapi.Server, companyID, userID int64) {
+	store := db.GetStore()
+	ctx := context.Background()
+
+	mainGroup, _ := store.GetCompanyMainGroup(ctx, companyID)
+
+	if mainGroup == nil {
+		return
+	}
+	_ = store.AddGroupMember(ctx, mainGroup.ID, userID, "member")
+	if conv, err := store.GetOrCreateGroupConversation(ctx, mainGroup.ID, 0); err == nil {
+		_ = store.AddConversationMember(ctx, conv.ID, userID)
+	}
+	joinUserSockets(srv, userID, util.GroupRoom(mainGroup.ID))
+	_ = srv.EmitTo(util.GroupRoom(mainGroup.ID), "group:members-updated", map[string]any{"groupId": mainGroup.ID})
+}
+
+// removeUserFromMainGroup 将用户移出公司总群（群成员 + 对话成员 + socket 房间）。
+// 非公司群不做任何操作——仅针对总群。
+func removeUserFromMainGroup(srv socketapi.Server, companyID, userID int64) {
+	store := db.GetStore()
+	ctx := context.Background()
+
+	mainGroup, _ := store.GetCompanyMainGroup(ctx, companyID)
+	if mainGroup == nil {
+		return
+	}
+	_ = store.RemoveGroupMember(ctx, mainGroup.ID, userID)
+	if conv, err := store.GetOrCreateGroupConversation(ctx, mainGroup.ID, 0); err == nil {
+		_ = store.RemoveConversationMember(ctx, conv.ID, userID)
+	}
+	leaveUserSockets(srv, userID, util.GroupRoom(mainGroup.ID))
+	_ = srv.EmitTo(util.GroupRoom(mainGroup.ID), "group:members-updated", map[string]any{"groupId": mainGroup.ID})
+}
+
 // ─── 注册入口 ───
 
 // RegisterCompanyHandlers 注册公司/部门/邀请/人事相关全部 socket 事件。
@@ -371,6 +408,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		_ = c.Join(util.CompanyRoom(company.ID))
+		ensureUserInMainGroup(srv, company.ID, a.ID)
 		_ = srv.EmitTo(util.CompanyRoom(company.ID), "company:updated", map[string]any{"companyId": company.ID})
 		ack(util.OK(map[string]any{"company": company}))
 	})
@@ -408,6 +446,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		_ = c.Leave(util.CompanyRoom(cid))
+		removeUserFromMainGroup(srv, cid, a.ID)
 		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
 		_ = srv.EmitTo(util.UserRoom(a.ID), "company:removed", map[string]any{"companyId": cid})
 		ack(util.OK(nil))
@@ -572,6 +611,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		leaveUserSockets(srv, uid, util.CompanyRoom(cid))
+		removeUserFromMainGroup(srv, cid, uid)
 		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
 		_ = srv.EmitTo(util.UserRoom(uid), "company:removed", map[string]any{"companyId": cid})
 		ack(util.OK(nil))
@@ -656,6 +696,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		}
 		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
 		joinUserSockets(srv, targetID, util.CompanyRoom(cid))
+		ensureUserInMainGroup(srv, cid, targetID)
 		_ = srv.EmitTo(util.UserRoom(targetID), "company:added", map[string]any{"companyId": cid})
 		ack(util.OK(nil))
 	})
@@ -1253,39 +1294,8 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		if inv.DepartmentID != nil {
 			_ = store.AssignDepartment(ctx, *inv.DepartmentID, a.ID)
 		}
-		// 全员群（缺失则自动补建）
-		mainGroup, _ := store.GetCompanyMainGroup(ctx, inv.CompanyID)
-		if mainGroup == nil {
-			company, _ := store.GetCompanyByID(ctx, inv.CompanyID)
-			companyName := "公司"
-			if company != nil {
-				companyName = company.Name
-			}
-			for g := 0; g < 5; g++ {
-				ng, gerr := store.CreateGroup(ctx, db.CreateGroupInput{
-					CompanyID: inv.CompanyID,
-					Name:      companyName + "总群",
-					Code:      util.MakeJoinCode(),
-					OwnerID:   inv.InvitedBy,
-				})
-				if gerr != nil {
-					var gae *db.AlreadyExistsError
-					if errors.As(gerr, &gae) {
-						continue
-					}
-					break
-				}
-				mainGroup = ng
-				break
-			}
-		}
-		if mainGroup != nil {
-			_ = store.AddGroupMember(ctx, mainGroup.ID, a.ID, "member")
-			if conv, err := store.GetOrCreateGroupConversation(ctx, mainGroup.ID, 0); err == nil {
-				_ = store.AddConversationMember(ctx, conv.ID, a.ID)
-			}
-			_ = srv.EmitTo(util.GroupRoom(mainGroup.ID), "group:members-updated", map[string]any{"groupId": mainGroup.ID})
-		}
+		// 自动加入公司总群（缺失则自动补建）
+		ensureUserInMainGroup(srv, inv.CompanyID, a.ID)
 		// 邀请标记已使用
 		_ = store.SetCompanyInvitationStatus(ctx, inv.ID, "accepted")
 		inv.Status = "accepted"
