@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -192,7 +193,12 @@ func (s *MySqlStore) GetCompanyByName(ctx context.Context, name string) (*types.
 func (s *MySqlStore) ListCompanies(ctx context.Context, keyword string) ([]types.Company, error) {
 	q := s.gorm.WithContext(ctx).Table("companies")
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		q = q.Where("name LIKE ?", "%"+kw+"%")
+		// 数字按 ID 搜索，否则按名字模糊搜索
+		if id, err := strconv.ParseInt(kw, 10, 64); err == nil {
+			q = q.Where("id = ?", id)
+		} else {
+			q = q.Where("name LIKE ?", "%"+kw+"%")
+		}
 	}
 	rows := []types.CompanyRow{}
 	if err := q.Order("id ASC").Limit(100).Find(&rows).Error; err != nil {
@@ -618,6 +624,33 @@ func (s *MySqlStore) ListGroups(ctx context.Context, companyID int64, keyword st
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		q = q.Where("name LIKE ?", "%"+kw+"%")
+	}
+	rows := []types.GroupRow{}
+	if err := q.Order("id ASC").Limit(100).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []types.Group{}
+	for i := range rows {
+		out = append(out, rowToGroup(&rows[i]))
+	}
+	return out, nil
+}
+
+// SearchGroupsByCompanies 按公司ID列表搜索群（含 companyID=0 非公司群）。支持 ID 或名字搜索。
+func (s *MySqlStore) SearchGroupsByCompanies(ctx context.Context, companyIDs []int64, keyword string) ([]types.Group, error) {
+	q := s.gorm.WithContext(ctx).Table("`groups`")
+	if len(companyIDs) == 1 {
+		q = q.Where("company_id = ?", companyIDs[0])
+	} else if len(companyIDs) > 1 {
+		q = q.Where("company_id IN ?", companyIDs)
+	}
+	if kw := strings.TrimSpace(keyword); kw != "" {
+		// 数字按 ID 搜索，否则按名字模糊搜索
+		if id, err := strconv.ParseInt(kw, 10, 64); err == nil {
+			q = q.Where("id = ?", id)
+		} else {
+			q = q.Where("name LIKE ?", "%"+kw+"%")
+		}
 	}
 	rows := []types.GroupRow{}
 	if err := q.Order("id ASC").Limit(100).Find(&rows).Error; err != nil {

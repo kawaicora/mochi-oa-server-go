@@ -593,3 +593,92 @@ func (s *MySqlStore) ListFriends(ctx context.Context, userID int64) ([]types.Fri
 	}
 	return out, nil
 }
+
+// ==================== 好友申请 ====================
+
+// CreateFriendRequest 创建好友申请（from→to，去重：已有 pending 则复用）。
+func (s *MySqlStore) CreateFriendRequest(ctx context.Context, fromID, toID int64) (*types.FriendRequestRow, error) {
+	// 已有 pending 申请则直接返回
+	var existing types.FriendRequestRow
+	if err := s.gorm.WithContext(ctx).
+		Where("from_id = ? AND to_id = ? AND status = ?", fromID, toID, "pending").
+		First(&existing).Error; err == nil {
+		return &existing, nil
+	}
+	now := time.Now().UTC()
+	row := types.FriendRequestRow{FromID: fromID, ToID: toID, Status: "pending", CreatedAt: now, UpdatedAt: now}
+	if err := s.gorm.WithContext(ctx).Create(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// ListPendingFriendRequests 列出收到的待处理好友申请（联申请人信息）。
+func (s *MySqlStore) ListPendingFriendRequests(ctx context.Context, toUserID int64) ([]types.FriendRequest, error) {
+	var rows []types.FriendRequestRow
+	if err := s.gorm.WithContext(ctx).
+		Where("to_id = ? AND status = ?", toUserID, "pending").
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []types.FriendRequest{}
+	for _, r := range rows {
+		u, err := s.GetUserByID(ctx, r.FromID)
+		if err != nil || u == nil {
+			continue
+		}
+		nick := u.Nick
+		if nick == "" {
+			nick = u.Username
+		}
+		out = append(out, types.FriendRequest{
+			ID: r.ID, FromID: r.FromID, FromName: u.Username,
+			FromNick: nick, FromAvatar: u.Avatar,
+			Status: r.Status, CreatedAt: toIso(r.CreatedAt),
+		})
+	}
+	return out, nil
+}
+
+// RespondFriendRequest 处理好友申请（accept/reject），accept 时自动互加好友。
+func (s *MySqlStore) RespondFriendRequest(ctx context.Context, requestID, responderID int64, accept bool) error {
+	var row types.FriendRequestRow
+	if err := s.gorm.WithContext(ctx).First(&row, requestID).Error; err != nil {
+		return &NotFoundError{Msg: "request not found"}
+	}
+	if row.ToID != responderID {
+		return &NotFoundError{Msg: "not your request"}
+	}
+	if row.Status != "pending" {
+		return &AlreadyExistsError{Msg: "already processed"}
+	}
+	status := "rejected"
+	if accept {
+		status = "accepted"
+	}
+	if err := s.gorm.WithContext(ctx).Model(&row).
+		Updates(map[string]any{"status": status, "updated_at": time.Now().UTC()}).Error; err != nil {
+		return err
+	}
+	if accept {
+		if err := s.AddFriend(ctx, row.FromID, row.ToID); err != nil {
+			var ae *AlreadyExistsError
+			if !errors.As(err, &ae) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// HasPendingRequest 检查 from→to 是否有 pending 申请。
+func (s *MySqlStore) HasPendingRequest(ctx context.Context, fromID, toID int64) (bool, error) {
+	var count int64
+	if err := s.gorm.WithContext(ctx).Model(&types.FriendRequestRow{}).
+		Where("from_id = ? AND to_id = ? AND status = ?", fromID, toID, "pending").
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}

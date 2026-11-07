@@ -154,29 +154,42 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		d := parseData(data)
-		var cid int64
-		cidVal, hasCID := d["companyId"]
-		if hasCID && cidVal != nil {
-			n, ok := toInt64(cidVal)
-			if !ok || n <= 0 {
-				ack(util.Fail("参数不合法"))
-				return
-			}
-			cid = n
-			myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
-			if myRole == "" {
-				ack(util.Fail("不在公司中"))
-				return
-			}
-		}
 		keyword := strVal(d, "keyword")
-		groups, err := store.ListGroups(ctx, cid, keyword)
+		isAdmin := isServerAdmin(a)
+
+		// server_admin: 列出所有群
+		if isAdmin {
+			groups, err := store.ListGroups(ctx, 0, keyword)
+			if err != nil {
+				logger.Error(mod, "搜索群失败", "error", err.Error())
+				ack(util.Fail("搜索失败"))
+				return
+			}
+			ack(util.OK(map[string]any{"groups": groups, "isAdmin": true}))
+			return
+		}
+
+		// 普通用户：搜索非公司群 + 所在公司的群
+		myCompanies, _ := store.GetUserCompanies(ctx, a.ID)
+		companyIDs := []int64{0} // 非公司群
+		for _, mc := range myCompanies {
+			companyIDs = append(companyIDs, mc.Company.ID)
+		}
+		groups, err := store.SearchGroupsByCompanies(ctx, companyIDs, keyword)
 		if err != nil {
-			logger.Error(mod, "搜索群失败", "error", err.Error())
 			ack(util.Fail("搜索失败"))
 			return
 		}
-		ack(util.OK(map[string]any{"groups": groups}))
+		out := []map[string]any{}
+		for _, g := range groups {
+			role, _, _ := store.GetGroupMember(ctx, g.ID, a.ID)
+			out = append(out, map[string]any{
+				"id": g.ID, "name": g.Name, "companyId": g.CompanyID,
+				"code": g.Code, "ownerId": g.OwnerID,
+				"joined": role != "",
+			})
+		}
+		ack(util.OK(map[string]any{"groups": out, "isAdmin": false}))
 	})
 
 	// ---- 凭群码加入群 ----
@@ -317,7 +330,7 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		myRole, _, _ := store.GetGroupMember(ctx, gid, a.ID)
-		if !canManage(myRole) {
+		if !isServerAdmin(a) && !canManage(myRole) {
 			ack(util.Fail("仅群主/管理员可移除成员"))
 			return
 		}
@@ -326,11 +339,11 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			ack(util.Fail("目标不在群中"))
 			return
 		}
-		if targetRole == "owner" {
+		if targetRole == "owner" && !isServerAdmin(a) {
 			ack(util.Fail("不能移除群主"))
 			return
 		}
-		if myRole == "admin" && targetRole == "admin" {
+		if !isServerAdmin(a) && myRole == "admin" && targetRole == "admin" {
 			ack(util.Fail("管理员不能移除其他管理员"))
 			return
 		}
@@ -486,11 +499,11 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		myRole, _, _ := store.GetGroupMember(ctx, gid, a.ID)
-		if !canManage(myRole) {
+		if !isServerAdmin(a) && !canManage(myRole) {
 			ack(util.Fail("仅群主/管理员可添加成员"))
 			return
 		}
-		if group.CompanyID > 0 {
+		if group.CompanyID > 0 && !isServerAdmin(a) {
 			targetCRole, _ := store.GetMemberRole(ctx, group.CompanyID, uid)
 			if targetCRole == "" {
 				ack(util.Fail("目标不在该公司"))
@@ -716,4 +729,86 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 		ack(util.OK(nil))
 	})
 
+	// ---- 申请加入群（搜索结果中点击，通知群主/管理员） ----
+	srv.On("group:requestJoin", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		gid, ok := toInt64(d["groupId"])
+		if !ok || gid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		group, _ := store.GetGroupByID(ctx, gid)
+		if group == nil {
+			ack(util.Fail("群不存在"))
+			return
+		}
+		myRole, _, _ := store.GetGroupMember(ctx, gid, a.ID)
+		if myRole != "" {
+			ack(util.OK(map[string]any{"already": true}))
+			return
+		}
+		// server_admin 直接加入
+		if isServerAdmin(a) {
+			_ = store.AddGroupMember(ctx, gid, a.ID, "member")
+			if conv, err := store.GetOrCreateGroupConversation(ctx, gid, 0); err == nil {
+				_ = store.AddConversationMember(ctx, conv.ID, a.ID)
+			}
+			_ = srv.EmitTo(util.GroupRoom(gid), "group:members-updated", map[string]any{"groupId": gid})
+			ack(util.OK(map[string]any{"direct": true}))
+			return
+		}
+		// 通知群主和所有管理员
+		members, _ := store.GetGroupMembers(ctx, gid)
+		for _, m := range members {
+			if m.Role == "owner" || m.Role == "admin" {
+				_ = srv.EmitTo(util.UserRoom(m.UserID), "group:joinRequest", map[string]any{
+					"groupId":   gid,
+					"groupName": group.Name,
+					"fromId":    a.ID,
+					"fromName":  a.Username,
+				})
+			}
+		}
+		ack(util.OK(map[string]any{"requestSent": true}))
+	})
+
+	// ---- 同意加入群申请（群主/管理员） ----
+	srv.On("group:approveJoin", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		gid, ok1 := toInt64(d["groupId"])
+		uid, ok2 := toInt64(d["userId"])
+		if !ok1 || gid <= 0 || !ok2 || uid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		myRole, _, _ := store.GetGroupMember(ctx, gid, a.ID)
+		if !isServerAdmin(a) && !canManage(myRole) {
+			ack(util.Fail("仅群主/管理员可操作"))
+			return
+		}
+		if err := store.AddGroupMember(ctx, gid, uid, "member"); err != nil {
+			var ae *db.AlreadyExistsError
+			if !errors.As(err, &ae) {
+				ack(util.Fail("操作失败"))
+				return
+			}
+		}
+		if conv, err := store.GetOrCreateGroupConversation(ctx, gid, 0); err == nil {
+			_ = store.AddConversationMember(ctx, conv.ID, uid)
+		}
+		joinGroupSockets(uid, gid)
+		_ = srv.EmitTo(util.GroupRoom(gid), "group:members-updated", map[string]any{"groupId": gid})
+		_ = srv.EmitTo(util.UserRoom(uid), "group:added", map[string]any{"groupId": gid})
+		ack(util.OK(nil))
+	})
 }

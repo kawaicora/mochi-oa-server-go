@@ -434,6 +434,7 @@ type Store interface {
 	GetGroupByCode(ctx context.Context, code string) (*types.Group, error)
 	GetGroupByName(ctx context.Context, companyID int64, name string) (*types.Group, error)
 	ListGroups(ctx context.Context, companyID int64, keyword string) ([]types.Group, error)
+	SearchGroupsByCompanies(ctx context.Context, companyIDs []int64, keyword string) ([]types.Group, error)
 	AddGroupMember(ctx context.Context, groupID, userID int64, role string) error
 	RemoveGroupMember(ctx context.Context, groupID, userID int64) error
 	GetGroupMemberRole(ctx context.Context, groupID, userID int64) (string, error)
@@ -477,6 +478,12 @@ type Store interface {
 	AddFriend(ctx context.Context, a, b int64) error
 	RemoveFriend(ctx context.Context, a, b int64) error
 	ListFriends(ctx context.Context, userID int64) ([]types.Friend, error)
+
+	// ---- 好友申请 ----
+	CreateFriendRequest(ctx context.Context, fromID, toID int64) (*types.FriendRequestRow, error)
+	ListPendingFriendRequests(ctx context.Context, toUserID int64) ([]types.FriendRequest, error)
+	RespondFriendRequest(ctx context.Context, requestID, responderID int64, accept bool) error
+	HasPendingRequest(ctx context.Context, fromID, toID int64) (bool, error)
 
 	// ---- 公司邀请 ----
 	CreateCompanyInvitation(ctx context.Context, in CreateInvitationInput) (*types.CompanyInvitation, error)

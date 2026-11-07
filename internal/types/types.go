@@ -135,6 +135,16 @@ type FriendRow struct {
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
+// FriendRequestRow 对应 friend_requests 表（好友申请：from→to，状态 pending/accepted/rejected）。
+type FriendRequestRow struct {
+	ID        int64     `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	FromID    int64     `db:"from_id" gorm:"index;type:bigint unsigned;not null"`
+	ToID      int64     `db:"to_id" gorm:"index;type:bigint unsigned;not null"`
+	Status    string    `db:"status" gorm:"type:enum('pending','accepted','rejected');not null;default:pending"`
+	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
+	UpdatedAt time.Time `db:"updated_at" gorm:"type:datetime;not null"`
+}
+
 // CompanyInvitationRow 对应 company_invitations 表。
 type CompanyInvitationRow struct {
 	ID           int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
@@ -678,6 +688,7 @@ func (ConversationMemberRow) TableName() string     { return "conversation_membe
 func (MessageRow) TableName() string                { return "messages" }
 func (FileRow) TableName() string                   { return "files" }
 func (FriendRow) TableName() string                 { return "friends" }
+func (FriendRequestRow) TableName() string           { return "friend_requests" }
 func (CompanyInvitationRow) TableName() string      { return "company_invitations" }
 func (MemberProfileRow) TableName() string          { return "member_profiles" }
 func (SessionRow) TableName() string                { return "sessions" }
@@ -895,6 +906,17 @@ type Friend struct {
 	Nick     string `json:"nick"`
 	Avatar   string `json:"avatar"`
 	AddedAt  string `json:"addedAt"`
+}
+
+// FriendRequest 好友申请（带申请人信息）。
+type FriendRequest struct {
+	ID        int64  `json:"id"`
+	FromID    int64  `json:"fromId"`
+	FromName  string `json:"fromName"`
+	FromNick  string `json:"fromNick"`
+	FromAvatar string `json:"fromAvatar"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
 }
 
 // InvitationStatus 邀请状态。

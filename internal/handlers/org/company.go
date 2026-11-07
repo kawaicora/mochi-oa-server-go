@@ -584,11 +584,11 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
-		if myRole == "" {
+		if myRole == "" && !isServerAdmin(a) {
 			ack(util.Fail("不在公司中"))
 			return
 		}
-		if roleRank(myRole) < roleRank("admin") {
+		if !isServerAdmin(a) && roleRank(myRole) < roleRank("admin") {
 			ack(util.Fail("无权限"))
 			return
 		}
@@ -597,11 +597,11 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			ack(util.Fail("目标不在公司中"))
 			return
 		}
-		if targetRole == "owner" {
+		if targetRole == "owner" && !isServerAdmin(a) {
 			ack(util.Fail("不能移除创建人"))
 			return
 		}
-		if targetRole == "admin" && myRole != "owner" {
+		if !isServerAdmin(a) && targetRole == "admin" && myRole != "owner" {
 			ack(util.Fail("仅创建人可移除管理员"))
 			return
 		}
@@ -631,11 +631,11 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
-		if myRole == "" {
+		if myRole == "" && !isServerAdmin(a) {
 			ack(util.Fail("不在公司中"))
 			return
 		}
-		if roleRank(myRole) < roleRank("admin") {
+		if !isServerAdmin(a) && roleRank(myRole) < roleRank("admin") {
 			ack(util.Fail("仅管理员可添加成员"))
 			return
 		}
@@ -1411,6 +1411,112 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		}
 		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
 		ack(util.OK(map[string]any{"profile": profile}))
+	})
+
+	// ---- 搜索公司（按 ID 或名字） ----
+	srv.On("company:search", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		keyword := strVal(d, "keyword")
+		// server_admin 看全部；普通用户也看全部（搜索后申请加入）
+		companies, err := store.ListCompanies(ctx, keyword)
+		if err != nil {
+			logger.Error(mod, "搜索公司失败", "error", err.Error())
+			ack(util.Fail("搜索失败"))
+			return
+		}
+		out := []map[string]any{}
+		for _, co := range companies {
+			role, _ := store.GetMemberRole(ctx, co.ID, a.ID)
+			out = append(out, map[string]any{
+				"id": co.ID, "name": co.Name, "code": co.Code,
+				"joined": role != "",
+			})
+		}
+		ack(util.OK(map[string]any{"companies": out, "isAdmin": isServerAdmin(a)}))
+	})
+
+	// ---- 申请加入公司（搜索结果中点击） ----
+	srv.On("company:requestJoin", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		cid, ok := toInt64(d["companyId"])
+		if !ok || cid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		company, _ := store.GetCompanyByID(ctx, cid)
+		if company == nil {
+			ack(util.Fail("公司不存在"))
+			return
+		}
+		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
+		if myRole != "" {
+			ack(util.OK(map[string]any{"already": true}))
+			return
+		}
+		// server_admin 直接加入
+		if isServerAdmin(a) {
+			_ = store.AddMember(ctx, cid, a.ID, "member")
+			ensureUserInMainGroup(srv, cid, a.ID)
+			_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
+			ack(util.OK(map[string]any{"direct": true}))
+			return
+		}
+		// 通知公司所有者和所有管理员
+		members, _ := store.GetMembers(ctx, cid)
+		for _, m := range members {
+			if m.Role == "owner" || m.Role == "admin" {
+				_ = srv.EmitTo(util.UserRoom(m.UserID), "company:joinRequest", map[string]any{
+					"companyId":   cid,
+					"companyName": company.Name,
+					"fromId":      a.ID,
+					"fromName":    a.Username,
+				})
+			}
+		}
+		ack(util.OK(map[string]any{"requestSent": true}))
+	})
+
+	// ---- 同意加入公司申请（所有者/管理员） ----
+	srv.On("company:approveJoin", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		cid, ok1 := toInt64(d["companyId"])
+		uid, ok2 := toInt64(d["userId"])
+		if !ok1 || cid <= 0 || !ok2 || uid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
+		if !isServerAdmin(a) && myRole != "owner" && myRole != "admin" {
+			ack(util.Fail("仅所有者/管理员可操作"))
+			return
+		}
+		if err := store.AddMember(ctx, cid, uid, "member"); err != nil {
+			var ae *db.AlreadyExistsError
+			if !errors.As(err, &ae) {
+				ack(util.Fail("操作失败"))
+				return
+			}
+		}
+		ensureUserInMainGroup(srv, cid, uid)
+		joinUserSockets(srv, uid, util.CompanyRoom(cid))
+		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"companyId": cid})
+		_ = srv.EmitTo(util.UserRoom(uid), "company:added", map[string]any{"companyId": cid})
+		ack(util.OK(nil))
 	})
 }
 
