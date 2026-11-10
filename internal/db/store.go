@@ -383,6 +383,7 @@ type SaveFileInput struct {
 	Size     int64
 	Storage  string
 	URL      string
+	Hash     string
 }
 
 // Store 是存储层抽象：生产用 MySqlStore，开发/测试用 MemoryStore。
@@ -473,6 +474,7 @@ type Store interface {
 	// ---- 文件 ----
 	SaveFile(ctx context.Context, in SaveFileInput) (*types.FileRecord, error)
 	GetFileByUUID(ctx context.Context, uuid string) (*types.FileRecord, error)
+	FindFileByHash(ctx context.Context, hash string) (*types.FileRecord, error)
 
 	// ---- 好友 ----
 	AddFriend(ctx context.Context, a, b int64) error

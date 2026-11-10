@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -425,6 +426,20 @@ func (h *filesHandler) uploadOne(w http.ResponseWriter, r *http.Request) {
 // saveAndRespond 落盘 + 写库 + 应答（单传与分片合并共用）。
 // 注意：契约要求单传响应同时给 fileName 与 filename 两个 key（客户端两处读取不一致）。
 func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime string, buf []byte, companyKey, relativeDir string) {
+	// 计算 SHA256 hash，相同文件直接复用已有记录
+	sum := sha256.Sum256(buf)
+	hash := hex.EncodeToString(sum[:])
+	if existing, err := h.store.FindFileByHash(context.Background(), hash); err == nil && existing != nil {
+		logger.Info("http/files", "文件 hash 已存在，直接复用", "hash", hash, "uuid", existing.UUID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "uuid": existing.UUID,
+			"filename": existing.Filename, "fileName": existing.Filename,
+			"mime": existing.Mime, "size": existing.Size,
+			"url": pubUrl(h.cfg, existing.URL),
+		})
+		return
+	}
+
 	saved, err := saveLocal(h.cfg, originalName, buf, companyKey, relativeDir)
 	if err != nil {
 		logger.Error("http/files", "文件落盘失败", "error", err.Error())
@@ -438,6 +453,7 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 		Size:     int64(len(buf)),
 		Storage:  saved.storage,
 		URL:      saved.url,
+		Hash:     hash,
 	})
 	if err != nil {
 		logger.Error("http/files", "文件记录入库失败", "error", err.Error())

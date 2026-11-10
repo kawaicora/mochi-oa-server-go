@@ -125,6 +125,7 @@ type FileRow struct {
 	Size      int64     `db:"size" gorm:"type:bigint unsigned;not null;default:0"`
 	Storage   string    `db:"storage" gorm:"type:enum('local','ftp');not null;default:local"` // local|ftp
 	URL       string    `db:"url" gorm:"type:varchar(512);not null"`
+	Hash      string    `db:"hash" gorm:"type:char(64);index"`
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
@@ -896,6 +897,7 @@ type FileRecord struct {
 	Size      int64  `json:"size"`
 	Storage   string `json:"storage"`
 	URL       string `json:"url"`
+	Hash      string `json:"hash,omitempty"`
 	CreatedAt string `json:"createdAt"`
 }
 
