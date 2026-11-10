@@ -12,6 +12,8 @@ package mailholiday
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -19,6 +21,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
@@ -29,8 +33,56 @@ import (
 	"mochi-oa-server-go/internal/util"
 )
 
+// adminTokens 是已下发的 server_admin_token 集合（内存态，重启失效）。
+var (
+	adminTokensMu sync.RWMutex
+	adminTokens   = map[string]int64{} // token → userID
+)
+
+// issueAdminToken 生成并记录一个新的 admin token。
+func issueAdminToken(userID int64) string {
+	b := make([]byte, 24)
+	_, _ = rand.Read(b)
+	tok := "sat_" + hex.EncodeToString(b)
+	adminTokensMu.Lock()
+	adminTokens[tok] = userID
+	adminTokensMu.Unlock()
+	return tok
+}
+
+// verifyAdminToken 校验 token 是否有效（存在且未过期）。
+func VerifyAdminToken(tok string) (int64, bool) {
+	if tok == "" {
+		return 0, false
+	}
+	adminTokensMu.RLock()
+	uid, ok := adminTokens[tok]
+	adminTokensMu.RUnlock()
+	return uid, ok
+}
+
 // RegisterAdminUsers 注册 admin:* 事件处理器（对标 TS registerAdminUsersHandlers(ctx)，ctx.io/store/config 由参数注入）。
 func RegisterAdminUsers(srv socketapi.Server, store db.Store, cfg *config.ServerConfig) {
+	// ---- 验证是否 SERVER_ADMIN，是则下发 token ----
+	srv.On("admin:verify", func(c socketapi.Conn, _ json.RawMessage, ack socketapi.Ack) {
+		auth, ok := authedUser(c)
+		if !ok {
+			ack(util.Fail("未登录"))
+			return
+		}
+		if !admin.IsServerAdminByUsername(auth.Username, cfg, store) {
+			ack(util.Fail("需要 SERVER_ADMIN 权限"))
+			return
+		}
+		tok := issueAdminToken(auth.ID)
+		ack(util.OK(map[string]any{
+			"token":    tok,
+			"username": auth.Username,
+			"userId":   auth.ID,
+			"expires":  time.Now().Add(12 * time.Hour).Unix(),
+		}))
+	})
+
 	// ---- 全部用户列表 ----
 	srv.On("admin:listUsers", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
 		auth, ok := authedUser(c)

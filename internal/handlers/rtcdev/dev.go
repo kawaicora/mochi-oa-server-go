@@ -468,10 +468,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 控制端请求查看某台远程电脑（绑定控制器；同一设备仅一个，抢占替换） ----
 	srv.On("dev:view", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -535,10 +531,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 请求被控端枚举设备 ----
 	srv.On("dev:enumerate", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -563,10 +555,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 开始采集（camera/screen/mic） ----
 	srv.On("dev:start", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -601,10 +589,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 停止采集 ----
 	srv.On("dev:stop", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -625,10 +609,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 控制端远程执行命令 → 转发被控端 ----
 	srv.On("dev:execRemote", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -696,10 +676,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 交互终端：打开 ----
 	srv.On("dev:termOpen", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return
@@ -723,10 +699,6 @@ func RegisterDev(c Ctx) {
 
 	// ---- 交互终端：输入 ----
 	srv.On("dev:termIn", func(c socketapi.Conn, raw json.RawMessage, ack socketapi.Ack) {
-		if isSlave(c) {
-			ack(util.Fail("被控端连接不可控制设备"))
-			return
-		}
 		if !adminOf(c, cfg, st) {
 			ack(util.Fail("需要 SERVER_ADMIN 权限"))
 			return

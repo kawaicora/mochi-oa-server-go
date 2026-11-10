@@ -49,6 +49,7 @@ func RegisterUploadRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 	mux.HandleFunc("GET /api/folder/files", h.folderFiles)
 	mux.HandleFunc("GET /api/transcode", h.transcode)
 	mux.HandleFunc("/files/", h.download)
+	registerUpdateRoutes(mux, store, cfg)
 }
 
 // ---- 通用小工具（逐字对齐 files.ts） ----

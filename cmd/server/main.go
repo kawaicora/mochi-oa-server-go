@@ -131,10 +131,9 @@ func main() {
 	mux.Handle(cfg.Path, srv)
 	mux.Handle(cfg.Path+"/", srv)
 
-	// ---- 7. HTTP 路由模块（files / reset-pwd / admin-web / afdian） ----
+	// ---- 7. HTTP 路由模块（files / reset-pwd / afdian） ----
 	apphttp.RegisterUploadRoutes(mux, store, cfg)
 	apphttp.RegisterResetPwd(mux, store, srv, cfg)
-	apphttp.RegisterAdminWeb(mux, cfg)
 	apphttp.RegisterAfdianRoutes(mux, store, cfg)
 	apphttp.RegisterAssetQRRoute(mux, store)
 
