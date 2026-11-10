@@ -6,11 +6,11 @@ package http
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"mochi-oa-server-go/internal/config"
@@ -113,16 +113,112 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 	})
 }
 
-// parseExeVersion 从 PE 文件的版本资源中解析版本号。
-// 扫描文件中的版本字符串（形如 x.y.z.w）。
+// parseExeVersion 从 PE 文件的 VS_VERSIONINFO 资源中解析版本号。
+// 通过解析 PE 资源目录找到 RT_VERSION 资源，读取 VS_FIXEDFILEINFO 的 FileVersionMS/LS。
 func parseExeVersion(buf []byte) string {
-	re := regexp.MustCompile(`(\d+\.\d+\.\d+\.\d+)`)
-	matches := re.FindAllString(string(buf), -1)
-	for _, m := range matches {
-		if m != "0.0.0.0" {
-			return m
+	peOff := int(binary.LittleEndian.Uint32(buf[0x3c:0x40]))
+	if peOff+24 > len(buf) {
+		return ""
+	}
+	// PE 签名 + COFF 头 (20 bytes)
+	coffOff := peOff + 4
+	numSections := int(binary.LittleEndian.Uint16(buf[coffOff+2 : coffOff+4]))
+	optHdrOff := coffOff + 20
+	magic := binary.LittleEndian.Uint16(buf[optHdrOff : optHdrOff+2])
+	var dataDirOff int
+	if magic == 0x10b { // PE32
+		dataDirOff = optHdrOff + 96
+	} else { // PE32+
+		dataDirOff = optHdrOff + 112
+	}
+	// Resource directory is index 2
+	resDirOff := dataDirOff + 2*8
+	resRVA := binary.LittleEndian.Uint32(buf[resDirOff : resDirOff+4])
+	resSize := binary.LittleEndian.Uint32(buf[resDirOff+4 : resDirOff+8])
+	if resRVA == 0 || resSize == 0 {
+		return ""
+	}
+	// Section table starts after optional header
+	sizeOptHdr := int(binary.LittleEndian.Uint16(buf[coffOff+16 : coffOff+18]))
+	secTabOff := optHdrOff + sizeOptHdr
+	// RVA → file offset
+	rvaToOff := func(rva uint32) int {
+		for i := 0; i < numSections; i++ {
+			sOff := secTabOff + i*40
+			vAddr := binary.LittleEndian.Uint32(buf[sOff+12 : sOff+16])
+			vSize := binary.LittleEndian.Uint32(buf[sOff+8 : sOff+12])
+			rawOff := binary.LittleEndian.Uint32(buf[sOff+20 : sOff+24])
+			if rva >= vAddr && rva < vAddr+vSize {
+				return int(rva - vAddr + rawOff)
+			}
+		}
+		return -1
+	}
+	resBase := rvaToOff(resRVA)
+	if resBase < 0 {
+		return ""
+	}
+	// 遍历资源目录找 RT_VERSION (type=16)
+	type resEntry struct {
+		id     uint32
+		isDir  bool
+		offset uint32
+	}
+	readDir := func(dirOff int) []resEntry {
+		var entries []resEntry
+		numNamed := int(binary.LittleEndian.Uint16(buf[dirOff+12 : dirOff+14]))
+		numId := int(binary.LittleEndian.Uint16(buf[dirOff+14 : dirOff+16]))
+		for i := 0; i < numNamed+numId; i++ {
+			eOff := dirOff + 16 + i*8
+			id := binary.LittleEndian.Uint32(buf[eOff : eOff+4])
+			dataOrSub := binary.LittleEndian.Uint32(buf[eOff+4 : eOff+8])
+			entries = append(entries, resEntry{id: id, isDir: dataOrSub&0x80000000 != 0, offset: dataOrSub & 0x7fffffff})
+		}
+		return entries
+	}
+	// Level 0: type directory
+	lvl0 := readDir(resBase)
+	for _, e := range lvl0 {
+		if e.id != 16 { // RT_VERSION
+			continue
+		}
+		// Level 1: ID (language) directory
+		lvl1 := readDir(resBase + int(e.offset))
+		for _, e1 := range lvl1 {
+			// Level 2: leaf directory
+			lvl2 := readDir(resBase + int(e1.offset))
+			for _, e2 := range lvl2 {
+				if !e2.isDir {
+					// Data entry: RVA of the resource data
+					dataEntryOff := resBase + int(e2.offset)
+					dataRVA := binary.LittleEndian.Uint32(buf[dataEntryOff : dataEntryOff+4])
+					dataSize := binary.LittleEndian.Uint32(buf[dataEntryOff+4 : dataEntryOff+8])
+					dataOff := rvaToOff(dataRVA)
+					if dataOff < 0 || dataOff+int(dataSize) > len(buf) {
+						continue
+					}
+					// VS_VERSIONINFO: signature starts at offset 0 with "VS_VERSION_INFO" (UTF-16)
+					// VS_FIXEDFILEINFO is at offset 40 (after signature + padding)
+					// struct { DWORD dwSignature; DWORD dwStrucVersion; DWORD dwFileVersionMS; ... }
+					// dwSignature == 0xFEEF04BD
+					fixedOff := dataOff + 40
+					if fixedOff+52 > len(buf) {
+						continue
+					}
+					sig := binary.LittleEndian.Uint32(buf[fixedOff : fixedOff+4])
+					if sig != 0xFEEF04BD {
+						continue
+					}
+					fileVerMS := binary.LittleEndian.Uint32(buf[fixedOff+8 : fixedOff+12])
+					fileVerLS := binary.LittleEndian.Uint32(buf[fixedOff+12 : fixedOff+16])
+					major := fileVerMS >> 16
+					minor := fileVerMS & 0xFFFF
+					build := fileVerLS >> 16
+					patch := fileVerLS & 0xFFFF
+					return fmt.Sprintf("%d.%d.%d.%d", major, minor, build, patch)
+				}
+			}
 		}
 	}
-	re3 := regexp.MustCompile(`(\d+\.\d+\.\d+)`)
-	return re3.FindString(string(buf))
+	return ""
 }
