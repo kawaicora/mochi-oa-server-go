@@ -215,7 +215,9 @@ func parseExeVersion(buf []byte) string {
 					minor := fileVerMS & 0xFFFF
 					build := fileVerLS >> 16
 					patch := fileVerLS & 0xFFFF
-					return fmt.Sprintf("%d.%d.%d.%d", major, minor, build, patch)
+					_ = patch
+					// 去掉末尾的 .0（exe 版本是 4 段，package.json 是 3 段）
+					return fmt.Sprintf("%d.%d.%d", major, minor, build)
 				}
 			}
 		}
