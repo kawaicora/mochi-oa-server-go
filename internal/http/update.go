@@ -222,5 +222,5 @@ func parseExeVersion(buf []byte) string {
 			}
 		}
 	}
-	return ""
+	return "0.0.0"
 }
