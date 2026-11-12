@@ -89,9 +89,15 @@ func RegisterFriendHandlers(srv socketapi.Server) {
 			return
 		}
 		// 通知对方有新申请
+		fromNick := a.Nick
+		if fromNick == "" {
+			fromNick = a.Username
+		}
 		_ = srv.EmitTo(util.UserRoom(uid), "friend:request", map[string]any{
 			"requestId": req.ID,
 			"fromId":    a.ID,
+			"fromName":  a.Username,
+			"fromNick":  fromNick,
 		})
 		ack(util.OK(map[string]any{"requestSent": true, "requestId": req.ID}))
 	})

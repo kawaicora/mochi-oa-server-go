@@ -1472,6 +1472,10 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 			return
 		}
 		// 通知公司所有者和所有管理员
+		fromNick := a.Nick
+		if fromNick == "" {
+			fromNick = a.Username
+		}
 		members, _ := store.GetMembers(ctx, cid)
 		for _, m := range members {
 			if m.Role == "owner" || m.Role == "admin" {
@@ -1480,6 +1484,7 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 					"companyName": company.Name,
 					"fromId":      a.ID,
 					"fromName":    a.Username,
+					"fromNick":    fromNick,
 				})
 			}
 		}

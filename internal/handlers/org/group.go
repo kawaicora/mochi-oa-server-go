@@ -763,6 +763,10 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		// 通知群主和所有管理员
+		fromNick := a.Nick
+		if fromNick == "" {
+			fromNick = a.Username
+		}
 		members, _ := store.GetGroupMembers(ctx, gid)
 		for _, m := range members {
 			if m.Role == "owner" || m.Role == "admin" {
@@ -771,6 +775,7 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 					"groupName": group.Name,
 					"fromId":    a.ID,
 					"fromName":  a.Username,
+					"fromNick":  fromNick,
 				})
 			}
 		}
