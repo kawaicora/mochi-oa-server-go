@@ -24,7 +24,9 @@ import (
 	"strings"
 	"time"
 
+	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/types"
@@ -699,6 +701,38 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 					return
 				}
 			}
+		}
+
+		targetUser, _ := store.GetUserByID(ctx, targetID)
+		if targetUser == nil {
+			ack(util.Fail("用户不存在"))
+			return
+		}
+		// 仅 server_admin 拉普通人可直接入司；其余（含任何人拉 server_admin）走邀请待同意。
+		targetIsAdmin := admin.IsServerAdminByUsername(targetUser.Username, config.Get(), store)
+		direct := isServerAdmin(a) && !targetIsAdmin
+		if !direct {
+			code := util.MakeJoinCode() + util.MakeJoinCode()[:2]
+			inv, err := store.CreateCompanyInvitation(ctx, db.CreateInvitationInput{
+				CompanyID:    cid,
+				UserID:       targetID,
+				DepartmentID: deptID,
+				InvitedBy:    a.ID,
+				Code:         code,
+			})
+			if err != nil {
+				var ae *db.AlreadyExistsError
+				if errors.As(err, &ae) {
+					ack(util.Fail("已邀请过对方，等待其同意"))
+					return
+				}
+				logger.Error(mod, "发送入司邀请失败", "error", err.Error())
+				ack(util.Fail("邀请失败"))
+				return
+			}
+			_ = srv.EmitTo(util.UserRoom(targetID), "company:inviteReceived", map[string]any{"invitation": inv})
+			ack(util.OK(map[string]any{"invited": true, "invitation": inv}))
+			return
 		}
 
 		if err := store.AddMember(ctx, cid, targetID, "member"); err != nil {

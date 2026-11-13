@@ -168,6 +168,135 @@ func (s *MySqlStore) SetCompanyInvitationStatus(ctx context.Context, id int64, s
 		Updates(map[string]any{"status": status}).Error
 }
 
+// ==================== 群邀请 ====================
+
+// groupInvitationView 联表组装群邀请视图（群名/被邀请人/邀请人昵称）。
+func (s *MySqlStore) groupInvitationView(ctx context.Context, row types.GroupInvitationRow) (*types.GroupInvitation, error) {
+	inv := &types.GroupInvitation{
+		ID: row.ID, GroupID: row.GroupID, UserID: row.UserID,
+		InvitedBy: row.InvitedBy, Code: row.Code, Status: row.Status,
+	}
+	if g, err := s.GetGroupByID(ctx, row.GroupID); err == nil && g != nil {
+		inv.GroupName = g.Name
+	}
+	if u, err := s.GetUserByID(ctx, row.UserID); err == nil && u != nil {
+		inv.Username = u.Username
+		nick := u.Nick
+		if nick == "" {
+			nick = u.Username
+		}
+		inv.UserNick = nick
+	}
+	if inviter, err := s.GetUserByID(ctx, row.InvitedBy); err == nil && inviter != nil {
+		nick := inviter.Nick
+		if nick == "" {
+			nick = inviter.Username
+		}
+		inv.InviterNick = nick
+	}
+	if row.ExpiresAt != nil {
+		t := toIso(*row.ExpiresAt)
+		inv.ExpiresAt = &t
+	}
+	inv.CreatedAt = toIso(row.CreatedAt)
+	return inv, nil
+}
+
+// CreateGroupInvitation 创建群邀请（同群同用户已有 pending 则冲突）。
+func (s *MySqlStore) CreateGroupInvitation(ctx context.Context, in CreateGroupInvitationInput) (*types.GroupInvitation, error) {
+	dupIDs := []int64{}
+	if err := s.gorm.WithContext(ctx).Table("group_invitations").
+		Where("group_id = ? AND user_id = ? AND status = 'pending'", in.GroupID, in.UserID).
+		Limit(1).Pluck("id", &dupIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(dupIDs) > 0 {
+		return nil, &AlreadyExistsError{Msg: "group invitation pending"}
+	}
+	var expires any
+	if in.ExpiresAt != nil && *in.ExpiresAt != "" {
+		if t, err := parseTimeFlex(*in.ExpiresAt); err == nil {
+			expires = t
+		}
+	}
+	if err := s.gorm.WithContext(ctx).Table("group_invitations").Create(map[string]any{
+		"group_id":    in.GroupID,
+		"user_id":     in.UserID,
+		"invited_by":  in.InvitedBy,
+		"code":        in.Code,
+		"expires_at":  expires,
+		"created_at":  time.Now().UTC(),
+	}).Error; err != nil {
+		return nil, err
+	}
+	var id int64
+	if err := s.gorm.WithContext(ctx).Table("group_invitations").
+		Where("code = ?", in.Code).Pluck("id", &id).Error; err != nil {
+		return nil, err
+	}
+	return s.GetGroupInvitationByID(ctx, id)
+}
+
+// GetGroupInvitationByID 按主键取群邀请。
+func (s *MySqlStore) GetGroupInvitationByID(ctx context.Context, id int64) (*types.GroupInvitation, error) {
+	var row types.GroupInvitationRow
+	err := s.gorm.WithContext(ctx).Table("group_invitations").Where("id = ?", id).Take(&row).Error
+	if gormNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.groupInvitationView(ctx, row)
+}
+
+// ListGroupInvitations 列群邀请（创建倒序）。
+func (s *MySqlStore) ListGroupInvitations(ctx context.Context, groupID int64) ([]types.GroupInvitation, error) {
+	rows := []types.GroupInvitationRow{}
+	if err := s.gorm.WithContext(ctx).Table("group_invitations").
+		Where("group_id = ?", groupID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []types.GroupInvitation{}
+	for _, row := range rows {
+		v, err := s.groupInvitationView(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *v)
+	}
+	return out, nil
+}
+
+// ListPendingGroupInvitationsForUser 列用户 pending 群邀请。
+func (s *MySqlStore) ListPendingGroupInvitationsForUser(ctx context.Context, userID int64) ([]types.GroupInvitation, error) {
+	rows := []types.GroupInvitationRow{}
+	if err := s.gorm.WithContext(ctx).Table("group_invitations").
+		Where("user_id = ? AND status = 'pending'", userID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := []types.GroupInvitation{}
+	for _, row := range rows {
+		v, err := s.groupInvitationView(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *v)
+	}
+	return out, nil
+}
+
+// SetGroupInvitationStatus 更新群邀请状态。
+func (s *MySqlStore) SetGroupInvitationStatus(ctx context.Context, id int64, status string) error {
+	return s.gorm.WithContext(ctx).Table("group_invitations").
+		Where("id = ?", id).
+		Updates(map[string]any{"status": status}).Error
+}
+
 // GetCompanyMainGroup 找公司全员群（按「{公司名}总群」约定，回退 owner 自建群）。
 func (s *MySqlStore) GetCompanyMainGroup(ctx context.Context, companyID int64) (*types.Group, error) {
 	groups, err := s.ListGroups(ctx, companyID, "")

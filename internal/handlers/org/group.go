@@ -14,22 +14,16 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
+	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
+	"mochi-oa-server-go/internal/handlers/admin"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/socketapi"
+	"mochi-oa-server-go/internal/types"
 	"mochi-oa-server-go/internal/util"
 )
-
-// groupInvite 内存态群邀请（对标 group.ts 顶部 invites Map 的 value 结构）。
-type groupInvite struct {
-	GroupID   int64
-	GroupName string
-	FromUser  int64
-	FromNick  string
-}
 
 // RegisterGroupHandlers 注册群相关全部 socket 事件。
 // 对标 registerGroupHandlers(ctx)。
@@ -50,11 +44,34 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 		joinUserSockets(srv, userID, util.GroupRoom(groupID))
 	}
 
-	srv.OnConnection(func(c socketapi.Conn) error {
-		// 每条连接维护自己的 groupInvites map（对标 TS 的 per-connection Map）。
-		c.Set("groupInvites", &sync.Map{})
-		return nil
-	})
+	// createGroupInvite 落库一条入群邀请并通知被邀请人。
+	createGroupInvite := func(operator *types.Auth, group *types.Group, targetID int64) (*types.GroupInvitation, error) {
+		code := util.MakeJoinCode() + util.MakeJoinCode()[:2]
+		inv, err := store.CreateGroupInvitation(ctx, db.CreateGroupInvitationInput{
+			GroupID:   group.ID,
+			UserID:    targetID,
+			InvitedBy: operator.ID,
+			Code:      code,
+		})
+		if err != nil {
+			return nil, err
+		}
+		nick := operator.Nick
+		if nick == "" {
+			nick = operator.Username
+		}
+		_ = srv.EmitTo(util.UserRoom(targetID), "group:invite", map[string]any{
+			"invitationId": inv.ID,
+			"groupId":      group.ID,
+			"groupName":    group.Name,
+			"from": map[string]any{
+				"userId": operator.ID,
+				"nick":   nick,
+			},
+			"ts": time.Now().UnixMilli(),
+		})
+		return inv, nil
+	}
 
 	// ---- 创建群：公司成员即可；创建人为群主 ----
 	srv.On("group:create", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
@@ -503,6 +520,11 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			ack(util.Fail("仅群主/管理员可添加成员"))
 			return
 		}
+		targetUser, _ := store.GetUserByID(ctx, uid)
+		if targetUser == nil {
+			ack(util.Fail("对方不存在"))
+			return
+		}
 		if group.CompanyID > 0 && !isServerAdmin(a) {
 			targetCRole, _ := store.GetMemberRole(ctx, group.CompanyID, uid)
 			if targetCRole == "" {
@@ -513,6 +535,24 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 		targetGRole, _, _ := store.GetGroupMember(ctx, gid, uid)
 		if targetGRole != "" {
 			ack(util.Fail("已在群中"))
+			return
+		}
+		// 仅 server_admin 拉普通人可直接入群；其余（含任何人拉 server_admin）走邀请待同意。
+		targetIsAdmin := admin.IsServerAdminByUsername(targetUser.Username, config.Get(), store)
+		direct := isServerAdmin(a) && !targetIsAdmin
+		if !direct {
+			inv, err := createGroupInvite(a, group, uid)
+			if err != nil {
+				var ae *db.AlreadyExistsError
+				if errors.As(err, &ae) {
+					ack(util.Fail("已邀请过对方，等待其同意"))
+					return
+				}
+				logger.Error(mod, "发送群邀请失败", "error", err.Error(), "group", gid, "target", uid)
+				ack(util.Fail("邀请失败"))
+				return
+			}
+			ack(util.OK(map[string]any{"invited": true, "invitation": inv}))
 			return
 		}
 		err := store.AddGroupMember(ctx, gid, uid, "member")
@@ -571,32 +611,39 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			ack(util.Fail("对方已在群中"))
 			return
 		}
-		if u, _ := store.GetUserByID(ctx, uid); u == nil {
+		targetUser, _ := store.GetUserByID(ctx, uid)
+		if targetUser == nil {
 			ack(util.Fail("对方不存在"))
 			return
 		}
-		// 存入本连接的 invites map
-		invites, _ := c.Get("groupInvites").(*sync.Map)
-		nick := a.Nick
-		if nick == "" {
-			nick = a.Username
+		inv, err := createGroupInvite(a, group, uid)
+		if err != nil {
+			var ae *db.AlreadyExistsError
+			if errors.As(err, &ae) {
+				ack(util.Fail("已邀请过对方，等待其同意"))
+				return
+			}
+			logger.Error(mod, "发送群邀请失败", "error", err.Error(), "group", gid, "target", uid)
+			ack(util.Fail("邀请失败"))
+			return
 		}
-		invites.Store(fmt.Sprintf("%d:%d", gid, uid), &groupInvite{
-			GroupID:   gid,
-			GroupName: group.Name,
-			FromUser:  a.ID,
-			FromNick:  nick,
-		})
-		_ = srv.EmitTo(util.UserRoom(uid), "group:invite", map[string]any{
-			"groupId":   gid,
-			"groupName": group.Name,
-			"from": map[string]any{
-				"userId": a.ID,
-				"nick":   nick,
-			},
-			"ts": time.Now().UnixMilli(),
-		})
-		ack(util.OK(nil))
+		ack(util.OK(map[string]any{"invitation": inv}))
+	})
+
+	// ---- 我的待处理群邀请 ----
+	srv.On("group:myInvites", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		invs, err := store.ListPendingGroupInvitationsForUser(ctx, a.ID)
+		if err != nil {
+			logger.Error(mod, "获取群邀请列表失败", "error", err.Error(), "userId", a.ID)
+			ack(util.Fail("获取失败"))
+			return
+		}
+		ack(util.OK(map[string]any{"invites": invs}))
 	})
 
 	// ---- 接受邀请入群 ----
@@ -607,45 +654,50 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		d := parseData(data)
-		gid, ok := toInt64(d["groupId"])
-		if !ok || gid <= 0 {
+		invID, ok := toInt64(d["invitationId"])
+		if !ok || invID <= 0 {
 			ack(util.Fail("参数不合法"))
 			return
 		}
-		invites, _ := c.Get("groupInvites").(*sync.Map)
-		raw, _ := invites.Load(fmt.Sprintf("%d:%d", gid, a.ID))
-		inv, _ := raw.(*groupInvite)
+		inv, _ := store.GetGroupInvitationByID(ctx, invID)
 		if inv == nil {
-			ack(util.Fail("没有待处理的邀请"))
+			ack(util.Fail("邀请不存在"))
 			return
 		}
-		group, _ := store.GetGroupByID(ctx, gid)
+		if inv.UserID != a.ID {
+			ack(util.Fail("无权处理该邀请"))
+			return
+		}
+		if inv.Status != "pending" {
+			ack(util.Fail("邀请已失效"))
+			return
+		}
+		group, _ := store.GetGroupByID(ctx, inv.GroupID)
 		if group == nil {
-			invites.Delete(fmt.Sprintf("%d:%d", gid, a.ID))
 			ack(util.Fail("群不存在"))
 			return
 		}
-		myRole, _, _ := store.GetGroupMember(ctx, gid, a.ID)
+		myRole, _, _ := store.GetGroupMember(ctx, inv.GroupID, a.ID)
 		if myRole != "" {
-			invites.Delete(fmt.Sprintf("%d:%d", gid, a.ID))
+			_ = store.SetGroupInvitationStatus(ctx, inv.ID, "declined")
 			ack(util.Fail("已在群中"))
 			return
 		}
 		if group.CompanyID > 0 {
 			cRole, _ := store.GetMemberRole(ctx, group.CompanyID, a.ID)
 			if cRole == "" {
-				invites.Delete(fmt.Sprintf("%d:%d", gid, a.ID))
 				ack(util.Fail("不在该公司，无法入群"))
 				return
 			}
 		}
-		_ = store.AddGroupMember(ctx, gid, a.ID, "member")
-		if conv, err := store.GetOrCreateGroupConversation(ctx, gid, 0); err == nil {
+		_ = store.AddGroupMember(ctx, inv.GroupID, a.ID, "member")
+		if conv, err := store.GetOrCreateGroupConversation(ctx, inv.GroupID, 0); err == nil {
 			_ = store.AddConversationMember(ctx, conv.ID, a.ID)
 		}
-		_ = c.Join(util.GroupRoom(gid))
-		invites.Delete(fmt.Sprintf("%d:%d", gid, a.ID))
-		broadcastMembers(gid)
+		_ = c.Join(util.GroupRoom(inv.GroupID))
+		_ = store.SetGroupInvitationStatus(ctx, inv.ID, "accepted")
+		joinGroupSockets(a.ID, inv.GroupID)
+		broadcastMembers(inv.GroupID)
 		ack(util.OK(map[string]any{"group": group}))
 	})
 
@@ -657,13 +709,23 @@ func RegisterGroupHandlers(srv socketapi.Server) {
 			return
 		}
 		d := parseData(data)
-		gid, ok := toInt64(d["groupId"])
-		if !ok || gid <= 0 {
+		invID, ok := toInt64(d["invitationId"])
+		if !ok || invID <= 0 {
 			ack(util.Fail("参数不合法"))
 			return
 		}
-		invites, _ := c.Get("groupInvites").(*sync.Map)
-		invites.Delete(fmt.Sprintf("%d:%d", gid, a.ID))
+		inv, _ := store.GetGroupInvitationByID(ctx, invID)
+		if inv == nil {
+			ack(util.Fail("邀请不存在"))
+			return
+		}
+		if inv.UserID != a.ID {
+			ack(util.Fail("无权处理该邀请"))
+			return
+		}
+		if inv.Status == "pending" {
+			_ = store.SetGroupInvitationStatus(ctx, inv.ID, "declined")
+		}
 		ack(util.OK(nil))
 	})
 

@@ -72,6 +72,7 @@ func (s *MySqlStore) autoMigrateTables(ctx context.Context) error {
 		&types.FriendRow{},
 		&types.FriendRequestRow{},
 		&types.CompanyInvitationRow{},
+		&types.GroupInvitationRow{},
 		&types.MemberProfileRow{},
 		&types.SessionRow{},
 		&types.MailConfigRow{},

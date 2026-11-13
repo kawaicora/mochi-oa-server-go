@@ -99,6 +99,15 @@ type CreateInvitationInput struct {
 	ExpiresAt    *string
 }
 
+// CreateGroupInvitationInput 创建入群邀请。
+type CreateGroupInvitationInput struct {
+	GroupID   int64
+	UserID    int64
+	InvitedBy int64
+	Code      string
+	ExpiresAt *string
+}
+
 // CreateSessionInput 创建登录会话。
 type CreateSessionInput struct {
 	UserID    int64
@@ -496,6 +505,13 @@ type Store interface {
 	ListPendingInvitationsForUser(ctx context.Context, userID int64) ([]types.CompanyInvitation, error)
 	SetCompanyInvitationStatus(ctx context.Context, id int64, status string) error
 	GetCompanyMainGroup(ctx context.Context, companyID int64) (*types.Group, error)
+
+	// ---- 群邀请 ----
+	CreateGroupInvitation(ctx context.Context, in CreateGroupInvitationInput) (*types.GroupInvitation, error)
+	GetGroupInvitationByID(ctx context.Context, id int64) (*types.GroupInvitation, error)
+	ListGroupInvitations(ctx context.Context, groupID int64) ([]types.GroupInvitation, error)
+	ListPendingGroupInvitationsForUser(ctx context.Context, userID int64) ([]types.GroupInvitation, error)
+	SetGroupInvitationStatus(ctx context.Context, id int64, status string) error
 
 	// ---- 成员人事信息 ----
 	GetMemberProfile(ctx context.Context, companyID, userID int64) (*types.MemberProfile, error)

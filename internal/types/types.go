@@ -160,6 +160,18 @@ type CompanyInvitationRow struct {
 	CreatedAt    time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
+// GroupInvitationRow 对应 group_invitations 表。
+type GroupInvitationRow struct {
+	ID        int64      `db:"id" gorm:"primaryKey;autoIncrement;type:bigint unsigned;not null"`
+	GroupID   int64      `db:"group_id" gorm:"index;type:bigint unsigned;not null"`
+	UserID    int64      `db:"user_id" gorm:"index;type:bigint unsigned;not null"`
+	InvitedBy int64      `db:"invited_by" gorm:"index;type:bigint unsigned;not null"`
+	Code      string     `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
+	ExpiresAt *time.Time `db:"expires_at" gorm:"type:datetime(3)"`
+	Status    string     `db:"status" gorm:"type:enum('pending','accepted','declined','expired');not null;default:pending"` // pending|accepted|declined|expired
+	CreatedAt time.Time  `db:"created_at" gorm:"type:datetime;not null"`
+}
+
 // MemberProfileRow 对应 member_profiles 表（仅 updatedAt，无 createdAt）。
 type MemberProfileRow struct {
 	CompanyID    int64     `db:"company_id" gorm:"primaryKey;type:bigint unsigned;not null"`
@@ -692,6 +704,7 @@ func (FileRow) TableName() string                   { return "files" }
 func (FriendRow) TableName() string                 { return "friends" }
 func (FriendRequestRow) TableName() string           { return "friend_requests" }
 func (CompanyInvitationRow) TableName() string      { return "company_invitations" }
+func (GroupInvitationRow) TableName() string        { return "group_invitations" }
 func (MemberProfileRow) TableName() string          { return "member_profiles" }
 func (SessionRow) TableName() string                { return "sessions" }
 func (MailConfigRow) TableName() string             { return "mail_configs" }
@@ -943,6 +956,22 @@ type CompanyInvitation struct {
 	ExpiresAt      *string `json:"expiresAt"`
 	Status         string  `json:"status"`
 	CreatedAt      string  `json:"createdAt"`
+}
+
+// GroupInvitation 入群邀请。
+type GroupInvitation struct {
+	ID          int64   `json:"id"`
+	GroupID     int64   `json:"groupId"`
+	GroupName   string  `json:"groupName"`
+	UserID      int64   `json:"userId"`
+	Username    string  `json:"username"`
+	UserNick    string  `json:"userNick"`
+	InvitedBy   int64   `json:"invitedBy"`
+	InviterNick string  `json:"inviterNick"`
+	Code        string  `json:"code"`
+	ExpiresAt   *string `json:"expiresAt"`
+	Status      string  `json:"status"`
+	CreatedAt   string  `json:"createdAt"`
 }
 
 // MemberProfile 成员人事信息。
