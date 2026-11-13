@@ -96,6 +96,21 @@ func toInt64(v any) (int64, bool) {
 	}
 }
 
+// toBool 解析 JSON 布尔/数字/字符串为 bool；空/未知按 false。
+func toBool(v any) bool {
+	switch n := v.(type) {
+	case bool:
+		return n
+	case float64:
+		return n != 0
+	case string:
+		s := strings.TrimSpace(strings.ToLower(n))
+		return s == "true" || s == "1" || s == "on" || s == "yes"
+	default:
+		return false
+	}
+}
+
 // parseData 把 json.RawMessage 解析为 map[string]any；空/null/解析失败返回空 map。
 func parseData(data json.RawMessage) map[string]any {
 	if len(data) == 0 {
@@ -949,6 +964,38 @@ func RegisterCompanyHandlers(srv socketapi.Server) {
 		ack(util.OK(map[string]any{"company": company}))
 	})
 
+	// ---- 职位模块开关（owner/admin；启用/关闭公司职位功能） ----
+	srv.On("company:jobEnabledSet", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
+		a := getAuth(c)
+		if a == nil {
+			ack(util.Fail("未登录"))
+			return
+		}
+		d := parseData(data)
+		cid, ok := toInt64(d["companyId"])
+		if !ok || cid <= 0 {
+			ack(util.Fail("参数不合法"))
+			return
+		}
+		enabled := toBool(d["enabled"])
+		myRole, _ := store.GetMemberRole(ctx, cid, a.ID)
+		if myRole == "" {
+			ack(util.Fail("不在公司中"))
+			return
+		}
+		if roleRank(myRole) < roleRank("admin") {
+			ack(util.Fail("仅管理员可操作"))
+			return
+		}
+		if err := store.SetCompanyJobEnabled(ctx, cid, enabled); err != nil {
+			logger.Error(mod, "更新职位模块开关失败", "error", err.Error(), "companyId", cid)
+			ack(util.Fail("操作失败"))
+			return
+		}
+		company, _ := store.GetCompanyByID(ctx, cid)
+		_ = srv.EmitTo(util.CompanyRoom(cid), "company:updated", map[string]any{"company": company})
+		ack(util.OK(map[string]any{"company": company}))
+	})
 	// ---- 公司 logo 修改（owner/admin；上传的图片 URL） ----
 	srv.On("company:updateLogo", func(c socketapi.Conn, data json.RawMessage, ack socketapi.Ack) {
 		a := getAuth(c)

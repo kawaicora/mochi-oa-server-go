@@ -417,6 +417,7 @@ type Store interface {
 	GetUserCompanies(ctx context.Context, userID int64) ([]types.Membership, error)
 	UpdateCompanyLogo(ctx context.Context, companyID int64, avatar string) error
 	RenameCompany(ctx context.Context, companyID int64, name string) error
+	SetCompanyJobEnabled(ctx context.Context, companyID int64, enabled bool) error
 	SetCompanyOwner(ctx context.Context, companyID, ownerID int64) error
 	DeleteCompany(ctx context.Context, companyID int64) error
 

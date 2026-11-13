@@ -357,6 +357,20 @@ func (s *MySqlStore) UpdateCompanyLogo(ctx context.Context, companyID int64, ava
 		Updates(map[string]any{"avatar": avatar}).Error
 }
 
+// SetCompanyJobEnabled 启用/关闭公司职位模块。
+func (s *MySqlStore) SetCompanyJobEnabled(ctx context.Context, companyID int64, enabled bool) error {
+	res := s.gorm.WithContext(ctx).Table("companies").
+		Where("id = ?", companyID).
+		Updates(map[string]any{"job_enabled": enabled})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return &NotFoundError{Msg: "company not found"}
+	}
+	return nil
+}
+
 // SetCompanyOwner 转让公司（更新 owner_id）。
 func (s *MySqlStore) SetCompanyOwner(ctx context.Context, companyID, ownerID int64) error {
 	res := s.gorm.WithContext(ctx).Table("companies").

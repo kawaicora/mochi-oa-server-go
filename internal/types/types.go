@@ -36,6 +36,7 @@ type CompanyRow struct {
 	Code      string    `db:"code" gorm:"uniqueIndex;type:varchar(32);not null"`
 	OwnerID   int64     `db:"owner_id" gorm:"index;type:bigint unsigned;not null"`
 	Avatar    string    `db:"avatar" gorm:"type:varchar(255);not null;default:''"` // 公司 logo（图片 URL，可空=默认）
+	JobEnabled bool     `db:"job_enabled" gorm:"type:tinyint(1);not null;default:0"` // 是否启用职位模块（默认关闭）
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
@@ -755,12 +756,13 @@ type GroupRole = string
 
 // Company 公司。
 type Company struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	Code      string `json:"code"`
-	OwnerID   int64  `json:"ownerId"`
-	Avatar    string `json:"avatar"` // 公司 logo（图片 URL，可空=默认）
-	CreatedAt string `json:"createdAt"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Code       string `json:"code"`
+	OwnerID    int64  `json:"ownerId"`
+	Avatar     string `json:"avatar"` // 公司 logo（图片 URL，可空=默认）
+	JobEnabled bool   `json:"jobEnabled"` // 是否启用职位模块（默认关闭）
+	CreatedAt  string `json:"createdAt"`
 }
 
 // Member 公司成员（联表用户信息）。
