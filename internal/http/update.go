@@ -28,19 +28,31 @@ type updatePlatformEntry struct {
 }
 
 // updateVersionFile /files/version 的持久化结构。
-// 顶层 version 为当前最新版本；platforms 以「平台_架构」为键（如 win_x64、linux_arm64、mac_arm64）。
-// downloadUrl 为旧版扁平字段，仅作兼容兜底。
+// 顶层 version 为当前最新版本；platforms 以「平台_架构」为键（如 win_x64、linux_arm64、mac_arm64），
+// 每个条目携带该包的 downloadUrl 与检测到的版本号。
 type updateVersionFile struct {
-	Version     string                        `json:"version"`
-	Platforms   map[string]updatePlatformEntry `json:"platforms"`
-	DownloadURL string                        `json:"downloadUrl,omitempty"`
+	Version   string                        `json:"version"`
+	Platforms map[string]updatePlatformEntry `json:"platforms"`
 }
 
-// 平台/架构合法值。
-var validPlatforms = map[string]bool{"win": true, "linux": true, "mac": true}
-var validArchs = map[string]bool{"x64": true, "arm64": true}
+// 标准架构名：x86_64（含 x64/x86_64/amd64）、arm64（含 arm64/aarch64）。
+const (
+	archX8664 = "x86_64"
+	archArm64 = "arm64"
+)
 
-var archRe = regexp.MustCompile(`(?i)(arm64|aarch64|x64|x86_64|amd64)`)
+// 标准平台名：windows / linux / darwin（与 GOOS、macOS 标准名一致）。
+const (
+	platWindows = "windows"
+	platLinux   = "linux"
+	platDarwin  = "darwin"
+)
+
+// 平台/架构合法值。
+var validPlatforms = map[string]bool{platWindows: true, platLinux: true, platDarwin: true}
+var validArchs = map[string]bool{archX8664: true, archArm64: true}
+
+var archTokenRe = regexp.MustCompile(`(arm64|aarch64|x64|x86_64|amd64)`)
 var semverRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 
 // registerUpdateRoutes 注册更新包管理路由。
@@ -93,16 +105,24 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			platform = formPlatform
 		}
 
-		arch := detectArch(platform, origName, buf)
+		archs := detectArchs(platform, origName, buf)
 		if formArch != "" {
-			if !validArchs[formArch] {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "非法架构: " + formArch})
-				return
+			archs = nil
+			seen := map[string]bool{}
+			for _, a := range strings.Split(formArch, ",") {
+				a = strings.TrimSpace(a)
+				if !validArchs[a] {
+					writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "非法架构: " + a})
+					return
+				}
+				if !seen[a] {
+					seen[a] = true
+					archs = append(archs, a)
+				}
 			}
-			arch = formArch
 		}
-		if arch == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "无法识别架构，请在文件名中包含 arm64 / x64，或在表单指定 arch"})
+		if len(archs) == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "无法识别架构，请在文件名中包含 x86_64/arm64，或在表单以逗号指定 arch"})
 			return
 		}
 
@@ -115,11 +135,9 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			return
 		}
 
-		key := platform + "_" + arch
-
-		// 写入文件：update_<平台>_<架构>.<扩展名>
+		// 一个物理安装包可覆盖多架构；文件名记录全部架构，各架构条目指向同一下载地址。
 		root, _ := filepath.Abs(cfg.File.Dir)
-		savedName := fmt.Sprintf("update_%s.%s", key, ext)
+		savedName := fmt.Sprintf("update_%s_%s.%s", platform, strings.Join(archs, "-"), ext)
 		updatePath := filepath.Join(root, savedName)
 		versionPath := filepath.Join(root, "version")
 
@@ -136,24 +154,23 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			return
 		}
 
-		// 合并到 version 文件（保留其它平台条目）。
+		// 合并到 version 文件（保留其它平台条目），逐架构写条目。
 		info := loadVersionFile(versionPath)
 		if info.Platforms == nil {
 			info.Platforms = map[string]updatePlatformEntry{}
 		}
-		info.Platforms[key] = updatePlatformEntry{
-			DownloadURL: "/files/" + savedName,
-			Version:     version,
+		keys := make([]string, 0, len(archs))
+		for _, arch := range archs {
+			key := platform + "_" + arch
+			info.Platforms[key] = updatePlatformEntry{
+				DownloadURL: "/files/" + savedName,
+				Version:     version,
+			}
+			keys = append(keys, key)
 		}
 
 		// 顶层版本取所有条目中的最高 semver。
 		info.Version = latestVersion(info.Platforms, version)
-		// 旧版扁平兜底：优先 win_x64，其次本次上传条目。
-		if win, exists := info.Platforms["win_x64"]; exists {
-			info.DownloadURL = win.DownloadURL
-		} else {
-			info.DownloadURL = info.Platforms[key].DownloadURL
-		}
 
 		versionJSON, _ := json.Marshal(info)
 		if err := os.WriteFile(versionPath, versionJSON, 0o644); err != nil {
@@ -162,13 +179,13 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			return
 		}
 
-		logger.Info("http/update", "更新包发布成功", "key", key, "version", version, "size", len(buf))
+		logger.Info("http/update", "更新包发布成功", "keys", keys, "version", version, "size", len(buf))
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":       true,
 			"version":  version,
 			"platform": platform,
-			"arch":     arch,
-			"key":      key,
+			"archs":    archs,
+			"keys":     keys,
 			"url":      "/files/" + savedName,
 		})
 	})
@@ -188,47 +205,68 @@ func detectPlatform(filename string, buf []byte) (platform string, ext string, o
 		if peOff+4 > len(buf) || string(buf[peOff:peOff+4]) != "PE\x00\x00" {
 			return "", "", false
 		}
-		return "win", "exe", true
+		return platWindows, "exe", true
 	case strings.HasSuffix(lower, ".appimage"):
 		// AppImage 本质是 ELF 可执行文件，校验 ELF 魔数。
 		if len(buf) < 4 || string(buf[:4]) != "\x7fELF" {
 			return "", "", false
 		}
-		return "linux", "AppImage", true
+		return platLinux, "AppImage", true
 	case strings.HasSuffix(lower, ".zip"):
 		if len(buf) < 4 || string(buf[:4]) != "PK\x03\x04" {
 			return "", "", false
 		}
-		return "mac", "zip", true
+		return platDarwin, "zip", true
 	case strings.HasSuffix(lower, ".dmg"):
 		// dmg 尾缀为 koly（末尾 4 字节）；放宽校验，扩展名即视为 macOS 包。
 		if len(buf) >= 4 && string(buf[len(buf)-4:]) != "koly" {
 			logger.Warn("http/update", "dmg 未检测到 koly 尾缀，按扩展名接受", "name", filename)
 		}
-		return "mac", "dmg", true
+		return platDarwin, "dmg", true
 	}
 	return "", "", false
 }
 
-// detectArch 判定架构：exe 读 PE Machine；其它包从文件名识别，失败返回空串。
-func detectArch(platform string, filename string, buf []byte) string {
-	if platform == "win" {
-		if arch := peMachineArch(buf); arch != "" {
-			return arch
+// detectArchs 检出安装包支持的全部架构（标准名 x86_64 / arm64）。
+// exe 读 PE Machine；AppImage 读 ELF e_machine；darwin 打包格式在服务端无法解包读取内部
+// 二进制，架构来自文件名 token；表单 arch 逗号列表可整体覆盖。
+func detectArchs(platform string, filename string, buf []byte) []string {
+	archs := []string{}
+	seen := map[string]bool{}
+	add := func(a string) {
+		if a == "" || !validArchs[a] || seen[a] {
+			return
 		}
+		seen[a] = true
+		archs = append(archs, a)
 	}
-	if m := archRe.FindString(strings.ToLower(filename)); m != "" {
-		switch m {
-		case "arm64", "aarch64":
-			return "arm64"
-		case "x64", "x86_64", "amd64":
-			return "x64"
-		}
+
+	switch platform {
+	case platWindows:
+		add(peMachineArch(buf))
+	case platLinux:
+		add(elfMachineArch(buf))
+	}
+
+	// 文件名中出现的全部架构 token（通用包命名如 xxx-x86_64-arm64.dmg）。
+	for _, m := range archTokenRe.FindAllString(strings.ToLower(filename), -1) {
+		add(normalizeArch(m))
+	}
+	return archs
+}
+
+// normalizeArch 把各种别名归一到标准架构名。
+func normalizeArch(token string) string {
+	switch token {
+	case "arm64", "aarch64":
+		return archArm64
+	case "x64", "x86_64", "amd64":
+		return archX8664
 	}
 	return ""
 }
 
-// peMachineArch 从 PE COFF 头 Machine 字段解析架构。
+// peMachineArch 从 PE COFF 头 Machine 字段解析架构（标准名）。
 func peMachineArch(buf []byte) string {
 	if len(buf) < 0x40 {
 		return ""
@@ -241,18 +279,35 @@ func peMachineArch(buf []byte) string {
 	machine := binary.LittleEndian.Uint16(buf[coffOff : coffOff+2])
 	switch machine {
 	case 0x8664: // AMD64
-		return "x64"
+		return archX8664
 	case 0xAA64: // ARM64
-		return "arm64"
-	case 0x014C: // i386
-		return "x86"
+		return archArm64
+	case 0x014C: // i386（32 位不支持）
+		return ""
+	}
+	return ""
+}
+
+// elfMachineArch 从 ELF e_machine 字段解析架构（标准名）。
+func elfMachineArch(buf []byte) string {
+	if len(buf) < 20 || string(buf[:4]) != "\x7fELF" {
+		return ""
+	}
+	machine := binary.LittleEndian.Uint16(buf[18:20])
+	switch machine {
+	case 62: // EM_X86_64
+		return archX8664
+	case 183: // EM_AARCH64
+		return archArm64
+	case 3: // EM_386（32 位不支持）
+		return ""
 	}
 	return ""
 }
 
 // detectVersion 解析版本号：exe 读 PE 资源；其它包从文件名正则提取。
 func detectVersion(platform string, filename string, buf []byte) string {
-	if platform == "win" {
+	if platform == platWindows {
 		if v := parseExeVersion(buf); v != "" && v != "0.0.0" {
 			return v
 		}
