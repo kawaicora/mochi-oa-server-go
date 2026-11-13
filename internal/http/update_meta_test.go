@@ -2,35 +2,6 @@ package http
 
 import "testing"
 
-func TestNormalizeArchList(t *testing.T) {
-	cases := map[string][]string{
-		"x86_64,arm64":  {archX8664, archArm64},
-		"amd64,aarch64": {archX8664, archArm64},
-		"x64,arm64":     {archX8664, archArm64},
-		"arm64,arm64":   {archArm64},
-	}
-	for in, want := range cases {
-		got := normalizeArchList(in)
-		if len(got) != len(want) {
-			t.Errorf("%s: 得到 %v，期望 %v", in, got, want)
-			continue
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Errorf("%s: 得到 %v，期望 %v", in, got, want)
-			}
-		}
-	}
-
-	// 含非法架构整体判空。
-	if got := normalizeArchList("x86_64,mips"); got != nil {
-		t.Errorf("非法架构应返回 nil，得到 %v", got)
-	}
-	if got := normalizeArchList(""); got != nil {
-		t.Errorf("空架构应返回 nil，得到 %v", got)
-	}
-}
-
 func TestResolveExt(t *testing.T) {
 	cases := map[string]string{
 		"麻薯 Setup 14.8.5.exe":       "exe",

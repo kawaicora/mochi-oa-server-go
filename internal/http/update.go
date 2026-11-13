@@ -1,7 +1,7 @@
 // Package http 提供更新包上传接口：POST /api/admin/update
-// 职责边界：平台 / 架构 / 版本号全部由客户端（Node 主进程）识别后随 multipart 上报，
-// 服务端不再解包、不解析二进制头，只做校验与归一、把安装包落到指定目录、合并写入 version 文件，
-// 且只更新本次上传平台自己的条目，其它平台条目原样保留。
+// 职责边界：平台 / 版本号由客户端（Node 主进程）识别后随 multipart 上报，
+// 服务端不再解包、不解析二进制头，也不区分架构（一个安装包同时覆盖 arm64 + x86_64），
+// 只做校验、把安装包落到指定目录、合并写入 version 文件，且只更新本次上传平台自己的条目。
 // 鉴权：仅需登录（与普通上传一致）。
 package http
 
@@ -21,7 +21,7 @@ import (
 	"mochi-oa-server-go/internal/logger"
 )
 
-// updatePlatformEntry 单个平台_架构的更新包信息。
+// updatePlatformEntry 单个平台的更新包信息。
 type updatePlatformEntry struct {
 	DownloadURL string `json:"downloadUrl"`
 	Version     string `json:"version,omitempty"`
@@ -29,18 +29,12 @@ type updatePlatformEntry struct {
 
 // updateVersionFile /files/version 的持久化结构。
 // 顶层 version 为当前最新版本；downloadUrl 为老写法扁平兼容项（旧 Windows 客户端读取，仅随 Windows 包刷新）；
-// platforms 以「平台_架构」为键（如 windows_x86_64、linux_arm64、darwin_arm64），每个条目携带 downloadUrl 与版本号。
+// platforms 以平台名为键（windows / linux / darwin），每个条目携带 downloadUrl 与版本号。
 type updateVersionFile struct {
-	Version     string                        `json:"version"`
-	DownloadURL string                        `json:"downloadUrl,omitempty"`
-	Platforms   map[string]updatePlatformEntry `json:"platforms"`
+	Version      string                        `json:"version"`
+	DownloadURL  string                        `json:"downloadUrl,omitempty"`
+	Platforms    map[string]updatePlatformEntry `json:"platforms"`
 }
-
-// 标准架构名：x86_64（含 x64/x86_64/amd64）、arm64（含 arm64/aarch64）。
-const (
-	archX8664 = "x86_64"
-	archArm64 = "arm64"
-)
 
 // 标准平台名：windows / linux / darwin（与 GOOS、macOS 标准名一致）。
 const (
@@ -49,7 +43,7 @@ const (
 	platDarwin  = "darwin"
 )
 
-// 平台/架构合法值。
+// 平台合法值。
 var validPlatforms = map[string]bool{platWindows: true, platLinux: true, platDarwin: true}
 
 var semverRe = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
@@ -94,19 +88,12 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 		fileHeader := r.MultipartForm.File["file"][0]
 		origName := fileHeader.Filename
 
-		// 客户端上报字段：platform / arch（逗号分隔）/ version。服务端只校验归一，不自行识别。
+		// 客户端上报字段：platform / version。服务端只校验，不自行识别，也不区分架构。
 		platform := strings.TrimSpace(r.FormValue("platform"))
-		formArch := strings.TrimSpace(r.FormValue("arch"))
 		version := strings.TrimSpace(r.FormValue("version"))
 
 		if platform == "" || !validPlatforms[platform] {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "缺少或非法平台: " + platform})
-			return
-		}
-
-		archs := normalizeArchList(formArch)
-		if len(archs) == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "缺少或非法架构（x86_64/arm64，逗号分隔）"})
 			return
 		}
 
@@ -121,9 +108,9 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			return
 		}
 
-		// 一个物理安装包可覆盖多架构；文件名记录全部架构，各架构条目指向同一下载地址。
+		// 一个安装包覆盖全部架构；文件名按平台落盘。
 		root, _ := filepath.Abs(cfg.File.Dir)
-		savedName := fmt.Sprintf("update_%s_%s.%s", platform, strings.Join(archs, "-"), ext)
+		savedName := fmt.Sprintf("update_%s.%s", platform, ext)
 		updatePath := filepath.Join(root, savedName)
 		versionPath := filepath.Join(root, "version")
 
@@ -140,20 +127,16 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			return
 		}
 
-		// 合并到 version 文件（保留其它平台条目），逐架构写条目。
+		// 合并到 version 文件（保留其它平台条目），按平台写条目。
 		info := loadVersionFile(versionPath)
 		if info.Platforms == nil {
 			info.Platforms = map[string]updatePlatformEntry{}
 		}
-		keys := make([]string, 0, len(archs))
-		for _, arch := range archs {
-			key := platform + "_" + arch
-			info.Platforms[key] = updatePlatformEntry{
-				DownloadURL: "/files/" + savedName,
-				Version:     version,
-			}
-			keys = append(keys, key)
+		info.Platforms[platform] = updatePlatformEntry{
+			DownloadURL: "/files/" + savedName,
+			Version:     version,
 		}
+		keys := []string{platform}
 
 		// 顶层版本取所有条目中的最高 semver。
 		info.Version = latestVersion(info.Platforms, version)
@@ -176,7 +159,6 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 			"ok":       true,
 			"version":  version,
 			"platform": platform,
-			"archs":    archs,
 			"keys":     keys,
 			"url":      "/files/" + savedName,
 		})
@@ -192,34 +174,6 @@ func resolveExt(filename string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// normalizeArch 把各种别名归一到标准架构名；无法识别返回空串。
-func normalizeArch(token string) string {
-	switch token {
-	case "arm64", "aarch64":
-		return archArm64
-	case "x64", "x86_64", "amd64":
-		return archX8664
-	}
-	return ""
-}
-
-// normalizeArchList 解析逗号分隔的架构列表，归一为标准名并去重；含非法值时整体返回空。
-func normalizeArchList(formArch string) []string {
-	archs := []string{}
-	seen := map[string]bool{}
-	for _, a := range strings.Split(formArch, ",") {
-		a = normalizeArch(strings.TrimSpace(a))
-		if a == "" {
-			return nil
-		}
-		if !seen[a] {
-			seen[a] = true
-			archs = append(archs, a)
-		}
-	}
-	return archs
 }
 
 // loadVersionFile 读取既有 version 文件；损坏或缺失时返回空结构。
