@@ -28,11 +28,12 @@ type updatePlatformEntry struct {
 }
 
 // updateVersionFile /files/version 的持久化结构。
-// 顶层 version 为当前最新版本；platforms 以「平台_架构」为键（如 win_x64、linux_arm64、mac_arm64），
-// 每个条目携带该包的 downloadUrl 与检测到的版本号。
+// 顶层 version 为当前最新版本；downloadUrl 为老写法扁平兼容项（旧 Windows 客户端读取，仅随 Windows 包刷新）；
+// platforms 以「平台_架构」为键（如 windows_x86_64、linux_arm64、darwin_arm64），每个条目携带 downloadUrl 与版本号。
 type updateVersionFile struct {
-	Version   string                        `json:"version"`
-	Platforms map[string]updatePlatformEntry `json:"platforms"`
+	Version     string                        `json:"version"`
+	DownloadURL string                        `json:"downloadUrl,omitempty"`
+	Platforms   map[string]updatePlatformEntry `json:"platforms"`
 }
 
 // 标准架构名：x86_64（含 x64/x86_64/amd64）、arm64（含 arm64/aarch64）。
@@ -172,6 +173,12 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 		// 顶层版本取所有条目中的最高 semver。
 		info.Version = latestVersion(info.Platforms, version)
 
+		// 老写法扁平兼容项：仅 Windows 包刷新顶层 downloadUrl（旧 Windows 客户端只认扁平地址）；
+		// 上传 Linux/macOS 包时保留上一次写入的扁平项，不清空。
+		if platform == platWindows {
+			info.DownloadURL = "/files/" + savedName
+		}
+
 		versionJSON, _ := json.Marshal(info)
 		if err := os.WriteFile(versionPath, versionJSON, 0o644); err != nil {
 			logger.Error("http/update", "写入 version 文件失败", "error", err.Error())
@@ -228,8 +235,9 @@ func detectPlatform(filename string, buf []byte) (platform string, ext string, o
 }
 
 // detectArchs 检出安装包支持的全部架构（标准名 x86_64 / arm64）。
-// exe 读 PE Machine；AppImage 读 ELF e_machine；darwin 打包格式在服务端无法解包读取内部
-// 二进制，架构来自文件名 token；表单 arch 逗号列表可整体覆盖。
+// exe 读 PE Machine；AppImage 读 ELF e_machine；darwin zip 解出内部 Mach-O 读 CPU 类型；
+// dmg 容器内无法解包，架构来自文件名 token；表单 arch 逗号列表可整体覆盖。
+// 解包逻辑带 goroutine 超时与读取上限，损坏包不会卡死处理器。
 func detectArchs(platform string, filename string, buf []byte) []string {
 	archs := []string{}
 	seen := map[string]bool{}
@@ -246,6 +254,11 @@ func detectArchs(platform string, filename string, buf []byte) []string {
 		add(peMachineArch(buf))
 	case platLinux:
 		add(elfMachineArch(buf))
+	case platDarwin:
+		// zip 分发包：解出内部 Mach-O 读架构；dmg 在容器内无法解包，走下方文件名/表单兜底。
+		for _, a := range zipMacArchs(buf) {
+			add(a)
+		}
 	}
 
 	// 文件名中出现的全部架构 token（通用包命名如 xxx-x86_64-arm64.dmg）。
