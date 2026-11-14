@@ -51,6 +51,7 @@ type chatSendReq struct {
 	Kind    *string `json:"kind"`
 	Content *string `json:"content"`
 	Text    *string `json:"text"`
+	FileID  *string `json:"fileId"`
 }
 
 type chatHistoryReq struct {
@@ -64,6 +65,7 @@ type dmSendReq struct {
 	Kind     *string `json:"kind"`
 	Content  *string `json:"content"`
 	Text     *string `json:"text"`
+	FileID   *string `json:"fileId"`
 }
 
 type dmHistoryReq struct {
@@ -196,6 +198,14 @@ func isUuidStr(v string) bool {
 	return isUuidRe.MatchString(v)
 }
 
+// derefStr 解引用字符串指针，nil 返回空串。
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
 // isFolderPath 校验文件夹相对路径（如 6/p20260921_merge 或 default/p20260921_merge）。
 // 逐段清洗、拒绝穿越/根目录。
 func isFolderPath(v string) bool {
@@ -272,6 +282,26 @@ func resolveContent(ctx context.Context, store db.Store, kind string, raw string
 		return &f.URL, nil
 	}
 	return &raw, nil
+}
+
+// resolveFileID 解析消息关联的文件记录 UUID：优先请求显式 fileId；raw 本身是 UUID 直接采用；
+// 否则按解析后的内容 URL 反查文件记录。文本/文件夹消息不关联文件，返回空串。
+func resolveFileID(ctx context.Context, store db.Store, kind, raw, explicitFileID, content string) string {
+	if kind == "text" || kind == "folder" {
+		return ""
+	}
+	if explicitFileID != "" && isUuidStr(explicitFileID) {
+		return explicitFileID
+	}
+	if isUuidStr(raw) {
+		return raw
+	}
+	if content != "" {
+		if f, err := store.GetFileByURL(ctx, content); err == nil && f != nil {
+			return f.UUID
+		}
+	}
+	return ""
 }
 
 // previewOf 对话列表预览文本：文本直接显示，图片/视频/文件给占位符。
@@ -454,7 +484,8 @@ func Register(c Ctx) {
 				ack(util.Fail("服务器错误"))
 				return
 			}
-			msg, err := store.SaveMessage(ctx, conv.ID, auth.ID, kind, *content)
+			fileID := resolveFileID(ctx, store, kind, raw, derefStr(req.FileID), *content)
+			msg, err := store.SaveMessage(ctx, conv.ID, auth.ID, kind, *content, fileID)
 			if err != nil {
 				logger.Error(module, "SaveMessage 失败", "error", err)
 				ack(util.Fail("服务器错误"))
@@ -617,7 +648,8 @@ func Register(c Ctx) {
 				ack(util.Fail("服务器错误"))
 				return
 			}
-			msg, err := store.SaveMessage(ctx, conv.ID, auth.ID, kind, *content)
+			fileID := resolveFileID(ctx, store, kind, raw, derefStr(req.FileID), *content)
+			msg, err := store.SaveMessage(ctx, conv.ID, auth.ID, kind, *content, fileID)
 			if err != nil {
 				logger.Error(module, "SaveMessage 失败", "error", err)
 				ack(util.Fail("服务器错误"))

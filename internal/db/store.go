@@ -469,7 +469,7 @@ type Store interface {
 	ListConversations(ctx context.Context, userID int64, typ string) ([]types.ConversationItem, error)
 
 	// ---- 消息 ----
-	SaveMessage(ctx context.Context, conversationID, fromID int64, kind, content string) (*types.ChatMessage, error)
+	SaveMessage(ctx context.Context, conversationID, fromID int64, kind, content, fileID string) (*types.ChatMessage, error)
 	ListMessages(ctx context.Context, conversationID, beforeTs int64, limit int64) ([]types.ChatMessage, error)
 	GetMessage(ctx context.Context, conversationID int64, messageID string) (*types.ChatMessage, error)
 	FindOwnMessageByContent(ctx context.Context, conversationID, userID int64, content string) (*types.ChatMessage, error)

@@ -223,12 +223,13 @@ func (s *MySqlStore) ListConversations(ctx context.Context, userID int64, typ st
 // ==================== 消息 ====================
 
 // SaveMessage 落库一条消息。
-func (s *MySqlStore) SaveMessage(ctx context.Context, conversationID, fromID int64, kind, content string) (*types.ChatMessage, error) {
+func (s *MySqlStore) SaveMessage(ctx context.Context, conversationID, fromID int64, kind, content, fileID string) (*types.ChatMessage, error) {
 	row := map[string]any{
 		"conversation_id": conversationID,
 		"from_id":         fromID,
 		"kind":            kind,
 		"content":         content,
+		"file_id":         fileID,
 		"created_at":      time.Now().UTC(),
 	}
 	if err := s.gorm.WithContext(ctx).Table("messages").Create(row).Error; err != nil {
@@ -265,7 +266,7 @@ func (s *MySqlStore) ListMessages(ctx context.Context, conversationID, beforeTs,
 	for _, r := range rows {
 		out = append(out, types.ChatMessage{
 			ID: fmt.Sprintf("%d", r.ID), ConversationID: r.ConversationID, Type: typ, FromID: r.FromID,
-			Nick: "", Kind: r.Kind, Content: r.Content, Ts: r.CreatedAt.UnixMilli(),
+			Nick: "", Kind: r.Kind, Content: r.Content, FileID: r.FileID, Ts: r.CreatedAt.UnixMilli(),
 		})
 	}
 	return out, nil
@@ -293,7 +294,7 @@ func (s *MySqlStore) GetMessage(ctx context.Context, conversationID int64, messa
 	}
 	return &types.ChatMessage{
 		ID: fmt.Sprintf("%d", r.ID), ConversationID: r.ConversationID, Type: typ, FromID: r.FromID,
-		Nick: "", Kind: r.Kind, Content: r.Content, Ts: r.CreatedAt.UnixMilli(),
+		Nick: "", Kind: r.Kind, Content: r.Content, FileID: r.FileID, Ts: r.CreatedAt.UnixMilli(),
 	}, nil
 }
 
@@ -315,7 +316,7 @@ func (s *MySqlStore) FindOwnMessageByContent(ctx context.Context, conversationID
 	}
 	return &types.ChatMessage{
 		ID: fmt.Sprintf("%d", r.ID), ConversationID: r.ConversationID, Type: typ, FromID: r.FromID,
-		Nick: "", Kind: r.Kind, Content: r.Content, Ts: r.CreatedAt.UnixMilli(),
+		Nick: "", Kind: r.Kind, Content: r.Content, FileID: r.FileID, Ts: r.CreatedAt.UnixMilli(),
 	}, nil
 }
 
@@ -337,7 +338,7 @@ func (s *MySqlStore) FindOwnMessageByContentGlobal(ctx context.Context, userID i
 	}
 	return &types.ChatMessage{
 		ID: fmt.Sprintf("%d", r.ID), ConversationID: r.ConversationID, Type: typ, FromID: r.FromID,
-		Nick: "", Kind: r.Kind, Content: r.Content, Ts: r.CreatedAt.UnixMilli(),
+		Nick: "", Kind: r.Kind, Content: r.Content, FileID: r.FileID, Ts: r.CreatedAt.UnixMilli(),
 	}, nil
 }
 

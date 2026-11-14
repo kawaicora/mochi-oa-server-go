@@ -114,7 +114,8 @@ type MessageRow struct {
 	FromID         int64      `db:"from_id" gorm:"type:bigint unsigned;not null"`
 	Kind           string     `db:"kind" gorm:"type:enum('text','image','file','video','audio','folder','proxy_card','expense_card','advance_card','attendance_card');not null;default:text"` // text|image|video|audio|file|folder|proxy_card|expense_card|advance_card|attendance_card
 	Content        string     `db:"content" gorm:"type:text;not null"`
-	DeletedAt      *time.Time `db:"deleted_at" gorm:"type:datetime(3)"` // 软删除标记
+	FileID         string     `db:"file_id" gorm:"type:char(36);index"` // 关联文件记录 UUID；文本/文件夹消息为空
+	DeletedAt      *time.Time `db:"deleted_at" gorm:"type:datetime(3)"`  // 软删除标记
 	CreatedAt      time.Time  `db:"created_at" gorm:"type:datetime;not null"`
 }
 
@@ -902,6 +903,7 @@ type ChatMessage struct {
 	Avatar         string `json:"avatar,omitempty"`
 	Kind           string `json:"kind"`
 	Content        string `json:"content"`
+	FileID         string `json:"fileId,omitempty"`
 	Ts             int64  `json:"ts"`
 }
 

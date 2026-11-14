@@ -111,6 +111,9 @@ func TestSuffixedName(t *testing.T) {
 		{"photo.jpg", 2, "photo_2.jpg"},
 		{"Mochi.dll", 1, "Mochi_1.dll"},
 		{"noext", 1, "noext_1"},
+		{"麻薯.dll", 1, "麻薯_1.dll"},
+		{"a.b.c.txt", 1, "a.b.c_1.txt"},
+		{"CLIP.MP4", 1, "CLIP_1.MP4"},
 	}
 	for _, c := range cases {
 		if got := suffixedName(c.in, c.n); got != c.want {
