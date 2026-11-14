@@ -31,6 +31,7 @@ import (
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/logger"
 	"mochi-oa-server-go/internal/token"
+	"mochi-oa-server-go/internal/types"
 	"mochi-oa-server-go/internal/util"
 )
 
@@ -156,18 +157,7 @@ func saveLocal(cfg *config.ServerConfig, originalName string, buf []byte, compan
 	if err != nil {
 		return savedLocal{}, err
 	}
-	key := sanitizeName(companyKey)
-	if key == "" {
-		key = "default"
-	}
-	segments := []string{key}
-	if relativeDir != "" {
-		for _, s := range strings.Split(relativeDir, "/") {
-			if c := sanitizeName(s); c != "" {
-				segments = append(segments, c)
-			}
-		}
-	}
+	segments := buildSegments(companyKey, relativeDir)
 	dir := filepath.Join(append([]string{root}, segments...)...)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return savedLocal{}, err
@@ -183,6 +173,31 @@ func saveLocal(cfg *config.ServerConfig, originalName string, buf []byte, compan
 // segmentsJoin 用 "/" 拼接段（filepath.Join 在 Windows 用反斜杠，URL 需要正斜杠）。
 func segmentsJoin(segments []string) string {
 	return strings.Join(segments, "/")
+}
+
+// buildSegments 按 companyKey/relativeDir 拼出 URL 目录段（与 saveLocal 落盘目录一致）。
+func buildSegments(companyKey, relativeDir string) []string {
+	key := sanitizeName(companyKey)
+	if key == "" {
+		key = "default"
+	}
+	segments := []string{key}
+	if relativeDir != "" {
+		for _, s := range strings.Split(relativeDir, "/") {
+			if c := sanitizeName(s); c != "" {
+				segments = append(segments, c)
+			}
+		}
+	}
+	return segments
+}
+
+// localRelativeURL 为一次上传生成相对 URL 路径（不写盘），供引用记录复用；目录段与 saveLocal 一致。
+func localRelativeURL(originalName, companyKey, relativeDir string) string {
+	segments := buildSegments(companyKey, relativeDir)
+	diskName := sanitizeName(originalName)
+	rel := segmentsJoin(segments) + "/" + strings.ReplaceAll(urlQueryEscape(diskName), "%2F", "/")
+	return "/files/" + rel
 }
 
 // urlQueryEscape URL 编码文件名（对齐 encodeURIComponent）。
@@ -319,6 +334,8 @@ func safeDownloadPath(cfg *config.ServerConfig, decoded string) string {
 // ---- 路由实现 ----
 
 // download 裸下载 GET /files/*（不鉴权；支持 Range/正确 MIME/inline）。
+// 先按记录 URL 查 files 表：实体记录直接取其物理文件；引用记录沿 using_file_id 跳到实体取字节，
+// 展示名用引用记录原名。只有库里查不到记录的旧数据，才按请求路径直取磁盘文件。
 func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 	setFileCORS(w)
 	if r.Method == http.MethodOptions {
@@ -331,7 +348,35 @@ func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	full := safeDownloadPath(h.cfg, decoded)
+
+	physRel := decoded
+	dispName := ""
+	recordMime := ""
+	if rec := h.lookupFileRecord(r.Context(), decoded); rec != nil {
+		target := rec
+		if rec.UsingFileID != "" {
+			// 引用记录：必须沿 using_file_id 解析到实体；实体缺失直接 404，
+			// 绝不能拿引用记录自己的路径去物理直取（磁盘上没有这个文件）。
+			ent, e2 := h.store.GetFileByUUID(r.Context(), rec.UsingFileID)
+			if e2 != nil {
+				logger.Error("http/files", "引用记录解析实体失败", "ref", rec.UUID, "using", rec.UsingFileID, "error", e2.Error())
+				http.NotFound(w, r)
+				return
+			}
+			if ent == nil {
+				logger.Error("http/files", "引用记录指向的实体不存在", "ref", rec.UUID, "using", rec.UsingFileID)
+				http.NotFound(w, r)
+				return
+			}
+			target = ent
+		}
+		physRel = strings.TrimPrefix(target.URL, "/files/")
+		dispName = rec.Filename
+		recordMime = rec.Mime
+	}
+	// physRel 为空时（库里无记录的旧数据）才按请求路径直取磁盘；引用记录不会走到这里。
+
+	full := safeDownloadPath(h.cfg, physRel)
 	if full == "" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -341,10 +386,16 @@ func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	name := filepath.Base(full)
-	w.Header().Set("Content-Type", mimeOf(full))
+	if dispName == "" {
+		dispName = filepath.Base(full)
+	}
+	mime := recordMime
+	if mime == "" {
+		mime = mimeOf(full)
+	}
+	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Accept-Ranges", "bytes")
-	w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+urlQueryEscape(name))
+	w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+urlQueryEscape(dispName))
 	// http.ServeContent 原生支持 Range(206)/416/HEAD，语义与 TS createReadStream(start,end) 一致。
 	f, err := os.Open(full)
 	if err != nil {
@@ -352,7 +403,31 @@ func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	http.ServeContent(w, r, name, fi.ModTime(), f)
+	http.ServeContent(w, r, dispName, fi.ModTime(), f)
+}
+
+// lookupFileRecord 按下载路径查 files 记录：先按转义后的存储 URL 匹配，再按原始解码路径兜底。
+func (h *filesHandler) lookupFileRecord(ctx context.Context, decoded string) *types.FileRecord {
+	if h.store == nil {
+		return nil
+	}
+	escaped := "/files/" + escapeBasenamePath(decoded)
+	if rec, err := h.store.GetFileByURL(ctx, escaped); err == nil && rec != nil {
+		return rec
+	}
+	if rec, err := h.store.GetFileByURL(ctx, "/files/"+decoded); err == nil && rec != nil {
+		return rec
+	}
+	return nil
+}
+
+// escapeBasenamePath 只对路径末段（文件名）做 URL 转义，目录段保持原样（与落盘 URL 生成一致）。
+func escapeBasenamePath(decoded string) string {
+	parts := strings.Split(decoded, "/")
+	if n := len(parts); n > 0 {
+		parts[n-1] = strings.ReplaceAll(urlQueryEscape(parts[n-1]), "%2F", "/")
+	}
+	return strings.Join(parts, "/")
 }
 
 // urlPathUnescape 解码 URL 路径段（对百分号编码宽容：失败则返回原串，交由后续校验拦截）。
@@ -429,13 +504,38 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 	// 计算 SHA256 hash，相同文件直接复用已有记录
 	sum := sha256.Sum256(buf)
 	hash := hex.EncodeToString(sum[:])
+	// hash 一致只代表数据相同。FindFileByHash 仅命中实体记录（using_file_id 为空），
+	// 新建一条引用记录指向该实体：数据沿用实体（UUID/URL/磁盘文件），文件名以本次上传原名为准，不重复写盘。
 	if existing, err := h.store.FindFileByHash(context.Background(), hash); err == nil && existing != nil {
-		logger.Info("http/files", "文件 hash 已存在，直接复用", "hash", hash, "uuid", existing.UUID)
+		physical := existing
+		name := sanitizeName(originalName)
+		if name == "file" {
+			name = physical.Filename
+		}
+		// 引用记录：除字节数据来自实体外，文件名/mime/size 等信息都用本次上传带来的值；
+		// 引用记录持有自己的 URL（目录段/文件名按本次上传生成，不写盘）。
+		refURL := localRelativeURL(name, companyKey, relativeDir)
+		ref, err := h.store.SaveFile(context.Background(), db.SaveFileInput{
+			UUID:        newUUID(),
+			Filename:    name,
+			Mime:        mime,
+			Size:        int64(len(buf)),
+			Storage:     physical.Storage,
+			URL:         refURL,
+			Hash:        hash,
+			UsingFileID: physical.UUID,
+		})
+		if err != nil {
+			logger.Error("http/files", "引用文件记录入库失败", "error", err.Error())
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "存储失败"})
+			return
+		}
+		logger.Info("http/files", "文件 hash 已存在，复用实体并新建引用记录", "hash", hash, "physical", physical.UUID, "ref", ref.UUID, "name", name, "url", ref.URL)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": true, "uuid": existing.UUID,
-			"filename": existing.Filename, "fileName": existing.Filename,
-			"mime": existing.Mime, "size": existing.Size,
-			"url": pubUrl(h.cfg, existing.URL),
+			"ok": true, "uuid": ref.UUID,
+			"filename": name, "fileName": name,
+			"mime": mime, "size": int64(len(buf)),
+			"url": pubUrl(h.cfg, ref.URL),
 		})
 		return
 	}
@@ -447,13 +547,14 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 		return
 	}
 	rec, err := h.store.SaveFile(context.Background(), db.SaveFileInput{
-		UUID:     newUUID(),
-		Filename: sanitizeName(originalName),
-		Mime:     mime,
-		Size:     int64(len(buf)),
-		Storage:  saved.storage,
-		URL:      saved.url,
-		Hash:     hash,
+		UUID:        newUUID(),
+		Filename:    sanitizeName(originalName),
+		Mime:        mime,
+		Size:        int64(len(buf)),
+		Storage:     saved.storage,
+		URL:         saved.url,
+		Hash:        hash,
+		UsingFileID: "",
 	})
 	if err != nil {
 		logger.Error("http/files", "文件记录入库失败", "error", err.Error())

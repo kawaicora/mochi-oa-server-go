@@ -127,6 +127,7 @@ type FileRow struct {
 	Storage   string    `db:"storage" gorm:"type:enum('local','ftp');not null;default:local"` // local|ftp
 	URL       string    `db:"url" gorm:"type:varchar(512);not null"`
 	Hash      string    `db:"hash" gorm:"type:char(64);index"`
+	UsingFileID string  `db:"using_file_id" gorm:"type:char(36);index"` // 引用记录指向的实体文件记录 UUID；实体记录为空
 	CreatedAt time.Time `db:"created_at" gorm:"type:datetime;not null"`
 }
 
@@ -906,14 +907,15 @@ type ChatMessage struct {
 
 // FileRecord 上传文件记录。
 type FileRecord struct {
-	UUID      string `json:"uuid"`
-	Filename  string `json:"filename"`
-	Mime      string `json:"mime"`
-	Size      int64  `json:"size"`
-	Storage   string `json:"storage"`
-	URL       string `json:"url"`
-	Hash      string `json:"hash,omitempty"`
-	CreatedAt string `json:"createdAt"`
+	UUID        string `json:"uuid"`
+	Filename    string `json:"filename"`
+	Mime        string `json:"mime"`
+	Size        int64  `json:"size"`
+	Storage     string `json:"storage"`
+	URL         string `json:"url"`
+	Hash        string `json:"hash,omitempty"`
+	UsingFileID string `json:"usingFileId,omitempty"`
+	CreatedAt   string `json:"createdAt"`
 }
 
 // Friend 好友。

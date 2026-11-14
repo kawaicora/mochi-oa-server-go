@@ -386,13 +386,14 @@ type UpdateWikiInput struct {
 
 // SaveFileInput 上传文件记录。
 type SaveFileInput struct {
-	UUID     string
-	Filename string
-	Mime     string
-	Size     int64
-	Storage  string
-	URL      string
-	Hash     string
+	UUID        string
+	Filename    string
+	Mime        string
+	Size        int64
+	Storage     string
+	URL         string
+	Hash        string
+	UsingFileID string
 }
 
 // Store 是存储层抽象：生产用 MySqlStore，开发/测试用 MemoryStore。
@@ -484,6 +485,7 @@ type Store interface {
 	// ---- 文件 ----
 	SaveFile(ctx context.Context, in SaveFileInput) (*types.FileRecord, error)
 	GetFileByUUID(ctx context.Context, uuid string) (*types.FileRecord, error)
+	GetFileByURL(ctx context.Context, fileURL string) (*types.FileRecord, error)
 	FindFileByHash(ctx context.Context, hash string) (*types.FileRecord, error)
 
 	// ---- 好友 ----

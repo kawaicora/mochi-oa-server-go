@@ -482,7 +482,7 @@ func (s *MySqlStore) SaveFile(ctx context.Context, in SaveFileInput) (*types.Fil
 	if err := s.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		row := map[string]any{
 			"uuid": in.UUID, "filename": in.Filename, "mime": in.Mime, "size": in.Size,
-			"storage": storage, "url": in.URL, "hash": in.Hash, "created_at": time.Now().UTC(),
+			"storage": storage, "url": in.URL, "hash": in.Hash, "using_file_id": in.UsingFileID, "created_at": time.Now().UTC(),
 		}
 		if err := tx.Table("files").Create(row).Error; err != nil {
 			return err
@@ -501,7 +501,7 @@ func (s *MySqlStore) SaveFile(ctx context.Context, in SaveFileInput) (*types.Fil
 	}
 	return &types.FileRecord{
 		UUID: in.UUID, Filename: in.Filename, Mime: in.Mime, Size: in.Size,
-		Storage: storage, URL: in.URL, Hash: in.Hash, CreatedAt: toIso(created),
+		Storage: storage, URL: in.URL, Hash: in.Hash, UsingFileID: in.UsingFileID, CreatedAt: toIso(created),
 	}, nil
 }
 
@@ -515,20 +515,36 @@ func (s *MySqlStore) GetFileByUUID(ctx context.Context, uuid string) (*types.Fil
 	if err != nil {
 		return nil, err
 	}
-	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, CreatedAt: toIso(r.CreatedAt)}, nil
+	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, UsingFileID: r.UsingFileID, CreatedAt: toIso(r.CreatedAt)}, nil
 }
 
-// FindFileByHash 按 SHA256 hash 查找已存在的文件记录。
-func (s *MySqlStore) FindFileByHash(ctx context.Context, hash string) (*types.FileRecord, error) {
+// GetFileByURL 按存储的相对 URL 取文件记录（实体或引用）。
+func (s *MySqlStore) GetFileByURL(ctx context.Context, fileURL string) (*types.FileRecord, error) {
 	var r types.FileRow
-	err := s.gorm.WithContext(ctx).Table("files").Where("hash = ?", hash).Take(&r).Error
+	err := s.gorm.WithContext(ctx).Table("files").Where("url = ?", fileURL).Take(&r).Error
 	if gormNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, CreatedAt: toIso(r.CreatedAt)}, nil
+	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, UsingFileID: r.UsingFileID, CreatedAt: toIso(r.CreatedAt)}, nil
+}
+
+// FindFileByHash 按 SHA256 hash 查找已存在的实体文件记录（仅匹配 using_file_id 为空的实体，不含引用记录）。
+func (s *MySqlStore) FindFileByHash(ctx context.Context, hash string) (*types.FileRecord, error) {
+	var r types.FileRow
+	err := s.gorm.WithContext(ctx).Table("files").
+		Where("hash = ?", hash).
+		Where("using_file_id IS NULL OR using_file_id = ''").
+		Take(&r).Error
+	if gormNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, UsingFileID: r.UsingFileID, CreatedAt: toIso(r.CreatedAt)}, nil
 }
 
 // ==================== 好友 ====================
