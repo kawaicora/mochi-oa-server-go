@@ -194,8 +194,12 @@ func buildSegments(companyKey, relativeDir string) []string {
 }
 
 // localRelativeURL 为一次上传生成相对 URL 路径（不写盘），供引用记录复用；目录段与 saveLocal 一致。
-func localRelativeURL(originalName, companyKey, relativeDir string) string {
+// uniqueID 非空时作为独立目录段加入，保证同名多次上传的引用记录 URL 互不相同（避免按 URL 查库串号）。
+func localRelativeURL(originalName, companyKey, relativeDir, uniqueID string) string {
 	segments := buildSegments(companyKey, relativeDir)
+	if uniqueID != "" {
+		segments = append(segments, uniqueID)
+	}
 	diskName := sanitizeName(originalName)
 	rel := segmentsJoin(segments) + "/" + strings.ReplaceAll(urlQueryEscape(diskName), "%2F", "/")
 	return "/files/" + rel
@@ -506,10 +510,11 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 			name = physical.Filename
 		}
 		// 引用记录：除字节数据来自实体外，文件名/mime/size 等信息都用本次上传带来的值；
-		// 引用记录持有自己的 URL（目录段/文件名按本次上传生成，不写盘）。
-		refURL := localRelativeURL(name, companyKey, relativeDir)
+		// 引用记录持有自己的独立 URL（目录段带唯一 UUID 前缀，不写盘）。
+		refUUID := newUUID()
+		refURL := localRelativeURL(name, companyKey, relativeDir, refUUID)
 		ref, err := h.store.SaveFile(context.Background(), db.SaveFileInput{
-			UUID:        newUUID(),
+			UUID:        refUUID,
 			Filename:    name,
 			Mime:        mime,
 			Size:        int64(len(buf)),
