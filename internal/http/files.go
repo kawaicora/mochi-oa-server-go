@@ -671,12 +671,14 @@ func (h *filesHandler) folderFiles(w http.ResponseWriter, r *http.Request) {
 				walk(filepath.Join(curDir, e.Name()), childRel)
 			} else {
 				var segEsc []string
-				for _, s := range strings.Split(childRel[1:], "/") {
+				// curRel 无前导斜杠，childRel 形如 default/文件夹/文件；不能用 childRel[1:]，
+				// 那会把首段首字母（如 default 的 d）啃掉，导致文件 URL 404。
+				for _, s := range strings.Split(childRel, "/") {
 					segEsc = append(segEsc, urlQueryEscape(s))
 				}
 				files = append(files, fileEntry{
 					Name:    e.Name(),
-					RelPath: childRel[1:],
+					RelPath: childRel,
 					URL:     pubUrl(h.cfg, "/files/"+strings.Join(segEsc, "/")),
 				})
 			}
