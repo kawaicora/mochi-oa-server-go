@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -371,6 +372,10 @@ func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 			target = ent
 		}
 		physRel = strings.TrimPrefix(target.URL, "/files/")
+		// 实体 URL 是百分号编码的，映射磁盘路径前必须先解码，否则中文文件名对不上磁盘文件。
+		if decodedRel, derr := urlPathUnescape(physRel); derr == nil {
+			physRel = decodedRel
+		}
 		dispName = rec.Filename
 		recordMime = rec.Mime
 	}
@@ -432,19 +437,7 @@ func escapeBasenamePath(decoded string) string {
 
 // urlPathUnescape 解码 URL 路径段（对百分号编码宽容：失败则返回原串，交由后续校验拦截）。
 func urlPathUnescape(s string) (string, error) {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == '%' && i+2 < len(s) {
-			var h [2]byte
-			if _, err := fmt.Sscanf(s[i+1:i+3], "%2x", &h); err == nil {
-				b.WriteByte(h[0])
-				i += 2
-				continue
-			}
-		}
-		b.WriteByte(s[i])
-	}
-	return b.String(), nil
+	return url.PathUnescape(s)
 }
 
 // uploadOne 单文件上传 POST /api/upload（保留原文件名，multipart 字段名 file）。

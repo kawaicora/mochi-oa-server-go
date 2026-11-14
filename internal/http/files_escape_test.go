@@ -100,6 +100,52 @@ func containsByte(s string, c byte) bool {
 	return false
 }
 
+// TestUrlPathUnescape 锁定百分号解码行为：实体记录落库的 URL 是百分号编码的，
+// 映射磁盘路径前必须正确解码回中文文件名；旧的手写 Sscanf 解码失败会把 % 原样写回导致 404。
+func TestUrlPathUnescape(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "中文名逐字节解码",
+			in:   "6/1794630316814_%E7%B2%98%E8%B4%B4%E6%96%87%E4%BB%B6_1794630316793.x-msdownload",
+			want: "6/1794630316814_粘贴文件_1794630316793.x-msdownload",
+		},
+		{
+			name: "加号在路径段保持原样",
+			in:   "6/%E6%B3%AA%E5%B0%BD.mp4",
+			want: "6/泪尽.mp4",
+		},
+		{name: "ASCII 原样", in: "6/Mochi.dll", want: "6/Mochi.dll"},
+		{name: "无编码空串", in: "", want: ""},
+	}
+	for _, c := range cases {
+		got, err := urlPathUnescape(c.in)
+		if err != nil {
+			t.Fatalf("%s: 解码出错: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: urlPathUnescape(%q)\n got = %s\nwant = %s", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// TestUrlPathUnescapeRoundTrip 编码再解码必须还原原始文件名。
+func TestUrlPathUnescapeRoundTrip(t *testing.T) {
+	for _, in := range []string{"泪尽铃音响翻唱+混音.mp4", "Mochi.dll", "日本語 テスト.png", "100%报告.pdf"} {
+		escaped := urlQueryEscape(in)
+		back, err := urlPathUnescape(escaped)
+		if err != nil {
+			t.Fatalf("round-trip %q: %v", in, err)
+		}
+		if back != in {
+			t.Errorf("round-trip %q: 编码 %q → 解码 %q", in, escaped, back)
+		}
+	}
+}
+
 // TestDownloadChineseFilename 端到端回归：把中文名文件放进 FILE_DIR，
 // 用 urlQueryEscape 生成的 URL 去请求 /files/，必须 200 且字节一致。
 // 修复前该用例会 404（编码非法 → 解码出的路径不是真实文件名）。
