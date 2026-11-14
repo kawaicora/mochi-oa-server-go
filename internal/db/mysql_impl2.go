@@ -547,6 +547,16 @@ func (s *MySqlStore) FindFileByHash(ctx context.Context, hash string) (*types.Fi
 	return &types.FileRecord{UUID: r.UUID, Filename: r.Filename, Mime: r.Mime, Size: r.Size, Storage: r.Storage, URL: r.URL, Hash: r.Hash, UsingFileID: r.UsingFileID, CreatedAt: toIso(r.CreatedAt)}, nil
 }
 
+// FilenameExists 判断是否已有记录使用该文件名（实体或引用均计入，用于同名加 _N 后缀）。
+func (s *MySqlStore) FilenameExists(ctx context.Context, filename string) (bool, error) {
+	var cnt int64
+	err := s.gorm.WithContext(ctx).Table("files").Where("filename = ?", filename).Count(&cnt).Error
+	if err != nil {
+		return false, err
+	}
+	return cnt > 0, nil
+}
+
 // ==================== 好友 ====================
 
 // AddFriend 加好友（无序对）。

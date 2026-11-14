@@ -487,6 +487,7 @@ type Store interface {
 	GetFileByUUID(ctx context.Context, uuid string) (*types.FileRecord, error)
 	GetFileByURL(ctx context.Context, fileURL string) (*types.FileRecord, error)
 	FindFileByHash(ctx context.Context, hash string) (*types.FileRecord, error)
+	FilenameExists(ctx context.Context, filename string) (bool, error)
 
 	// ---- 好友 ----
 	AddFriend(ctx context.Context, a, b int64) error

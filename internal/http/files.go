@@ -92,19 +92,31 @@ func sanitizeName(name string) string {
 	return cleaned
 }
 
-// uniqueDiskName 磁盘同名追加 " (n)"（TS: 已存在则 stem (n)ext，n 从 2 起）。
-func uniqueDiskName(dir, name string) string {
+// splitStemExt 拆文件名的主干与扩展名（无扩展名时 ext 为空）。
+func splitStemExt(name string) (stem, ext string) {
 	m := regexpStemExt.FindStringSubmatch(name)
-	stem, ext := name, ""
 	if len(m) == 3 {
-		stem, ext = m[1], m[2]
+		return m[1], m[2]
 	}
-	target := name
-	for n := 2; ; n++ {
-		if _, err := os.Stat(filepath.Join(dir, target)); err != nil {
-			return target // 不存在即可用
+	return name, ""
+}
+
+// suffixedName 在扩展名前插入 _n：photo.jpg -> photo_1.jpg。
+func suffixedName(name string, n int) string {
+	stem, ext := splitStemExt(name)
+	return fmt.Sprintf("%s_%d%s", stem, n, ext)
+}
+
+// uniqueDiskName 落盘重名时在扩展名前加 _1、_2… 后缀；磁盘未占用即用原名。
+func uniqueDiskName(dir, name string) string {
+	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+		return name
+	}
+	for n := 1; ; n++ {
+		candidate := suffixedName(name, n)
+		if _, err := os.Stat(filepath.Join(dir, candidate)); err != nil {
+			return candidate
 		}
-		target = fmt.Sprintf("%s (%d)%s", stem, n, ext)
 	}
 }
 
@@ -148,8 +160,9 @@ func isSafeFolderPath(v string) bool {
 
 // savedLocal 落盘结果（TS Saved）。
 type savedLocal struct {
-	storage string
-	url     string
+	storage  string
+	url      string
+	filename string
 }
 
 // saveLocal 存储到本地磁盘：{dir}/{companyKey}/{relativeDir...}/{原始文件名}（1:1 对齐 saveLocal）。
@@ -168,7 +181,7 @@ func saveLocal(cfg *config.ServerConfig, originalName string, buf []byte, compan
 		return savedLocal{}, err
 	}
 	rel := segmentsJoin(segments) + "/" + strings.ReplaceAll(urlQueryEscape(diskName), "%2F", "/")
-	return savedLocal{storage: "local", url: "/files/" + rel}, nil
+	return savedLocal{storage: "local", url: "/files/" + rel, filename: diskName}, nil
 }
 
 // segmentsJoin 用 "/" 拼接段（filepath.Join 在 Windows 用反斜杠，URL 需要正斜杠）。
@@ -194,15 +207,26 @@ func buildSegments(companyKey, relativeDir string) []string {
 }
 
 // localRelativeURL 为一次上传生成相对 URL 路径（不写盘），供引用记录复用；目录段与 saveLocal 一致。
-// uniqueID 非空时作为独立目录段加入，保证同名多次上传的引用记录 URL 互不相同（避免按 URL 查库串号）。
-func localRelativeURL(originalName, companyKey, relativeDir, uniqueID string) string {
+func localRelativeURL(originalName, companyKey, relativeDir string) string {
 	segments := buildSegments(companyKey, relativeDir)
-	if uniqueID != "" {
-		segments = append(segments, uniqueID)
-	}
 	diskName := sanitizeName(originalName)
 	rel := segmentsJoin(segments) + "/" + strings.ReplaceAll(urlQueryEscape(diskName), "%2F", "/")
 	return "/files/" + rel
+}
+
+// uniqueRecordName 按库内已占用文件名去重：原名未被占用即用原名，否则依次加 _1、_2… 后缀。
+func (h *filesHandler) uniqueRecordName(ctx context.Context, name string) string {
+	exists, err := h.store.FilenameExists(ctx, name)
+	if err != nil || !exists {
+		return name
+	}
+	for n := 1; ; n++ {
+		candidate := suffixedName(name, n)
+		exists, err := h.store.FilenameExists(ctx, candidate)
+		if err != nil || !exists {
+			return candidate
+		}
+	}
 }
 
 // urlQueryEscape URL 编码文件名（对齐 encodeURIComponent）。
@@ -310,7 +334,9 @@ func mimeOf(name string) string {
 func writeJSON(w http.ResponseWriter, code int, body map[string]any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		logger.Warn("http/files", "JSON 应答编码失败", "error", err.Error())
+	}
 }
 
 // setFileCORS 允许跨域读取文件（头像 canvas 绘制、视频流播、fetch 转 blob 需要）。
@@ -415,6 +441,30 @@ func (h *filesHandler) download(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, dispName, fi.ModTime(), f)
 }
 
+// entityPhysicalExists 校验实体记录对应的磁盘物理文件真实存在且为常规文件。
+// 实体 URL 是百分号编码的，映射磁盘路径前先解码；越界/缺失/非文件均视为不存在。
+func (h *filesHandler) entityPhysicalExists(rec *types.FileRecord) bool {
+	if rec == nil || rec.URL == "" {
+		return false
+	}
+	rel := strings.TrimPrefix(rec.URL, "/files/")
+	decoded, err := urlPathUnescape(rel)
+	if err != nil {
+		logger.Warn("http/files", "实体 URL 解码失败，判为缺失", "entity", rec.UUID, "url", rec.URL, "error", err.Error())
+		return false
+	}
+	full := safeDownloadPath(h.cfg, decoded)
+	if full == "" {
+		return false
+	}
+	fi, err := os.Stat(full)
+	if err != nil {
+		logger.Warn("http/files", "实体磁盘文件 Stat 失败", "entity", rec.UUID, "path", full, "error", err.Error())
+		return false
+	}
+	return fi.Mode().IsRegular()
+}
+
 // lookupFileRecord 按下载路径查 files 记录：先按转义后的存储 URL 匹配，再按原始解码路径兜底。
 func (h *filesHandler) lookupFileRecord(ctx context.Context, decoded string) *types.FileRecord {
 	if h.store == nil {
@@ -498,22 +548,36 @@ func (h *filesHandler) uploadOne(w http.ResponseWriter, r *http.Request) {
 // saveAndRespond 落盘 + 写库 + 应答（单传与分片合并共用）。
 // 注意：契约要求单传响应同时给 fileName 与 filename 两个 key（客户端两处读取不一致）。
 func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime string, buf []byte, companyKey, relativeDir string) {
-	// 计算 SHA256 hash，相同文件直接复用已有记录
+	ctx := context.Background()
+	// 99.0 计算 SHA256 hash。
 	sum := sha256.Sum256(buf)
 	hash := hex.EncodeToString(sum[:])
-	// hash 一致只代表数据相同。FindFileByHash 仅命中实体记录（using_file_id 为空），
-	// 新建一条引用记录指向该实体：数据沿用实体（UUID/URL/磁盘文件），文件名以本次上传原名为准，不重复写盘。
-	if existing, err := h.store.FindFileByHash(context.Background(), hash); err == nil && existing != nil {
+
+	// 99.1 仅在实体记录（using_file_id 为空）中按 hash 查找；命中后必须再校验实体磁盘文件真实存在，
+	// 记录还在但字节已丢失的，视为未命中，走新实体落盘，绝不能复用一个 404 的实体。
+	existing, ferr := h.store.FindFileByHash(ctx, hash)
+	if ferr != nil {
+		logger.Error("http/files", "按 hash 查库失败，按新文件落盘", "hash", hash, "error", ferr.Error())
+		existing = nil
+	}
+	if existing != nil && !h.entityPhysicalExists(existing) {
+		logger.Warn("http/files", "hash 命中但实体磁盘文件缺失，按新文件落盘", "entity", existing.UUID, "url", existing.URL)
+		existing = nil
+	}
+
+	// 命中且实体字节存在：新建引用记录。除字节来自实体外，文件名/mime/size/URL 全部按本次上传存储；
+	// 下载时用引用记录的路径与展示名，返回实体字节（99.3）。
+	if existing != nil {
 		physical := existing
 		name := sanitizeName(originalName)
 		if name == "file" {
 			name = physical.Filename
 		}
-		// 引用记录：除字节数据来自实体外，文件名/mime/size 等信息都用本次上传带来的值；
-		// 引用记录持有自己的独立 URL（目录段带唯一 UUID 前缀，不写盘）。
+		// 同名已被历史记录占用时按库内记录名加 _1、_2… 后缀，保证每条记录的文件名/URL 互不相同。
+		name = h.uniqueRecordName(ctx, name)
 		refUUID := newUUID()
-		refURL := localRelativeURL(name, companyKey, relativeDir, refUUID)
-		ref, err := h.store.SaveFile(context.Background(), db.SaveFileInput{
+		refURL := localRelativeURL(name, companyKey, relativeDir)
+		ref, err := h.store.SaveFile(ctx, db.SaveFileInput{
 			UUID:        refUUID,
 			Filename:    name,
 			Mime:        mime,
@@ -538,15 +602,17 @@ func (h *filesHandler) saveAndRespond(w http.ResponseWriter, originalName, mime 
 		return
 	}
 
-	saved, err := saveLocal(h.cfg, originalName, buf, companyKey, relativeDir)
+	// 99.2 hash 未匹配：先按库内历史文件名去重（a.txt → a_1.txt），再落盘；磁盘若也重名继续加后缀。
+	baseName := h.uniqueRecordName(ctx, sanitizeName(originalName))
+	saved, err := saveLocal(h.cfg, baseName, buf, companyKey, relativeDir)
 	if err != nil {
 		logger.Error("http/files", "文件落盘失败", "error", err.Error())
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "存储失败"})
 		return
 	}
-	rec, err := h.store.SaveFile(context.Background(), db.SaveFileInput{
+	rec, err := h.store.SaveFile(ctx, db.SaveFileInput{
 		UUID:        newUUID(),
-		Filename:    sanitizeName(originalName),
+		Filename:    saved.filename,
 		Mime:        mime,
 		Size:        int64(len(buf)),
 		Storage:     saved.storage,
@@ -708,8 +774,12 @@ func (h *filesHandler) chunkComplete(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
-	// 合并成功后清理临时分片目录（TS .catch(()=>{})，失败不阻断）。
-	defer func() { _ = os.RemoveAll(chunkDir) }()
+	// 合并成功后清理临时分片目录；删除失败不阻断应答，但要记日志（99.4 不静默吞错）。
+	defer func() {
+		if err := os.RemoveAll(chunkDir); err != nil {
+			logger.Warn("http/files", "清理临时分片目录失败", "uploadId", d.UploadID, "error", err.Error())
+		}
+	}()
 	h.saveAndRespond(w, d.Filename, mime, buf, company, d.RelativePath)
 }
 
@@ -730,7 +800,12 @@ func (h *filesHandler) folderFiles(w http.ResponseWriter, r *http.Request) {
 	if first := strings.Split(p, "/")[0]; regexp.MustCompile(`^\d+$`).MatchString(first) {
 		cid, _ := strconv.ParseInt(first, 10, 64)
 		role, err := h.store.GetMemberRole(context.Background(), cid, uid)
-		if err != nil || role == "" {
+		if err != nil {
+			logger.Error("http/files", "文件夹清单查询成员角色失败", "companyId", cid, "userId", uid, "error", err.Error())
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "非该公司成员"})
+			return
+		}
+		if role == "" {
 			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": "非该公司成员"})
 			return
 		}
@@ -762,6 +837,7 @@ func (h *filesHandler) folderFiles(w http.ResponseWriter, r *http.Request) {
 	walk = func(curDir, curRel string) {
 		entries, err := os.ReadDir(curDir)
 		if err != nil {
+			logger.Warn("http/files", "文件夹清单遍历目录失败", "dir", curDir, "error", err.Error())
 			return
 		}
 		for _, e := range entries {
@@ -826,7 +902,11 @@ func (h *filesHandler) transcode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outDir := filepath.Join(root, ".transcode")
-	_ = os.MkdirAll(outDir, 0o755)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		logger.Error("http/files", "转码缓存目录创建失败", "dir", outDir, "error", err.Error())
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "转码失败"})
+		return
+	}
 	sum := sha1.Sum([]byte(fmt.Sprintf("%s:%d", src, fi.Size())))
 	out := filepath.Join(outDir, hex.EncodeToString(sum[:])+".mp4")
 	if _, err := os.Stat(out); err != nil {
@@ -851,11 +931,18 @@ func (h *filesHandler) transcode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	ofi, _ := f.Stat()
+	ofi, statErr := f.Stat()
+	if statErr != nil {
+		logger.Warn("http/files", "转码产物 Stat 失败，使用零修改时间", "out", out, "error", statErr.Error())
+	}
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Disposition", "inline; filename*=UTF-8''"+urlQueryEscape(name))
-	http.ServeContent(w, r, name, ofi.ModTime(), f)
+	serveModTime := time.Time{}
+	if ofi != nil {
+		serveModTime = ofi.ModTime()
+	}
+	http.ServeContent(w, r, name, serveModTime, f)
 }
 
 // newUUID 生成 RFC4122 v4 UUID（TS randomUUID）。

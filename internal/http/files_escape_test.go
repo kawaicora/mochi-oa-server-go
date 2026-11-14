@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"mochi-oa-server-go/internal/config"
@@ -101,25 +100,52 @@ func containsByte(s string, c byte) bool {
 	return false
 }
 
-// TestLocalRelativeURLUnique 同名多次上传的引用记录 URL 必须互不相同：
-// uniqueID（完整 UUID）作为独立目录段，basename 仍保留原始文件名。
-func TestLocalRelativeURLUnique(t *testing.T) {
+// TestSuffixedName 锁定重名后缀格式：扩展名前插 _n（旧版是 " (n)" 括号格式，已废弃）。
+func TestSuffixedName(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"photo.jpg", 1, "photo_1.jpg"},
+		{"photo.jpg", 2, "photo_2.jpg"},
+		{"Mochi.dll", 1, "Mochi_1.dll"},
+		{"noext", 1, "noext_1"},
+	}
+	for _, c := range cases {
+		if got := suffixedName(c.in, c.n); got != c.want {
+			t.Errorf("suffixedName(%q, %d) = %q，期望 %q", c.in, c.n, got, c.want)
+		}
+	}
+}
+
+// TestUniqueDiskName 磁盘重名时依次返回原名、_1、_2…。
+func TestUniqueDiskName(t *testing.T) {
+	dir := t.TempDir()
+	const base = "FD5E8EAD974A93BB97117510962A54EF.jpg"
+	if got := uniqueDiskName(dir, base); got != base {
+		t.Fatalf("首次可用名 = %q，期望原名", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, base), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := uniqueDiskName(dir, base); got != "FD5E8EAD974A93BB97117510962A54EF_1.jpg" {
+		t.Fatalf("重名第二次 = %q，期望 _1", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "FD5E8EAD974A93BB97117510962A54EF_1.jpg"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := uniqueDiskName(dir, base); got != "FD5E8EAD974A93BB97117510962A54EF_2.jpg" {
+		t.Fatalf("重名第三次 = %q，期望 _2", got)
+	}
+}
+
+// TestLocalRelativeURL 引用记录 URL 由目录段 + 文件名（编码）构成，不带 UUID 目录段。
+func TestLocalRelativeURL(t *testing.T) {
 	const name = "FD5E8EAD974A93BB97117510962A54EF.jpg"
-	u1 := localRelativeURL(name, "6", "", "11111111-1111-1111-1111-111111111111")
-	u2 := localRelativeURL(name, "6", "", "22222222-2222-2222-2222-222222222222")
-	if u1 == u2 {
-		t.Fatal("同名引用记录 URL 相同，会按 URL 串号")
-	}
-	if !strings.HasSuffix(u1, "/"+urlQueryEscape(name)) {
-		t.Errorf("URL basename 未保留原始文件名: %s", u1)
-	}
-	if !strings.Contains(u1, "/11111111-1111-1111-1111-111111111111/") {
-		t.Errorf("URL 缺少 UUID 目录段: %s", u1)
-	}
-	// 无 uniqueID 时退化为目录段+文件名（实体落盘路径形态）。
-	u0 := localRelativeURL(name, "6", "", "")
-	if u0 != "/files/6/"+urlQueryEscape(name) {
-		t.Errorf("无 uniqueID URL = %s，期望 /files/6/<name>", u0)
+	u := localRelativeURL(name, "6", "")
+	if u != "/files/6/"+urlQueryEscape(name) {
+		t.Errorf("URL = %s，期望 /files/6/<编码名>", u)
 	}
 }
 
