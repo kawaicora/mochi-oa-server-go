@@ -19,6 +19,7 @@ import (
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/logger"
+	"mochi-oa-server-go/internal/socketapi"
 )
 
 // updatePlatformEntry 单个平台的更新包信息。
@@ -57,7 +58,7 @@ var extBySuffix = map[string]string{
 }
 
 // registerUpdateRoutes 注册更新包管理路由。
-func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.ServerConfig) {
+func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.ServerConfig, srv socketapi.Server) {
 	mux.HandleFunc("POST /api/admin/update", func(w http.ResponseWriter, r *http.Request) {
 		setFileCORS(w)
 		uid := authedUserId(r, store, cfg)
@@ -155,6 +156,20 @@ func registerUpdateRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 		}
 
 		logger.Info("http/update", "更新包发布成功", "keys", keys, "version", version, "size", len(buf))
+
+		// 通知所有在线客户端：有新更新包，立即静默检查版本；已是最新的客户端无感跳过。
+		// 离线客户端收不到本事件，下次启动时由启动检查兜底自动更新。
+		if srv != nil {
+			if err := srv.Broadcast("client:updateAvailable", map[string]any{
+				"version":  version,
+				"platform": platform,
+			}); err != nil {
+				logger.Error("http/update", "广播更新事件失败", "error", err.Error())
+			} else {
+				logger.Info("http/update", "已广播更新事件", "version", version, "platform", platform)
+			}
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":       true,
 			"version":  version,

@@ -31,6 +31,7 @@ import (
 	"mochi-oa-server-go/internal/config"
 	"mochi-oa-server-go/internal/db"
 	"mochi-oa-server-go/internal/logger"
+	"mochi-oa-server-go/internal/socketapi"
 	"mochi-oa-server-go/internal/token"
 	"mochi-oa-server-go/internal/types"
 	"mochi-oa-server-go/internal/util"
@@ -43,7 +44,7 @@ type filesHandler struct {
 }
 
 // RegisterUploadRoutes 注册上传/下载全部路由（对标 registerUploadRoutes）。
-func RegisterUploadRoutes(mux *http.ServeMux, store db.Store, cfg *config.ServerConfig) {
+func RegisterUploadRoutes(mux *http.ServeMux, store db.Store, cfg *config.ServerConfig, srv socketapi.Server) {
 	h := &filesHandler{store: store, cfg: cfg}
 	mux.HandleFunc("POST /api/upload", h.uploadOne)
 	mux.HandleFunc("POST /api/upload/chunk", h.uploadChunk)
@@ -52,7 +53,7 @@ func RegisterUploadRoutes(mux *http.ServeMux, store db.Store, cfg *config.Server
 	mux.HandleFunc("GET /api/folder/files", h.folderFiles)
 	mux.HandleFunc("GET /api/transcode", h.transcode)
 	mux.HandleFunc("/files/", h.download)
-	registerUpdateRoutes(mux, store, cfg)
+	registerUpdateRoutes(mux, store, cfg, srv)
 }
 
 // ---- 通用小工具（逐字对齐 files.ts） ----
